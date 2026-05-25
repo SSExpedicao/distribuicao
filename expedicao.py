@@ -286,6 +286,12 @@ st.set_page_config(page_title="Sistema de Sessões", layout="wide")
 st.title("⚖️ Sistema Automático de Distribuição de Processos para Expedição")
 
 # ==========================================
+# 2. FRONTEND: INTERFACE DO USUÁRIO
+# ==========================================
+st.set_page_config(page_title="Sistema de Sessões", layout="wide")
+st.title("⚖️ Sistema Automático de Distribuição de Processos para Expedição")
+
+# ==========================================
 # 📢 LETREIRO DE AVISOS (MURAL DINÂMICO)
 # ==========================================
 df_avisos = obter_avisos_pendentes()
@@ -316,39 +322,15 @@ aba_inserir, aba_sessoes, aba_controle, aba_historico, aba_dados, aba_ajuda = st
     "❓ 6. Ajuda & Glossário"
 ])
 
+# VARIÁVEIS ESSENCIAIS (Isso aqui que estava faltando e dando o erro vermelho!)
 nome_sessao_atual = datetime.now().strftime("%d/%m/%Y")
+df_geral_status = carregar_dados()
+sessoes_finalizadas = []
 
-# ==========================================
-# 📢 LETREIRO DE AVISOS (MURAL DINÂMICO)
-# ==========================================
-df_avisos = obter_avisos_pendentes()
-if not df_avisos.empty:
-    textos_aviso = []
-    for _, row in df_avisos.iterrows():
-        textos_aviso.append(f"🚨 <b>{row['usuario']}</b>: Processo <b>{row['numero_processo']}</b> ({row['nome_sessao']}) ➔ {row['mensagem']}")
-    
-    # Junta todos os avisos com um separador visual
-    texto_marquee = " &nbsp;&nbsp;&nbsp;&nbsp; | &nbsp;&nbsp;&nbsp;&nbsp; ".join(textos_aviso)
-    
-    # Cria o letreiro animado em HTML
-    st.markdown(f"""
-        <marquee behavior="scroll" direction="left" scrollamount="8" 
-                 style="background-color: #ff4b4b; color: white; padding: 10px; 
-                        font-size: 18px; border-radius: 5px; margin-bottom: 20px; font-weight: 500;">
-            {texto_marquee}
-        </marquee>
-    """, unsafe_allow_html=True)
-# ==========================================
+if not df_geral_status.empty:
+    sessoes_stats = df_geral_status.groupby('nome_sessao')['despachado'].agg(['count', 'sum']).reset_index()
+    sessoes_finalizadas = sessoes_stats[sessoes_stats['count'] == sessoes_stats['sum']]['nome_sessao'].tolist()
 
-aba_inserir, aba_sessoes, aba_controle, aba_historico, aba_dados, aba_ajuda = st.tabs([
-    "📥 1. Inserir Novos",
-    "🗂️ 2. Painel Ativo",
-    "📊 3. Controle O.K.",
-    "🗄️ 4. Histórico",
-    "📈 5. Dados & Desempenho",
-    "❓ 6. Ajuda & Glossário"
-])
-    
 # ------------------------------------------
 # ABA 1: INSERÇÃO E DISTRIBUIÇÃO
 # ------------------------------------------
