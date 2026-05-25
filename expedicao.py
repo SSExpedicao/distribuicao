@@ -232,7 +232,7 @@ EQUIPE_EXPEDICAO, EQUIPE_REVISAO, TODOS_NOMES = carregar_equipes()
 # 2. FRONTEND: INTERFACE DO USUÁRIO
 # ==========================================
 st.set_page_config(page_title="Sistema de Sessões", layout="wide")
-st.title("⚖️ Sistema Automático de Distribuição de Sessões")
+st.title("⚖️ Sistema Automático de Distribuição de Processos para Expedição")
 
 aba_inserir, aba_sessoes, aba_controle, aba_historico, aba_dados, aba_ajuda = st.tabs([
     "📥 1. Inserir Novos",
