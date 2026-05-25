@@ -327,7 +327,13 @@ if not df_avisos.empty:
 # ==========================================
 
 aba_inserir, aba_sessoes, aba_controle, aba_historico, aba_dados, aba_ajuda = st.tabs([
-# ... (restante do código das abas)
+    "📥 1. Inserir Novos",
+    "🗂️ 2. Painel Ativo",
+    "📊 3. Controle O.K.",
+    "🗄️ 4. Histórico",
+    "📈 5. Dados & Desempenho",
+    "❓ 6. Ajuda & Glossário"
+])
     
 # ------------------------------------------
 # ABA 1: INSERÇÃO E DISTRIBUIÇÃO
