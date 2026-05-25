@@ -69,6 +69,7 @@ def gerenciar_usuario(acao, nome_atual, novo_nome=None, expedicao=0, revisao=0):
         if acao == 'adicionar': c.execute("INSERT INTO equipe (nome, expedicao, revisao) VALUES (?, ?, ?)", (nome_atual, expedicao, revisao))
         elif acao == 'remover': c.execute("DELETE FROM equipe WHERE nome = ?", (nome_atual,))
         elif acao == 'substituir': c.execute("UPDATE equipe SET nome = ?, expedicao = ?, revisao = ? WHERE nome = ?", (novo_nome, expedicao, revisao, nome_atual))
+        elif acao == 'editar': c.execute("UPDATE equipe SET expedicao = ?, revisao = ? WHERE nome = ?", (expedicao, revisao, nome_atual)) # NOVA LINHA AQUI
         conn.commit()
         return True, "✅ Operação realizada com sucesso!"
     except sqlite3.IntegrityError: return False, "❌ Erro: Este usuário já existe."
