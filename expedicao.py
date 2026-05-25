@@ -543,76 +543,66 @@ with aba_controle:
                 time.sleep(1.5)
                 st.rerun()
 # ------------------------------------------
-# ABA 4: HISTÓRICO DE SESSÕES FINALIZADAS
+# ABA 4: HISTÓRICO DE SESSÕES FINALIZADAS E EXCLUÍDOS
 # ------------------------------------------
 with aba_historico:
-    st.subheader("🗄️ Arquivo: Sessões 100% Concluídas")
-    
-    if sessoes_finalizadas:
-        # Prepara os dados base do histórico
-        df_historico = df_geral_status[df_geral_status['nome_sessao'].isin(sessoes_finalizadas)].copy()
-        df_historico_display = df_historico[['numero_processo', 'urgente', 'relator', 'expedicao', 'revisao', 'data_conclusao', 'tipo_sessao', 'nome_sessao']].copy()
-        df_historico_display = df_historico_display.rename(columns={
-            'numero_processo': 'Processo', 
-            'urgente': 'urgente_flag', 
-            'relator': 'Conselheiro', 
-            'expedicao': 'Expedidor', 
-            'revisao': 'Revisor', 
-            'data_conclusao': 'Data/Hora Conclusão', 
-            'tipo_sessao': 'Tipo de Sessão', 
-            'nome_sessao': 'Data da Sessão'
-        })
-        
-        # --- ÁREA DE FILTROS ---
-        with st.expander("🔎 Filtros de Busca Avançada", expanded=True):
-            col_f1, col_f2, col_f3, col_f4 = st.columns(4)
-            
-            with col_f1:
-                datas_unicas = sorted(df_historico_display['Data da Sessão'].unique(), reverse=True)
-                filtro_sessao = st.multiselect("📅 Data da Sessão", options=datas_unicas)
-            
-            with col_f2:
-                filtro_usuario = st.multiselect("👥 Colaborador (Exp/Rev)", options=TODOS_NOMES, help="Busca tanto quem expediu quanto quem revisou.")
-            
-            with col_f3:
-                filtro_processo = st.text_input("📄 Nº do Processo", placeholder="Ex: 12345")
-                
-            with col_f4:
-                filtro_relator = st.text_input("⚖️ Relator", placeholder="Nome do conselheiro...")
+    sub_aba_concluidas, sub_aba_lixeira = st.tabs(["✅ Arquivo: Concluídas", "🗑️ Auditoria: Processos Excluídos"])
 
-        # --- APLICANDO A LÓGICA DE FILTRAGEM ---
-        df_filtrado_hist = df_historico_display.copy()
+    # --- ABA DAS CONCLUÍDAS (O que já estava pronto) ---
+    with sub_aba_concluidas:
+        st.subheader("Sessões 100% Concluídas")
         
-        if filtro_sessao:
-            df_filtrado_hist = df_filtrado_hist[df_filtrado_hist['Data da Sessão'].isin(filtro_sessao)]
+        if sessoes_finalizadas:
+            df_historico = df_geral_status[df_geral_status['nome_sessao'].isin(sessoes_finalizadas)].copy()
+            df_historico_display = df_historico[['numero_processo', 'urgente', 'relator', 'expedicao', 'revisao', 'data_conclusao', 'tipo_sessao', 'nome_sessao']].copy()
+            df_historico_display = df_historico_display.rename(columns={'numero_processo': 'Processo', 'urgente': 'urgente_flag', 'relator': 'Conselheiro', 'expedicao': 'Expedidor', 'revisao': 'Revisor', 'data_conclusao': 'Data/Hora Conclusão', 'tipo_sessao': 'Tipo de Sessão', 'nome_sessao': 'Data da Sessão'})
             
-        if filtro_usuario:
-            # Filtra se o colaborador estiver na coluna de Expedidor OU de Revisor
-            df_filtrado_hist = df_filtrado_hist[
-                df_filtrado_hist['Expedidor'].isin(filtro_usuario) | 
-                df_filtrado_hist['Revisor'].isin(filtro_usuario)
-            ]
-            
-        if filtro_processo:
-            # O 'contains' permite achar o processo digitando só um pedaço do número
-            df_filtrado_hist = df_filtrado_hist[df_filtrado_hist['Processo'].astype(str).str.contains(filtro_processo, case=False, na=False)]
-            
-        if filtro_relator:
-            df_filtrado_hist = df_filtrado_hist[df_filtrado_hist['Conselheiro'].astype(str).str.contains(filtro_relator, case=False, na=False)]
+            with st.expander("🔎 Filtros de Busca Avançada", expanded=True):
+                col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+                with col_f1:
+                    datas_unicas = sorted(df_historico_display['Data da Sessão'].unique(), reverse=True)
+                    filtro_sessao = st.multiselect("📅 Data da Sessão", options=datas_unicas)
+                with col_f2:
+                    filtro_usuario = st.multiselect("👥 Colaborador (Exp/Rev)", options=TODOS_NOMES)
+                with col_f3:
+                    filtro_processo = st.text_input("📄 Nº do Processo", placeholder="Ex: 12345")
+                with col_f4:
+                    filtro_relator = st.text_input("⚖️ Relator", placeholder="Nome...")
 
-        # --- EXIBIÇÃO DOS RESULTADOS ---
-        st.markdown(f"**📊 Resultados encontrados:** `{len(df_filtrado_hist)}` processos.")
+            df_filtrado_hist = df_historico_display.copy()
+            if filtro_sessao: df_filtrado_hist = df_filtrado_hist[df_filtrado_hist['Data da Sessão'].isin(filtro_sessao)]
+            if filtro_usuario: df_filtrado_hist = df_filtrado_hist[df_filtrado_hist['Expedidor'].isin(filtro_usuario) | df_filtrado_hist['Revisor'].isin(filtro_usuario)]
+            if filtro_processo: df_filtrado_hist = df_filtrado_hist[df_filtrado_hist['Processo'].astype(str).str.contains(filtro_processo, case=False, na=False)]
+            if filtro_relator: df_filtrado_hist = df_filtrado_hist[df_filtrado_hist['Conselheiro'].astype(str).str.contains(filtro_relator, case=False, na=False)]
+
+            st.markdown(f"**📊 Resultados encontrados:** `{len(df_filtrado_hist)}` processos.")
+            if not df_filtrado_hist.empty:
+                styled_hist = df_filtrado_hist.iloc[::-1].style.apply(color_urgentes, axis=1)
+                st.dataframe(styled_hist, hide_index=True, use_container_width=True, column_config={"urgente_flag": None})
+            else: st.warning("Nenhum processo encontrado com esses filtros.")
+        else: st.info("📭 O histórico está vazio. Nenhuma sessão foi 100% concluída ainda.")
+
+    # --- ABA DA LIXEIRA (A novidade) ---
+    with sub_aba_lixeira:
+        st.subheader("Registro de Exclusões (Auditoria)")
+        df_excluidos = carregar_excluidos()
         
-        if not df_filtrado_hist.empty:
-            # Inverte a ordem para os mais recentes aparecerem no topo
-            styled_hist = df_filtrado_hist.iloc[::-1].style.apply(color_urgentes, axis=1)
-            st.dataframe(styled_hist, hide_index=True, use_container_width=True, column_config={"urgente_flag": None})
+        if not df_excluidos.empty:
+            df_excluidos_display = df_excluidos.rename(columns={
+                'numero_processo': 'Processo',
+                'relator': 'Relator',
+                'data_exclusao': 'Data/Hora da Exclusão',
+                'motivo': 'Motivo Declarado'
+            })
+            
+            # Mostra a tabela invertida (mais recentes primeiro)
+            st.dataframe(df_excluidos_display[['Processo', 'Relator', 'Motivo Declarado', 'Data/Hora da Exclusão']].iloc[::-1], hide_index=True, use_container_width=True)
+            
+            # Botão extra para baixar o relatório da lixeira
+            csv_lixo = df_excluidos_display.to_csv(index=False).encode('utf-8')
+            st.download_button(label="📥 Baixar Relatório de Exclusões (CSV)", data=csv_lixo, file_name="auditoria_exclusoes.csv", mime='text/csv', type="secondary")
         else:
-            st.warning("Nenhum processo encontrado com esses filtros.")
-            
-    else: 
-        st.info("📭 O histórico está vazio. Nenhuma sessão foi 100% concluída e arquivada ainda.")
-
+            st.success("✨ A lixeira está vazia. Nenhum processo foi apagado do sistema.")
 # ------------------------------------------
 # ABA 5: DADOS & DESEMPENHO (ANALYTICS)
 # ------------------------------------------
