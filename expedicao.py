@@ -439,19 +439,21 @@ with aba_controle:
         with col_exp: st.dataframe(df_filtrado['expedicao'].value_counts().reset_index(), hide_index=True)
         with col_rev: st.dataframe(df_filtrado['revisao'].value_counts().reset_index(), hide_index=True)
 
-    st.markdown("---")
+   st.markdown("---")
     with st.container(border=True):
         st.subheader("🗑️ Remover Processo Específico (Saiu de Pauta)")
-        col_rm1, col_rm2, col_rm3 = st.columns([2, 2, 1])
+        col_rm1, col_rm2, col_rm3, col_rm4 = st.columns([2, 2, 2, 1])
         with col_rm1: proc_para_remover = st.text_input("Número Exato do Processo:")
         with col_rm2:
             datas_disp = sorted(df_geral_status['nome_sessao'].unique(), reverse=True) if not df_geral_status.empty else []
             data_sessao_remover = st.selectbox("Data da Sessão:", datas_disp)
         with col_rm3:
+            motivo_remocao = st.selectbox("Motivo:", ["Fora de pauta", "Incluído errado", "Teste", "Outros"], key="motivo_proc")
+        with col_rm4:
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("❌ Remover", type="primary", use_container_width=True):
                 if proc_para_remover and data_sessao_remover:
-                    ok, m = remover_processo(proc_para_remover, data_sessao_remover)
+                    ok, m = remover_processo(proc_para_remover, data_sessao_remover, motivo_remocao)
                     if ok:
                         st.success(m)
                         time.sleep(1.5)
@@ -524,21 +526,22 @@ with aba_controle:
                         else: st.error(msg)
                     except Exception as e: st.error(f"Erro ao ler o arquivo: {e}")
 
-        st.markdown("---")
-        st.subheader("🧹 Limpeza Seletiva do Sistema")
-        col_tipo, col_data, col_btn = st.columns(3)
+       st.markdown("---")
+        st.subheader("🧹 Limpeza Seletiva do Sistema (Apagar Sessão)")
+        col_tipo, col_data, col_motivo_sess, col_btn = st.columns([2, 2, 2, 1])
         with col_tipo: tipo_apagar = st.selectbox("Apagar de qual tipo?", ["Sessão Ordinária", "Sessão Ordinária Virtual", "Sessão Reservada", "Sessão Administrativa"])
         with col_data:
             datas_disp_apagar = df_geral_status[df_geral_status['tipo_sessao'] == tipo_apagar]['nome_sessao'].unique() if not df_geral_status.empty else []
             data_apagar = st.selectbox("Qual data?", sorted(datas_disp_apagar, reverse=True)) if len(datas_disp_apagar) > 0 else st.selectbox("Qual data?", ["Sem dados"])
+        with col_motivo_sess:
+            motivo_sessao = st.selectbox("Motivo da Exclusão:", ["Sessão Cancelada", "Fora de pauta", "Incluído errado", "Teste", "Outros"], key="motivo_sess")
         with col_btn:
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("🗑️ Apagar Sessão", type="primary", use_container_width=True) and data_apagar != "Sem dados":
-                apagar_sessao_especifica(tipo_apagar, data_apagar)
-                st.success(f"Sessão de {data_apagar} apagada com sucesso!")
+                apagar_sessao_especifica(tipo_apagar, data_apagar, motivo_sessao)
+                st.success(f"Sessão de {data_apagar} enviada para a lixeira com sucesso!")
                 time.sleep(1.5)
                 st.rerun()
-
 # ------------------------------------------
 # ABA 4: HISTÓRICO DE SESSÕES FINALIZADAS
 # ------------------------------------------
