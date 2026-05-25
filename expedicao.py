@@ -363,22 +363,38 @@ with aba_sessoes:
         cfg_colunas = {"id": None, "urgente_flag": None, "Processo": st.column_config.TextColumn(disabled=True), "Relator": st.column_config.TextColumn(disabled=True), "Expedição": st.column_config.SelectboxColumn("Expedição", options=TODOS_NOMES, required=True), "Revisão": st.column_config.SelectboxColumn("Revisão", options=TODOS_NOMES, required=True)}
         if tipo_sessao_tb == "Sessão Reservada": cfg_colunas.update({"E-mail": st.column_config.CheckboxColumn("E-mail"), "Mensageria": st.column_config.CheckboxColumn("Mensageria"), "Recebido": st.column_config.CheckboxColumn("Recebido")})
 
-        edited_df = st.data_editor(styled_df, column_config=cfg_colunas, hide_index=True, use_container_width=True, key=f"{key_prefix}_{data_sessao}")
-
-        for i in range(len(edited_df)):
-            if edited_df.iloc[i].to_dict() != df_exibicao.iloc[i].to_dict():
-                atualizar_processo(
-                    int(edited_df.iloc[i]['id']), edited_df.iloc[i]['Expedição'], edited_df.iloc[i]['Revisão'],
-                    edited_df.iloc[i]['Expedido'], edited_df.iloc[i]['Revisado'], edited_df.iloc[i]['Despachado'],
-                    edited_df.iloc[i]['Expedido'] != df_exibicao.iloc[i]['Expedido'],
-                    edited_df.iloc[i]['Revisado'] != df_exibicao.iloc[i]['Revisado'],
-                    edited_df.iloc[i]['Despachado'] != df_exibicao.iloc[i]['Despachado'],
-                    email=edited_df.iloc[i].get('E-mail', False), mensageria=edited_df.iloc[i].get('Mensageria', False), recebido=edited_df.iloc[i].get('Recebido', False)
-                )
-
-        pendentes = len(edited_df[edited_df['Despachado'] == False])
+        pendentes = len(df_exibicao[df_exibicao['Despachado'] == False])
         if pendentes > 0: titulo_placeholder.markdown(f"##### 📅 {data_sessao} | ⏳ {pendentes} Pendentes", unsafe_allow_html=True)
         else: titulo_placeholder.markdown(f"##### 📅 {data_sessao} | ✅ Concluído!", unsafe_allow_html=True)
+
+        # --- NOVA LÓGICA DE FORMULÁRIO AQUI (SEM REFRESH AUTOMÁTICO) ---
+        with st.form(key=f"form_{key_prefix}_{data_sessao}"):
+            edited_df = st.data_editor(styled_df, column_config=cfg_colunas, hide_index=True, use_container_width=True, key=f"{key_prefix}_{data_sessao}")
+            
+            # Botão para processar tudo de uma vez
+            submit_button = st.form_submit_button("💾 Salvar Alterações desta Sessão", type="primary")
+
+            if submit_button:
+                alteracoes_feitas = 0
+                for i in range(len(edited_df)):
+                    if edited_df.iloc[i].to_dict() != df_exibicao.iloc[i].to_dict():
+                        atualizar_processo(
+                            int(edited_df.iloc[i]['id']), edited_df.iloc[i]['Expedição'], edited_df.iloc[i]['Revisão'],
+                            edited_df.iloc[i]['Expedido'], edited_df.iloc[i]['Revisado'], edited_df.iloc[i]['Despachado'],
+                            edited_df.iloc[i]['Expedido'] != df_exibicao.iloc[i]['Expedido'],
+                            edited_df.iloc[i]['Revisado'] != df_exibicao.iloc[i]['Revisado'],
+                            edited_df.iloc[i]['Despachado'] != df_exibicao.iloc[i]['Despachado'],
+                            email=edited_df.iloc[i].get('E-mail', False), mensageria=edited_df.iloc[i].get('Mensageria', False), recebido=edited_df.iloc[i].get('Recebido', False)
+                        )
+                        alteracoes_feitas += 1
+                
+                if alteracoes_feitas > 0:
+                    st.toast(f"✅ {alteracoes_feitas} processo(s) atualizado(s) no banco de dados!")
+                    time.sleep(1) # Pausa rápida para exibir a notificação
+                    st.rerun() # Atualiza a tela para remover os despachados
+                else:
+                    st.toast("⚠️ Nenhuma alteração foi detectada.")
+        # ---------------------------------------------------------------
 
     with sub_aba_ord:
         df_ord = carregar_dados("Sessão Ordinária")
@@ -399,7 +415,6 @@ with aba_sessoes:
         df_adm = carregar_dados("Sessão Administrativa")
         if not df_adm.empty:
             for data in df_adm[~df_adm['nome_sessao'].isin(sessoes_finalizadas)]['nome_sessao'].unique(): exibir_tabela_interativa(df_adm[df_adm['nome_sessao'] == data], "adm", data, "Sessão Administrativa")
-
 # ------------------------------------------
 # ABA 3: CONTROLE DE CARGA E ÁREA ADMINISTRATIVA
 # ------------------------------------------
