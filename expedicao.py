@@ -286,12 +286,6 @@ st.set_page_config(page_title="Sistema de Sessões", layout="wide")
 st.title("⚖️ Sistema Automático de Distribuição de Processos para Expedição")
 
 # ==========================================
-# 2. FRONTEND: INTERFACE DO USUÁRIO
-# ==========================================
-st.set_page_config(page_title="Sistema de Sessões", layout="wide")
-st.title("⚖️ Sistema Automático de Distribuição de Processos para Expedição")
-
-# ==========================================
 # 📢 LETREIRO DE AVISOS (MURAL DINÂMICO)
 # ==========================================
 df_avisos = obter_avisos_pendentes()
