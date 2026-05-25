@@ -8,185 +8,165 @@ import time
 # ==========================================
 # 1. BACKEND: BANCO DE DADOS E LÓGICA
 # ==========================================
+DB_PATH = 'gestao_processos.db'
+
 def init_db():
-    conn = sqlite3.connect('gestao_processos.db')
-    c = conn.cursor()
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
 
-    c.execute('''CREATE TABLE IF NOT EXISTS processos (
-                                                          id INTEGER PRIMARY KEY AUTOINCREMENT,
-                                                          numero_processo TEXT UNIQUE,
-                                                          relator TEXT,
-                                                          tipo_sessao TEXT,
-                                                          expedicao TEXT,
-                                                          revisao TEXT,
-                                                          data_entrada TEXT
-                 )''')
+        c.execute('''CREATE TABLE IF NOT EXISTS processos (
+                                          id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                          numero_processo TEXT UNIQUE,
+                                          relator TEXT,
+                                          tipo_sessao TEXT,
+                                          expedicao TEXT,
+                                          revisao TEXT,
+                                          data_entrada TEXT
+                     )''')
 
-    colunas = ['nome_sessao', 'expedido_ok', 'revisado_ok', 'despachado',
-               'data_conclusao', 'data_expedido', 'data_revisado', 'urgente',
-               'enviado_email', 'enviado_mensageria', 'recebido']
+        colunas = ['nome_sessao', 'expedido_ok', 'revisado_ok', 'despachado',
+                   'data_conclusao', 'data_expedido', 'data_revisado', 'urgente',
+                   'enviado_email', 'enviado_mensageria', 'recebido']
 
-    for col in colunas:
-        tipo = "INTEGER DEFAULT 0" if "ok" in col or col in ["despachado", "urgente", "enviado_email", "enviado_mensageria", "recebido"] else "TEXT"
-        try: c.execute(f'''ALTER TABLE processos ADD COLUMN {col} {tipo}''')
-        except sqlite3.OperationalError: pass
+        for col in colunas:
+            tipo = "INTEGER DEFAULT 0" if "ok" in col or col in ["despachado", "urgente", "enviado_email", "enviado_mensageria", "recebido"] else "TEXT"
+            try: c.execute(f'''ALTER TABLE processos ADD COLUMN {col} {tipo}''')
+            except sqlite3.OperationalError: pass
 
-    c.execute('''CREATE TABLE IF NOT EXISTS equipe (
-                                                       id INTEGER PRIMARY KEY AUTOINCREMENT,
-                                                       nome TEXT UNIQUE,
-                                                       expedicao INTEGER DEFAULT 0,
-                                                       revisao INTEGER DEFAULT 0
-                 )''')
+        c.execute('''CREATE TABLE IF NOT EXISTS equipe (
+                                       id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                       nome TEXT UNIQUE,
+                                       expedicao INTEGER DEFAULT 0,
+                                       revisao INTEGER DEFAULT 0
+                     )''')
 
-    c.execute("SELECT COUNT(*) FROM equipe")
-    if c.fetchone()[0] == 0:
-        iniciais = [
-            ("André", 1, 1), ("Elaine", 1, 1), ("Kátia", 1, 1),
-            ("Luana C", 1, 1), ("Jessyca", 1, 0), ("Lu Fiorote", 1, 1),
-            ("Mariana", 1, 1), ("Maurício", 1, 1)
-        ]
-        c.executemany("INSERT INTO equipe (nome, expedicao, revisao) VALUES (?, ?, ?)", iniciais)
-
-    conn.commit()
-    conn.close()
+        c.execute("SELECT COUNT(*) FROM equipe")
+        if c.fetchone()[0] == 0:
+            iniciais = [
+                ("André", 1, 1), ("Elaine", 1, 1), ("Kátia", 1, 1),
+                ("Luana C", 1, 1), ("Jessyca", 1, 1), ("Lu Fiorote", 1, 1),
+                ("Mariana", 1, 1), ("Maurício", 1, 1)
+            ]
+            c.executemany("INSERT INTO equipe (nome, expedicao, revisao) VALUES (?, ?, ?)", iniciais)
 
 def carregar_equipes():
-    conn = sqlite3.connect('gestao_processos.db')
-    c = conn.cursor()
-    c.execute("SELECT nome FROM equipe WHERE expedicao = 1")
-    eq_exp = [row[0] for row in c.fetchall()]
-    c.execute("SELECT nome FROM equipe WHERE revisao = 1")
-    eq_rev = [row[0] for row in c.fetchall()]
-    c.execute("SELECT nome FROM equipe")
-    todos = [row[0] for row in c.fetchall()]
-    conn.close()
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT nome FROM equipe WHERE expedicao = 1")
+        eq_exp = [row[0] for row in c.fetchall()]
+        c.execute("SELECT nome FROM equipe WHERE revisao = 1")
+        eq_rev = [row[0] for row in c.fetchall()]
+        c.execute("SELECT nome FROM equipe")
+        todos = [row[0] for row in c.fetchall()]
     return eq_exp, eq_rev, todos
 
 def gerenciar_usuario(acao, nome_atual, novo_nome=None, expedicao=0, revisao=0):
-    conn = sqlite3.connect('gestao_processos.db')
-    c = conn.cursor()
     try:
-        if acao == 'adicionar': c.execute("INSERT INTO equipe (nome, expedicao, revisao) VALUES (?, ?, ?)", (nome_atual, expedicao, revisao))
-        elif acao == 'remover': c.execute("DELETE FROM equipe WHERE nome = ?", (nome_atual,))
-        elif acao == 'substituir': c.execute("UPDATE equipe SET nome = ?, expedicao = ?, revisao = ? WHERE nome = ?", (novo_nome, expedicao, revisao, nome_atual))
-        elif acao == 'editar': c.execute("UPDATE equipe SET expedicao = ?, revisao = ? WHERE nome = ?", (expedicao, revisao, nome_atual)) # NOVA LINHA AQUI
-        conn.commit()
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            if acao == 'adicionar': c.execute("INSERT INTO equipe (nome, expedicao, revisao) VALUES (?, ?, ?)", (nome_atual, expedicao, revisao))
+            elif acao == 'remover': c.execute("DELETE FROM equipe WHERE nome = ?", (nome_atual,))
+            elif acao == 'substituir': c.execute("UPDATE equipe SET nome = ?, expedicao = ?, revisao = ? WHERE nome = ?", (novo_nome, expedicao, revisao, nome_atual))
+            elif acao == 'editar': c.execute("UPDATE equipe SET expedicao = ?, revisao = ? WHERE nome = ?", (expedicao, revisao, nome_atual))
         return True, "✅ Operação realizada com sucesso!"
     except sqlite3.IntegrityError: return False, "❌ Erro: Este usuário já existe."
     except Exception as e: return False, f"❌ Erro no banco de dados: {e}"
-    finally: conn.close()
 
 def remover_processo(numero_processo, nome_sessao):
-    conn = sqlite3.connect('gestao_processos.db')
-    c = conn.cursor()
-    c.execute("SELECT id FROM processos WHERE numero_processo = ? AND nome_sessao = ?", (numero_processo, nome_sessao))
-    resultado = c.fetchone()
-    if not resultado:
-        conn.close()
-        return False, f"❌ Processo '{numero_processo}' não encontrado na sessão do dia {nome_sessao}."
-    c.execute("DELETE FROM processos WHERE id = ?", (resultado[0],))
-    conn.commit()
-    conn.close()
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT id FROM processos WHERE numero_processo = ? AND nome_sessao = ?", (numero_processo, nome_sessao))
+        resultado = c.fetchone()
+        if not resultado:
+            return False, f"❌ Processo '{numero_processo}' não encontrado na sessão do dia {nome_sessao}."
+        c.execute("DELETE FROM processos WHERE id = ?", (resultado[0],))
     return True, f"✅ Processo '{numero_processo}' foi removido da pauta com sucesso!"
 
 def apagar_sessao_especifica(tipo_sessao, nome_sessao):
-    conn = sqlite3.connect('gestao_processos.db')
-    conn.execute('DELETE FROM processos WHERE tipo_sessao = ? AND nome_sessao = ?', (tipo_sessao, nome_sessao))
-    conn.commit()
-    conn.close()
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute('DELETE FROM processos WHERE tipo_sessao = ? AND nome_sessao = ?', (tipo_sessao, nome_sessao))
 
 def processo_existe(numero_processo):
-    conn = sqlite3.connect('gestao_processos.db')
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM processos WHERE numero_processo = ?", (numero_processo,))
-    existe = c.fetchone()[0] > 0
-    conn.close()
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM processos WHERE numero_processo = ?", (numero_processo,))
+        existe = c.fetchone()[0] > 0
     return existe
 
 def marcar_urgente(numero_processo):
-    conn = sqlite3.connect('gestao_processos.db')
-    c = conn.cursor()
-    c.execute("SELECT id FROM processos WHERE numero_processo = ?", (numero_processo,))
-    if not c.fetchone():
-        conn.close()
-        return False, f"❌ Processo {numero_processo} não encontrado. Insira-o na sua sessão normal primeiro."
-    conn.execute('UPDATE processos SET urgente = 1 WHERE numero_processo = ?', (numero_processo,))
-    conn.commit()
-    conn.close()
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT id FROM processos WHERE numero_processo = ?", (numero_processo,))
+        if not c.fetchone():
+            return False, f"❌ Processo {numero_processo} não encontrado. Insira-o na sua sessão normal primeiro."
+        conn.execute('UPDATE processos SET urgente = 1 WHERE numero_processo = ?', (numero_processo,))
     return True, f"🚨 Processo {numero_processo} destacado como URGENTE!"
 
 def atualizar_processo(id_processo, expedicao, revisao, expedido, revisado, despachado,
                        mudou_exp, mudou_rev, mudou_desp, email=False, mensageria=False, recebido=False):
-    conn = sqlite3.connect('gestao_processos.db')
     agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute('''UPDATE processos 
+                        SET expedicao = ?, revisao = ?, expedido_ok = ?, revisado_ok = ?, 
+                            despachado = ?, enviado_email = ?, enviado_mensageria = ?, recebido = ? 
+                        WHERE id = ?''', 
+                     (expedicao, revisao, int(expedido), int(revisado), int(despachado), 
+                      int(email), int(mensageria), int(recebido), id_processo))
 
-    conn.execute('''UPDATE processos
-                    SET expedicao = ?, revisao = ?, expedido_ok = ?, revisado_ok = ?,
-                        despachado = ?, enviado_email = ?, enviado_mensageria = ?, recebido = ?
-                    WHERE id = ?''',
-                 (expedicao, revisao, int(expedido), int(revisado), int(despachado),
-                  int(email), int(mensageria), int(recebido), id_processo))
+        if mudou_exp:
+            if expedido: conn.execute('UPDATE processos SET data_expedido = ? WHERE id = ?', (agora, id_processo))
+            else: conn.execute('UPDATE processos SET data_expedido = NULL WHERE id = ?', (id_processo,))
 
-    if mudou_exp:
-        if expedido: conn.execute('UPDATE processos SET data_expedido = ? WHERE id = ?', (agora, id_processo))
-        else: conn.execute('UPDATE processos SET data_expedido = NULL WHERE id = ?', (id_processo,))
+        if mudou_rev:
+            if revisado: conn.execute('UPDATE processos SET data_revisado = ? WHERE id = ?', (agora, id_processo))
+            else: conn.execute('UPDATE processos SET data_revisado = NULL WHERE id = ?', (id_processo,))
 
-    if mudou_rev:
-        if revisado: conn.execute('UPDATE processos SET data_revisado = ? WHERE id = ?', (agora, id_processo))
-        else: conn.execute('UPDATE processos SET data_revisado = NULL WHERE id = ?', (id_processo,))
-
-    if mudou_desp:
-        if despachado: conn.execute('UPDATE processos SET data_conclusao = ? WHERE id = ?', (agora, id_processo))
-        else: conn.execute('UPDATE processos SET data_conclusao = NULL WHERE id = ?', (id_processo,))
-
-    conn.commit()
-    conn.close()
+        if mudou_desp:
+            if despachado: conn.execute('UPDATE processos SET data_conclusao = ? WHERE id = ?', (agora, id_processo))
+            else: conn.execute('UPDATE processos SET data_conclusao = NULL WHERE id = ?', (id_processo,))
 
 def obter_expedidor(elegiveis, nome_sessao):
     if not elegiveis: return "Nenhum escalado"
-    conn = sqlite3.connect('gestao_processos.db')
-    c = conn.cursor()
     contagem = {p: 0 for p in elegiveis}
-    c.execute("SELECT expedicao, COUNT(*) FROM processos WHERE expedicao IS NOT NULL AND nome_sessao = ? GROUP BY expedicao", (nome_sessao,))
-    for row in c.fetchall():
-        if row[0] in contagem: contagem[row[0]] = row[1]
-    conn.close()
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT expedicao, COUNT(*) FROM processos WHERE expedicao IS NOT NULL AND nome_sessao = ? GROUP BY expedicao", (nome_sessao,))
+        for row in c.fetchall():
+            if row[0] in contagem: contagem[row[0]] = row[1]
     return min(contagem, key=contagem.get)
 
 def obter_revisor(expedidor, nome_sessao, revisores_ativos):
     if not revisores_ativos: return "Nenhum escalado"
-    conn = sqlite3.connect('gestao_processos.db')
-    c = conn.cursor()
-    c.execute("SELECT revisao FROM processos WHERE expedicao = ? AND nome_sessao = ? LIMIT 1", (expedidor, nome_sessao))
-    resultado = c.fetchone()
-    if resultado and resultado[0] in revisores_ativos:
-        conn.close()
-        return resultado[0]
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT revisao FROM processos WHERE expedicao = ? AND nome_sessao = ? LIMIT 1", (expedidor, nome_sessao))
+        resultado = c.fetchone()
+        if resultado and resultado[0] in revisores_ativos:
+            return resultado[0]
 
-    candidatos = [r for r in revisores_ativos if r != expedidor]
-    if not candidatos: return "Sem Revisor (Conflito)"
+        candidatos = [r for r in revisores_ativos if r != expedidor]
+        if not candidatos: return "Sem Revisor (Conflito)"
 
-    melhor_cand = None
-    menor_score = (float('inf'), float('inf'), float('inf'), float('inf'), float('inf'))
+        melhor_cand = None
+        menor_score = (float('inf'), float('inf'), float('inf'), float('inf'), float('inf'))
 
-    for cand in candidatos:
-        c.execute("SELECT COUNT(DISTINCT expedicao) FROM processos WHERE revisao = ? AND nome_sessao = ?", (cand, nome_sessao))
-        parcerias_sessao = c.fetchone()[0]
-        c.execute("SELECT COUNT(*) FROM processos WHERE expedicao = ? AND revisao = ? AND nome_sessao = ?", (cand, expedidor, nome_sessao))
-        is_reciprocal = 1 if c.fetchone()[0] > 0 else 0
-        c.execute("SELECT COUNT(*) FROM processos WHERE revisao = ? AND nome_sessao = ?", (cand, nome_sessao))
-        carga_sessao = c.fetchone()[0]
-        c.execute("SELECT COUNT(DISTINCT nome_sessao) FROM processos WHERE expedicao = ? AND revisao = ? AND nome_sessao != ?", (expedidor, cand, nome_sessao))
-        vezes_parceiro = c.fetchone()[0]
-        c.execute("SELECT COUNT(*) FROM processos WHERE revisao = ?", (cand,))
-        carga_total = c.fetchone()[0]
+        for cand in candidatos:
+            c.execute("SELECT COUNT(DISTINCT expedicao) FROM processos WHERE revisao = ? AND nome_sessao = ?", (cand, nome_sessao))
+            parcerias_sessao = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM processos WHERE expedicao = ? AND revisao = ? AND nome_sessao = ?", (cand, expedidor, nome_sessao))
+            is_reciprocal = 1 if c.fetchone()[0] > 0 else 0
+            c.execute("SELECT COUNT(*) FROM processos WHERE revisao = ? AND nome_sessao = ?", (cand, nome_sessao))
+            carga_sessao = c.fetchone()[0]
+            c.execute("SELECT COUNT(DISTINCT nome_sessao) FROM processos WHERE expedicao = ? AND revisao = ? AND nome_sessao != ?", (expedidor, cand, nome_sessao))
+            vezes_parceiro = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM processos WHERE revisao = ?", (cand,))
+            carga_total = c.fetchone()[0]
 
-        score = (parcerias_sessao, is_reciprocal, carga_sessao, vezes_parceiro, carga_total)
-        if score < menor_score:
-            menor_score = score
-            melhor_cand = cand
+            score = (parcerias_sessao, is_reciprocal, carga_sessao, vezes_parceiro, carga_total)
+            if score < menor_score:
+                menor_score = score
+                melhor_cand = cand
 
-    conn.close()
     return melhor_cand
 
 def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, expedidores, revisores):
@@ -199,29 +179,24 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
     responsavel_revisao = obter_revisor(responsavel_expedicao, nome_sessao, rev_seguros)
     data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
-    conn = sqlite3.connect('gestao_processos.db')
-    conn.execute('''INSERT INTO processos (numero_processo, relator, tipo_sessao, nome_sessao, expedicao, revisao, data_entrada,
-                                           expedido_ok, revisado_ok, despachado, urgente, enviado_email, enviado_mensageria, recebido)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0)''',
-                 (numero_processo, relator, tipo_sessao, nome_sessao, responsavel_expedicao, responsavel_revisao, data_atual))
-    conn.commit()
-    conn.close()
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute('''INSERT INTO processos (numero_processo, relator, tipo_sessao, nome_sessao, expedicao, revisao, data_entrada, 
+                                               expedido_ok, revisado_ok, despachado, urgente, enviado_email, enviado_mensageria, recebido) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0)''', 
+                     (numero_processo, relator, tipo_sessao, nome_sessao, responsavel_expedicao, responsavel_revisao, data_atual))
     return True, f"✅ Distribuído! Expedição: **{responsavel_expedicao}** | Revisão: **{responsavel_revisao}**"
 
 def carregar_dados(tipo_sessao=None):
-    conn = sqlite3.connect('gestao_processos.db')
-    if tipo_sessao: df = pd.read_sql_query(f"SELECT * FROM processos WHERE tipo_sessao = '{tipo_sessao}'", conn)
-    else: df = pd.read_sql_query("SELECT * FROM processos", conn)
-    conn.close()
+    with sqlite3.connect(DB_PATH) as conn:
+        if tipo_sessao: df = pd.read_sql_query(f"SELECT * FROM processos WHERE tipo_sessao = '{tipo_sessao}'", conn)
+        else: df = pd.read_sql_query("SELECT * FROM processos", conn)
     return df
 
 def restaurar_backup(df_backup):
     try:
-        conn = sqlite3.connect('gestao_processos.db')
-        conn.execute('DELETE FROM processos')
-        df_backup.to_sql('processos', conn, if_exists='append', index=False)
-        conn.commit()
-        conn.close()
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute('DELETE FROM processos')
+            df_backup.to_sql('processos', conn, if_exists='append', index=False)
         return True, "✅ Dados restaurados com sucesso! O sistema voltou ao estado do backup."
     except Exception as e:
         return False, f"❌ Erro ao tentar restaurar os dados: {e}"
