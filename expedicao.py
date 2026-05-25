@@ -49,6 +49,15 @@ def init_db():
                                           motivo TEXT
                      )''')
 
+        # --- NOVA TABELA: MURAL DE AVISOS ---
+        c.execute('''CREATE TABLE IF NOT EXISTS avisos (
+                                          id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                          usuario TEXT,
+                                          numero_processo TEXT,
+                                          mensagem TEXT,
+                                          data_criacao TEXT
+                     )''')
+        
         c.execute("SELECT COUNT(*) FROM equipe")
         if c.fetchone()[0] == 0:
             iniciais = [
@@ -242,6 +251,34 @@ def restaurar_backup(df_backup):
 init_db()
 EQUIPE_EXPEDICAO, EQUIPE_REVISAO, TODOS_NOMES = carregar_equipes()
 
+def adicionar_aviso(usuario, numero_processo, mensagem):
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        # Verifica se o processo existe e se não está despachado
+        c.execute("SELECT despachado FROM processos WHERE numero_processo = ?", (numero_processo,))
+        res = c.fetchone()
+        if not res:
+            return False, f"❌ Processo '{numero_processo}' não encontrado no sistema."
+        if res[0] == 1:
+            return False, f"❌ O processo '{numero_processo}' já foi concluído/despachado."
+        
+        agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        c.execute("INSERT INTO avisos (usuario, numero_processo, mensagem, data_criacao) VALUES (?, ?, ?, ?)",
+                  (usuario, numero_processo, mensagem, agora))
+    return True, "✅ Aviso publicado no letreiro!"
+
+def obter_avisos_pendentes():
+    # Puxa os avisos apenas se o processo correspondente estiver com despachado = 0
+    with sqlite3.connect(DB_PATH) as conn:
+        query = '''
+            SELECT a.usuario, a.numero_processo, p.nome_sessao, a.mensagem 
+            FROM avisos a
+            JOIN processos p ON a.numero_processo = p.numero_processo
+            WHERE p.despachado = 0
+        '''
+        df_avisos = pd.read_sql_query(query, conn)
+    return df_avisos
+
 # ==========================================
 # 2. FRONTEND: INTERFACE DO USUÁRIO
 # ==========================================
@@ -264,6 +301,34 @@ if not df_geral_status.empty:
     sessoes_stats = df_geral_status.groupby('nome_sessao')['despachado'].agg(['count', 'sum']).reset_index()
     sessoes_finalizadas = sessoes_stats[sessoes_stats['count'] == sessoes_stats['sum']]['nome_sessao'].tolist()
 
+st.set_page_config(page_title="Sistema de Sessões", layout="wide")
+st.title("⚖️ Sistema Automático de Distribuição de Processos para Expedição")
+
+# ==========================================
+# 📢 LETREIRO DE AVISOS (MURAL DINÂMICO)
+# ==========================================
+df_avisos = obter_avisos_pendentes()
+if not df_avisos.empty:
+    textos_aviso = []
+    for _, row in df_avisos.iterrows():
+        textos_aviso.append(f"🚨 <b>{row['usuario']}</b>: Processo <b>{row['numero_processo']}</b> ({row['nome_sessao']}) ➔ {row['mensagem']}")
+    
+    # Junta todos os avisos com um separador visual
+    texto_marquee = " &nbsp;&nbsp;&nbsp;&nbsp; | &nbsp;&nbsp;&nbsp;&nbsp; ".join(textos_aviso)
+    
+    # Cria o letreiro animado em HTML
+    st.markdown(f"""
+        <marquee behavior="scroll" direction="left" scrollamount="8" 
+                 style="background-color: #ff4b4b; color: white; padding: 10px; 
+                        font-size: 18px; border-radius: 5px; margin-bottom: 20px; font-weight: 500;">
+            {texto_marquee}
+        </marquee>
+    """, unsafe_allow_html=True)
+# ==========================================
+
+aba_inserir, aba_sessoes, aba_controle, aba_historico, aba_dados, aba_ajuda = st.tabs([
+# ... (restante do código das abas)
+    
 # ------------------------------------------
 # ABA 1: INSERÇÃO E DISTRIBUIÇÃO
 # ------------------------------------------
