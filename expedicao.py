@@ -408,7 +408,7 @@ with aba_controle:
     st.markdown("---")
     with st.expander("⚙️ Área Administrativa Avançada (Equipe e Banco de Dados)"):
         st.subheader("👥 Gestão de Colaboradores")
-        acao_equipe = st.radio("Selecione a ação:", ["Adicionar Novo", "Substituir Nome", "Remover Colaborador"], horizontal=True)
+        acao_equipe = st.radio("Selecione a ação:", ["Adicionar Novo", "Editar Permissões", "Substituir Nome", "Remover Colaborador"], horizontal=True)
 
         if acao_equipe == "Adicionar Novo":
             col1, col2 = st.columns(2)
