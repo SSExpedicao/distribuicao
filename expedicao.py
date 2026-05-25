@@ -417,7 +417,19 @@ with aba_controle:
             if st.button("➕ Adicionar", type="primary", key="add_user"):
                 ok, m = gerenciar_usuario('adicionar', novo_colab, expedicao=int(faz_exp), revisao=int(faz_rev))
                 if ok: st.success(m); time.sleep(1); st.rerun()
-
+                    
+        elif acao_equipe == "Editar Permissões":
+            col1, col2, col3 = st.columns(3)
+            colab_editar = col1.selectbox("Selecione o colaborador", TODOS_NOMES)
+            faz_exp = col2.checkbox("Participa da Expedição", value=True, key="edit_exp")
+            faz_rev = col3.checkbox("Participa da Revisão", value=True, key="edit_rev")
+            if st.button("✏️ Atualizar Permissões", type="primary", key="edit_user"):
+                ok, m = gerenciar_usuario('editar', colab_editar, expedicao=int(faz_exp), revisao=int(faz_rev))
+                if ok: 
+                    st.success(m)
+                    time.sleep(1)
+                    st.rerun()
+                    
         elif acao_equipe == "Substituir Nome":
             col1, col2, col3 = st.columns(3)
             colab_atual = col1.selectbox("Quem vai sair?", TODOS_NOMES)
