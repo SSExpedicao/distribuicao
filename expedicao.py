@@ -281,19 +281,17 @@ def obter_avisos_pendentes():
 
 def carregar_historico_avisos():
     with sqlite3.connect(DB_PATH) as conn:
-        # O LEFT JOIN garante que mesmo se o processo foi excluído, o aviso aparece!
+        # Adicionado o 'AS status' ao final do CASE para o pandas reconhecer a coluna
         query = '''
             SELECT a.numero_processo, a.usuario, a.mensagem, a.data_criacao,
                    CASE 
                        WHEN p.despachado = 1 THEN '✅ Concluído (Despachado)'
                        WHEN p.numero_processo IS NULL THEN '❌ Processo Removido/Fora de Pauta'
                        ELSE '⏳ Ativo no Letreiro'
-                   GENERATE_STATUS_COLUMN_END
+                   END AS status
             FROM avisos a
             LEFT JOIN processos p ON a.numero_processo = p.numero_processo
         '''
-        # Corrigindo uma pequena palavra reservada do SQL que usei acima para o SQLite aceitar:
-        query = query.replace("GENERATE_STATUS_COLUMN_END", "END")
         df = pd.read_sql_query(query, conn)
     return df
 
