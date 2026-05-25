@@ -505,13 +505,20 @@ with aba_historico:
 with aba_dados:
     st.subheader("📈 Relatórios de Agilidade e Desempenho")
     df_dados = carregar_dados()
-    if df_dados.empty or 'data_expedido' not in df_dados.columns: st.info("📊 Comece a despachar processos no Painel Ativo para gerar estatísticas.")
+    
+    if df_dados.empty or 'data_expedido' not in df_dados.columns: 
+        st.info("📊 Comece a despachar processos no Painel Ativo para gerar estatísticas.")
     else:
+        # Função para converter as strings em datas reais
         def parse_datas(df_in):
             for c in ['data_entrada', 'data_expedido', 'data_revisado', 'data_conclusao']:
+                # Tenta o formato com segundos, se falhar, tenta sem segundos
                 df_in[c + '_dt'] = pd.to_datetime(df_in[c], format="%d/%m/%Y %H:%M:%S", errors='coerce').fillna(pd.to_datetime(df_in[c], format="%d/%m/%Y %H:%M", errors='coerce'))
             return df_in
+            
         df_dados = parse_datas(df_dados)
+        
+        # Cálculos de tempo (em minutos)
         df_dados['minutos_expedicao'] = (df_dados['data_expedido_dt'] - df_dados['data_entrada_dt']).dt.total_seconds() / 60
         df_dados['minutos_revisao'] = (df_dados['data_revisado_dt'] - df_dados['data_expedido_dt']).dt.total_seconds() / 60
         df_dados['minutos_total'] = (df_dados['data_conclusao_dt'] - df_dados['data_entrada_dt']).dt.total_seconds() / 60
@@ -520,12 +527,76 @@ with aba_dados:
             if pd.isna(minutos) or minutos < 0: return "N/A"
             return f"{int(minutos)} min" if int(minutos) < 60 else f"{int(minutos) // 60}h {int(minutos) % 60}m"
 
-        df_exp, df_rev = df_dados.dropna(subset=['minutos_expedicao']), df_dados.dropna(subset=['minutos_revisao'])
-        st.markdown("### ⏱️ Tempos Médios (Por Processo)")
-        col1, col2, col4 = st.columns(3)
-        with col1: st.metric("De Entrada até Expedido", format_tempo(df_exp['minutos_expedicao'].mean()) if not df_exp.empty else "N/A")
-        with col2: st.metric("De Expedido até Revisado", format_tempo(df_rev['minutos_revisao'].mean()) if not df_rev.empty else "N/A")
-        with col4: st.metric("Ciclo Completo (Média)", format_tempo(df_dados.dropna(subset=['minutos_total'])['minutos_total'].mean()) if not df_dados.dropna(subset=['minutos_total']).empty else "N/A")
+        # --- 1. MÉDIAS GERAIS (TODAS AS SESSÕES) ---
+        st.markdown("### 🌎 Visão Geral (Todo o Histórico)")
+        df_exp = df_dados.dropna(subset=['minutos_expedicao'])
+        df_rev = df_dados.dropna(subset=['minutos_revisao'])
+        df_conc = df_dados.dropna(subset=['minutos_total'])
+
+        col1, col2, col3, col4 = st.columns(4)
+        with col1: st.metric("Média Geral - Expedição", format_tempo(df_exp['minutos_expedicao'].mean()) if not df_exp.empty else "N/A")
+        with col2: st.metric("Média Geral - Revisão", format_tempo(df_rev['minutos_revisao'].mean()) if not df_rev.empty else "N/A")
+        with col3: st.metric("Média Geral - Ciclo (Até Despacho)", format_tempo(df_conc['minutos_total'].mean()) if not df_conc.empty else "N/A")
+        with col4: st.metric("Total Geral de Processos Despachados", len(df_dados[df_dados['despachado'] == 1]))
+
+        st.markdown("---")
+
+        # --- 2. DESEMPENHO DETALHADO POR SESSÃO ---
+        st.markdown("### 📅 Desempenho Detalhado por Sessão")
+        
+        # Filtro para escolher a sessão
+        sessoes_disponiveis = sorted(df_dados['nome_sessao'].unique(), reverse=True)
+        sessao_sel = st.selectbox("Selecione a Sessão para análise:", sessoes_disponiveis)
+        
+        # Filtrar o DataFrame apenas para a sessão escolhida
+        df_s = df_dados[df_dados['nome_sessao'] == sessao_sel]
+        
+        # Cálculo: Tempo total que a sessão demorou para ser finalizada
+        inicio_sessao = df_s['data_entrada_dt'].min()
+        fim_sessao = df_s['data_conclusao_dt'].max()
+        
+        duracao_sessao = None
+        if pd.notna(inicio_sessao) and pd.notna(fim_sessao):
+            duracao_sessao = (fim_sessao - inicio_sessao).total_seconds() / 60
+            
+        st.info(f"⏳ **Tempo Total da Sessão ({sessao_sel}):** {format_tempo(duracao_sessao)} *(Calculado do 1º processo inserido até o último ser despachado)*")
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        col_a, col_b = st.columns(2)
+        
+        # Tabela de Expedição
+        with col_a:
+            st.markdown("#### 🛡️ Desempenho: Equipe de Expedição")
+            if not df_s.empty:
+                # Agrupando por quem fez a expedição
+                exp_stats = df_s.groupby('expedicao').agg(
+                    Processos=('id', 'count'),
+                    Despachados=('expedido_ok', 'sum'),
+                    Tempo_Medio=('minutos_expedicao', 'mean')
+                ).reset_index()
+                
+                # Formatando os números para visualização
+                exp_stats['Tempo_Medio'] = exp_stats['Tempo_Medio'].apply(format_tempo)
+                exp_stats = exp_stats.rename(columns={'expedicao': 'Colaborador', 'Processos': 'Volume Total', 'Despachados': 'Concluídos', 'Tempo_Medio': 'Média/Processo'})
+                
+                st.dataframe(exp_stats, hide_index=True, use_container_width=True)
+
+        # Tabela de Revisão
+        with col_b:
+            st.markdown("#### 🔍 Desempenho: Equipe de Revisão")
+            if not df_s.empty:
+                # Agrupando por quem fez a revisão
+                rev_stats = df_s.groupby('revisao').agg(
+                    Processos=('id', 'count'),
+                    Despachados=('revisado_ok', 'sum'),
+                    Tempo_Medio=('minutos_revisao', 'mean')
+                ).reset_index()
+                
+                # Formatando os números para visualização
+                rev_stats['Tempo_Medio'] = rev_stats['Tempo_Medio'].apply(format_tempo)
+                rev_stats = rev_stats.rename(columns={'revisao': 'Colaborador', 'Processos': 'Volume Total', 'Despachados': 'Concluídos', 'Tempo_Medio': 'Média/Processo'})
+                
+                st.dataframe(rev_stats, hide_index=True, use_container_width=True)
 
 # ------------------------------------------
 # ABA 6: AJUDA E GLOSSÁRIO
