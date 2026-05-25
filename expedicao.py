@@ -279,6 +279,24 @@ def obter_avisos_pendentes():
         df_avisos = pd.read_sql_query(query, conn)
     return df_avisos
 
+def carregar_historico_avisos():
+    with sqlite3.connect(DB_PATH) as conn:
+        # O LEFT JOIN garante que mesmo se o processo foi excluído, o aviso aparece!
+        query = '''
+            SELECT a.numero_processo, a.usuario, a.mensagem, a.data_criacao,
+                   CASE 
+                       WHEN p.despachado = 1 THEN '✅ Concluído (Despachado)'
+                       WHEN p.numero_processo IS NULL THEN '❌ Processo Removido/Fora de Pauta'
+                       ELSE '⏳ Ativo no Letreiro'
+                   GENERATE_STATUS_COLUMN_END
+            FROM avisos a
+            LEFT JOIN processos p ON a.numero_processo = p.numero_processo
+        '''
+        # Corrigindo uma pequena palavra reservada do SQL que usei acima para o SQLite aceitar:
+        query = query.replace("GENERATE_STATUS_COLUMN_END", "END")
+        df = pd.read_sql_query(query, conn)
+    return df
+
 # ==========================================
 # 2. FRONTEND: INTERFACE DO USUÁRIO
 # ==========================================
@@ -629,15 +647,18 @@ with aba_controle:
                 time.sleep(1.5)
                 st.rerun()
 # ------------------------------------------
-# ABA 4: HISTÓRICO DE SESSÕES FINALIZADAS E EXCLUÍDOS
+# ABA 4: HISTÓRICO, EXCLUSÕES E AVISOS
 # ------------------------------------------
 with aba_historico:
-    sub_aba_concluidas, sub_aba_lixeira = st.tabs(["✅ Arquivo: Concluídas", "🗑️ Auditoria: Processos Excluídos"])
+    sub_aba_concluidas, sub_aba_lixeira, sub_aba_hist_avisos = st.tabs([
+        "✅ Arquivo: Concluídas", 
+        "🗑️ Auditoria: Processos Excluídos",
+        "📢 Auditoria: Histórico de Avisos"
+    ])
 
-    # --- ABA DAS CONCLUÍDAS (O que já estava pronto) ---
+    # --- sub-aba 1: CONCLUÍDAS ---
     with sub_aba_concluidas:
         st.subheader("Sessões 100% Concluídas")
-        
         if sessoes_finalizadas:
             df_historico = df_geral_status[df_geral_status['nome_sessao'].isin(sessoes_finalizadas)].copy()
             df_historico_display = df_historico[['numero_processo', 'urgente', 'relator', 'expedicao', 'revisao', 'data_conclusao', 'tipo_sessao', 'nome_sessao']].copy()
@@ -668,27 +689,41 @@ with aba_historico:
             else: st.warning("Nenhum processo encontrado com esses filtros.")
         else: st.info("📭 O histórico está vazio. Nenhuma sessão foi 100% concluída ainda.")
 
-    # --- ABA DA LIXEIRA (A novidade) ---
+    # --- sub-aba 2: LIXEIRA ---
     with sub_aba_lixeira:
-        st.subheader("Registro de Exclusões (Auditoria)")
+        st.subheader("Registro de Exclusões (Auditoria de Pauta)")
         df_excluidos = carregar_excluidos()
-        
         if not df_excluidos.empty:
-            df_excluidos_display = df_excluidos.rename(columns={
-                'numero_processo': 'Processo',
-                'relator': 'Relator',
-                'data_exclusao': 'Data/Hora da Exclusão',
-                'motivo': 'Motivo Declarado'
-            })
-            
-            # Mostra a tabela invertida (mais recentes primeiro)
+            df_excluidos_display = df_excluidos.rename(columns={'numero_processo': 'Processo', 'relator': 'Relator', 'data_exclusao': 'Data/Hora da Exclusão', 'motivo': 'Motivo Declarado'})
             st.dataframe(df_excluidos_display[['Processo', 'Relator', 'Motivo Declarado', 'Data/Hora da Exclusão']].iloc[::-1], hide_index=True, use_container_width=True)
-            
-            # Botão extra para baixar o relatório da lixeira
             csv_lixo = df_excluidos_display.to_csv(index=False).encode('utf-8')
             st.download_button(label="📥 Baixar Relatório de Exclusões (CSV)", data=csv_lixo, file_name="auditoria_exclusoes.csv", mime='text/csv', type="secondary")
         else:
             st.success("✨ A lixeira está vazia. Nenhum processo foi apagado do sistema.")
+
+    # --- sub-aba 3: HISTÓRICO DE AVISOS (A NOVA PLANILHA!) ---
+    with sub_aba_hist_avisos:
+        st.subheader("Histórico Completo de Avisos Publicados")
+        df_hist_av = carregar_historico_avisos()
+        
+        if not df_hist_av.empty:
+            df_hist_av_display = df_hist_av.rename(columns={
+                'numero_processo': 'Processo',
+                'usuario': 'Destinatário do Alerta',
+                'mensagem': 'Comunicado / Ordem',
+                'data_criacao': 'Data/Hora de Publicação',
+                'status': 'Situação Atual'
+            })
+            
+            # Reorganiza as colunas para ficar visualmente perfeito
+            colunas_ordem = ['Processo', 'Destinatário do Alerta', 'Comunicado / Ordem', 'Data/Hora de Publicação', 'Situação Atual']
+            st.dataframe(df_hist_av_display[colunas_ordem].iloc[::-1], hide_index=True, use_container_width=True)
+            
+            # Botão para baixar a planilha de auditoria de avisos
+            csv_avisos = df_hist_av_display[colunas_ordem].to_csv(index=False).encode('utf-8')
+            st.download_button(label="📥 Baixar Relatório de Avisos (CSV)", data=csv_avisos, file_name="auditoria_mural_avisos.csv", mime='text/csv', type="secondary")
+        else:
+            st.info("📢 Nenhum comunicado foi publicado no mural de avisos até o momento.")
 # ------------------------------------------
 # ABA 5: DADOS & DESEMPENHO (ANALYTICS)
 # ------------------------------------------
