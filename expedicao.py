@@ -39,6 +39,15 @@ def init_db():
                                        expedicao INTEGER DEFAULT 0,
                                        revisao INTEGER DEFAULT 0
                      )''')
+                     
+        # --- NOVA TABELA: LIXEIRA / AUDITORIA ---
+        c.execute('''CREATE TABLE IF NOT EXISTS processos_excluidos (
+                                          id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                          numero_processo TEXT,
+                                          relator TEXT,
+                                          data_exclusao TEXT,
+                                          motivo TEXT
+                     )''')
 
         c.execute("SELECT COUNT(*) FROM equipe")
         if c.fetchone()[0] == 0:
@@ -72,20 +81,49 @@ def gerenciar_usuario(acao, nome_atual, novo_nome=None, expedicao=0, revisao=0):
     except sqlite3.IntegrityError: return False, "❌ Erro: Este usuário já existe."
     except Exception as e: return False, f"❌ Erro no banco de dados: {e}"
 
-def remover_processo(numero_processo, nome_sessao):
+def remover_processo(numero_processo, nome_sessao, motivo):
+    agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
-        c.execute("SELECT id FROM processos WHERE numero_processo = ? AND nome_sessao = ?", (numero_processo, nome_sessao))
+        # 1. Pega os dados antes de apagar
+        c.execute("SELECT id, relator FROM processos WHERE numero_processo = ? AND nome_sessao = ?", (numero_processo, nome_sessao))
         resultado = c.fetchone()
+        
         if not resultado:
             return False, f"❌ Processo '{numero_processo}' não encontrado na sessão do dia {nome_sessao}."
-        c.execute("DELETE FROM processos WHERE id = ?", (resultado[0],))
-    return True, f"✅ Processo '{numero_processo}' foi removido da pauta com sucesso!"
+            
+        id_proc, relator = resultado
+        
+        # 2. Salva na Lixeira
+        c.execute("INSERT INTO processos_excluidos (numero_processo, relator, data_exclusao, motivo) VALUES (?, ?, ?, ?)",
+                  (numero_processo, relator, agora, motivo))
+                  
+        # 3. Apaga do sistema ativo
+        c.execute("DELETE FROM processos WHERE id = ?", (id_proc,))
+    return True, f"✅ Processo '{numero_processo}' removido e enviado para o histórico de exclusões!"
 
-def apagar_sessao_especifica(tipo_sessao, nome_sessao):
+def apagar_sessao_especifica(tipo_sessao, nome_sessao, motivo):
+    agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        
+        # 1. Pega todos os processos dessa sessão
+        c.execute("SELECT numero_processo, relator FROM processos WHERE tipo_sessao = ? AND nome_sessao = ?", (tipo_sessao, nome_sessao))
+        processos_sessao = c.fetchall()
+
+        # 2. Salva todos na Lixeira
+        for proc in processos_sessao:
+            c.execute("INSERT INTO processos_excluidos (numero_processo, relator, data_exclusao, motivo) VALUES (?, ?, ?, ?)",
+                      (proc[0], proc[1], agora, motivo))
+
+        # 3. Apaga a sessão do sistema ativo
         conn.execute('DELETE FROM processos WHERE tipo_sessao = ? AND nome_sessao = ?', (tipo_sessao, nome_sessao))
 
+def carregar_excluidos():
+    with sqlite3.connect(DB_PATH) as conn:
+        df = pd.read_sql_query("SELECT * FROM processos_excluidos", conn)
+    return df
+    
 def processo_existe(numero_processo):
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
