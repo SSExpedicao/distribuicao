@@ -285,6 +285,28 @@ def obter_avisos_pendentes():
 st.set_page_config(page_title="Sistema de Sessões", layout="wide")
 st.title("⚖️ Sistema Automático de Distribuição de Processos para Expedição")
 
+# ==========================================
+# 📢 LETREIRO DE AVISOS (MURAL DINÂMICO)
+# ==========================================
+df_avisos = obter_avisos_pendentes()
+if not df_avisos.empty:
+    textos_aviso = []
+    for _, row in df_avisos.iterrows():
+        textos_aviso.append(f"🚨 <b>{row['usuario']}</b>: Processo <b>{row['numero_processo']}</b> ({row['nome_sessao']}) ➔ {row['mensagem']}")
+    
+    # Junta todos os avisos com um separador visual
+    texto_marquee = " &nbsp;&nbsp;&nbsp;&nbsp; | &nbsp;&nbsp;&nbsp;&nbsp; ".join(textos_aviso)
+    
+    # Cria o letreiro animado em HTML
+    st.markdown(f"""
+        <marquee behavior="scroll" direction="left" scrollamount="8" 
+                 style="background-color: #ff4b4b; color: white; padding: 10px; 
+                        font-size: 18px; border-radius: 5px; margin-bottom: 20px; font-weight: 500;">
+            {texto_marquee}
+        </marquee>
+    """, unsafe_allow_html=True)
+# ==========================================
+
 aba_inserir, aba_sessoes, aba_controle, aba_historico, aba_dados, aba_ajuda = st.tabs([
     "📥 1. Inserir Novos",
     "🗂️ 2. Painel Ativo",
@@ -295,14 +317,6 @@ aba_inserir, aba_sessoes, aba_controle, aba_historico, aba_dados, aba_ajuda = st
 ])
 
 nome_sessao_atual = datetime.now().strftime("%d/%m/%Y")
-df_geral_status = carregar_dados()
-sessoes_finalizadas = []
-if not df_geral_status.empty:
-    sessoes_stats = df_geral_status.groupby('nome_sessao')['despachado'].agg(['count', 'sum']).reset_index()
-    sessoes_finalizadas = sessoes_stats[sessoes_stats['count'] == sessoes_stats['sum']]['nome_sessao'].tolist()
-
-st.set_page_config(page_title="Sistema de Sessões", layout="wide")
-st.title("⚖️ Sistema Automático de Distribuição de Processos para Expedição")
 
 # ==========================================
 # 📢 LETREIRO DE AVISOS (MURAL DINÂMICO)
@@ -533,6 +547,31 @@ with aba_controle:
 
     st.markdown("---")
     with st.expander("⚙️ Área Administrativa Avançada (Equipe e Banco de Dados)"):
+        
+        # --- PAINEL DO LETREIRO AQUI ---
+        st.subheader("📢 Mural de Avisos (Letreiro)")
+        col_av1, col_av2, col_av3 = st.columns([1, 1, 2])
+        with col_av1:
+            aviso_usuario = st.selectbox("Para quem?", TODOS_NOMES, key="aviso_usr")
+        with col_av2:
+            aviso_processo = st.text_input("Nº do Processo Ativo", key="aviso_proc")
+        with col_av3:
+            aviso_msg = st.text_input("Mensagem", placeholder="Ex: Tratar com urgência, falta anexo...", key="aviso_msg")
+        
+        if st.button("📢 Publicar no Letreiro", type="primary", use_container_width=True):
+            if aviso_processo and aviso_msg:
+                ok, msg = adicionar_aviso(aviso_usuario, aviso_processo, aviso_msg)
+                if ok:
+                    st.success(msg)
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error(msg)
+            else:
+                st.warning("⚠️ Preencha o número do processo e a mensagem para publicar.")
+        st.markdown("---")
+        # -------------------------------
+
         st.subheader("👥 Gestão de Colaboradores")
         acao_equipe = st.radio("Selecione a ação:", ["Adicionar Novo", "Editar Permissões", "Substituir Nome", "Remover Colaborador"], horizontal=True)
 
