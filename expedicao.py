@@ -439,7 +439,7 @@ with aba_controle:
         with col_exp: st.dataframe(df_filtrado['expedicao'].value_counts().reset_index(), hide_index=True)
         with col_rev: st.dataframe(df_filtrado['revisao'].value_counts().reset_index(), hide_index=True)
 
-   st.markdown("---")
+    st.markdown("---")
     with st.container(border=True):
         st.subheader("🗑️ Remover Processo Específico (Saiu de Pauta)")
         col_rm1, col_rm2, col_rm3, col_rm4 = st.columns([2, 2, 2, 1])
@@ -472,7 +472,7 @@ with aba_controle:
             if st.button("➕ Adicionar", type="primary", key="add_user"):
                 ok, m = gerenciar_usuario('adicionar', novo_colab, expedicao=int(faz_exp), revisao=int(faz_rev))
                 if ok: st.success(m); time.sleep(1); st.rerun()
-                    
+        
         elif acao_equipe == "Editar Permissões":
             col1, col2, col3 = st.columns(3)
             colab_editar = col1.selectbox("Selecione o colaborador", TODOS_NOMES)
@@ -484,7 +484,7 @@ with aba_controle:
                     st.success(m)
                     time.sleep(1)
                     st.rerun()
-                    
+
         elif acao_equipe == "Substituir Nome":
             col1, col2, col3 = st.columns(3)
             colab_atual = col1.selectbox("Quem vai sair?", TODOS_NOMES)
@@ -526,7 +526,7 @@ with aba_controle:
                         else: st.error(msg)
                     except Exception as e: st.error(f"Erro ao ler o arquivo: {e}")
 
-       st.markdown("---")
+        st.markdown("---")
         st.subheader("🧹 Limpeza Seletiva do Sistema (Apagar Sessão)")
         col_tipo, col_data, col_motivo_sess, col_btn = st.columns([2, 2, 2, 1])
         with col_tipo: tipo_apagar = st.selectbox("Apagar de qual tipo?", ["Sessão Ordinária", "Sessão Ordinária Virtual", "Sessão Reservada", "Sessão Administrativa"])
