@@ -882,7 +882,8 @@ with aba_dados:
 # ------------------------------------------
 with aba_ajuda:
     st.header("📖 Manual do Usuário e Glossário - S.A.D.E. v1.0")
-   st.write("Bem-vindo(a) ao guia rápido do Sistema de Automação de Distribuição e Expedição! Clique nos tópicos abaixo para entender como usar cada ferramenta.")
+    st.write("Bem-vindo(a) ao guia rápido do Sistema de Automação de Distribuição e Expedição! Clique nos tópicos abaixo para entender como usar cada ferramenta.")
+
     with st.expander("🚀 Como começar (Passos Básicos)"):
         st.markdown("""
         O sistema foi feito para ser simples. Siga sempre esta ordem:
