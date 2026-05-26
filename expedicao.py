@@ -156,28 +156,33 @@ def marcar_urgente(numero_processo):
         conn.execute('UPDATE processos SET urgente = 1 WHERE numero_processo = ?', (numero_processo,))
     return True, f"🚨 Processo {numero_processo} destacado como URGENTE!"
 
-def atualizar_processo(id_processo, expedicao, revisao, expedido, revisado, despachado,
-                       mudou_exp, mudou_rev, mudou_desp, email=False, mensageria=False, recebido=False):
+def atualizar_processo(id_processo, mudancas):
+    if not mudancas: return
     agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    
     with sqlite3.connect(DB_PATH) as conn:
-        conn.execute('''UPDATE processos 
-                        SET expedicao = ?, revisao = ?, expedido_ok = ?, revisado_ok = ?, 
-                            despachado = ?, enviado_email = ?, enviado_mensageria = ?, recebido = ? 
-                        WHERE id = ?''', 
-                     (expedicao, revisao, int(expedido), int(revisado), int(despachado), 
-                      int(email), int(mensageria), int(recebido), id_processo))
+        colunas_set = []
+        valores = []
+        
+        # Constrói o comando do banco de dados SOB DEMANDA, só com o que mudou
+        for col_banco, val in mudancas.items():
+            colunas_set.append(f"{col_banco} = ?")
+            valores.append(val)
+            
+            # Se marcou uma caixinha de status, carimba a data automaticamente
+            if col_banco == 'expedido_ok':
+                colunas_set.append("data_expedido = ?")
+                valores.append(agora if val == 1 else None)
+            elif col_banco == 'revisado_ok':
+                colunas_set.append("data_revisado = ?")
+                valores.append(agora if val == 1 else None)
+            elif col_banco == 'despachado':
+                colunas_set.append("data_conclusao = ?")
+                valores.append(agora if val == 1 else None)
 
-        if mudou_exp:
-            if expedido: conn.execute('UPDATE processos SET data_expedido = ? WHERE id = ?', (agora, id_processo))
-            else: conn.execute('UPDATE processos SET data_expedido = NULL WHERE id = ?', (id_processo,))
-
-        if mudou_rev:
-            if revisado: conn.execute('UPDATE processos SET data_revisado = ? WHERE id = ?', (agora, id_processo))
-            else: conn.execute('UPDATE processos SET data_revisado = NULL WHERE id = ?', (id_processo,))
-
-        if mudou_desp:
-            if despachado: conn.execute('UPDATE processos SET data_conclusao = ? WHERE id = ?', (agora, id_processo))
-            else: conn.execute('UPDATE processos SET data_conclusao = NULL WHERE id = ?', (id_processo,))
+        query = f"UPDATE processos SET {', '.join(colunas_set)} WHERE id = ?"
+        valores.append(id_processo)
+        conn.execute(query, tuple(valores))
 
 def obter_expedidor(elegiveis, nome_sessao):
     if not elegiveis: return "Nenhum escalado"
@@ -521,24 +526,40 @@ with aba_sessoes:
             # Botão para processar tudo de uma vez
             submit_button = st.form_submit_button("💾 Salvar Alterações desta Sessão", type="primary")
 
-            if submit_button:
+           if submit_button:
                 alteracoes_feitas = 0
+                # Dicionário tradutor: Nome da coluna na Tela -> Nome da coluna no Banco
+                mapa_banco = {
+                    'Expedição': 'expedicao', 'Revisão': 'revisao',
+                    'Expedido': 'expedido_ok', 'Revisado': 'revisado_ok', 'Despachado': 'despachado',
+                    'E-mail': 'enviado_email', 'Mensageria': 'enviado_mensageria', 'Recebido': 'recebido'
+                }
+                
                 for i in range(len(edited_df)):
-                    if edited_df.iloc[i].to_dict() != df_exibicao.iloc[i].to_dict():
-                        atualizar_processo(
-                            int(edited_df.iloc[i]['id']), edited_df.iloc[i]['Expedição'], edited_df.iloc[i]['Revisão'],
-                            edited_df.iloc[i]['Expedido'], edited_df.iloc[i]['Revisado'], edited_df.iloc[i]['Despachado'],
-                            edited_df.iloc[i]['Expedido'] != df_exibicao.iloc[i]['Expedido'],
-                            edited_df.iloc[i]['Revisado'] != df_exibicao.iloc[i]['Revisado'],
-                            edited_df.iloc[i]['Despachado'] != df_exibicao.iloc[i]['Despachado'],
-                            email=edited_df.iloc[i].get('E-mail', False), mensageria=edited_df.iloc[i].get('Mensageria', False), recebido=edited_df.iloc[i].get('Recebido', False)
-                        )
-                        alteracoes_feitas += 1
+                    linha_nova = edited_df.iloc[i].to_dict()
+                    linha_antiga = df_exibicao.iloc[i].to_dict()
+                    
+                    if linha_nova != linha_antiga:
+                        mudancas = {}
+                        for col_tela, col_banco in mapa_banco.items():
+                            # Se a coluna existe na tela e o valor foi alterado pelo usuário
+                            if col_tela in linha_nova and linha_nova[col_tela] != linha_antiga.get(col_tela):
+                                val = linha_nova[col_tela]
+                                # Transforma as caixinhas marcadas em 1 ou 0 pro banco
+                                if col_tela in ['Expedido', 'Revisado', 'Despachado', 'E-mail', 'Mensageria', 'Recebido']:
+                                    mudancas[col_banco] = 1 if val else 0
+                                else:
+                                    mudancas[col_banco] = val # Guarda o nome (Expedição/Revisão)
+                        
+                        # Manda pro banco EXATAMENTE SÓ o que esse usuário clicou
+                        if mudancas:
+                            atualizar_processo(int(linha_nova['id']), mudancas)
+                            alteracoes_feitas += 1
                 
                 if alteracoes_feitas > 0:
                     st.toast(f"✅ {alteracoes_feitas} processo(s) atualizado(s) no banco de dados!")
-                    time.sleep(1) # Pausa rápida para exibir a notificação
-                    st.rerun() # Atualiza a tela para remover os despachados
+                    time.sleep(1) 
+                    st.rerun() 
                 else:
                     st.toast("⚠️ Nenhuma alteração foi detectada.")
         # ---------------------------------------------------------------
