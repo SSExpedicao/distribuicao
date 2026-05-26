@@ -345,7 +345,7 @@ def carregar_historico_avisos():
 # 2. FRONTEND: INTERFACE DO USUÁRIO
 # ==========================================
 st.set_page_config(page_title="Sistema de Sessões", layout="wide")
-st.title("⚖️ Sistema Automático de Distribuição de Processos para Expedição")
+st.title("⚖️ S.A.D.E. - Sistema de Automação de Distribuição e Expedição")
 
 # ==========================================
 # 📢 LETREIRO DE AVISOS (MURAL DINÂMICO)
@@ -881,46 +881,53 @@ with aba_dados:
 # ABA 6: AJUDA E GLOSSÁRIO
 # ------------------------------------------
 with aba_ajuda:
-    st.header("📖 Manual do Usuário e Glossário")
-    st.write("Bem-vindo(a) ao guia rápido do sistema! Clique nos tópicos abaixo para entender como usar cada ferramenta e o que significa cada termo.")
-
+    st.header("📖 Manual do Usuário e Glossário - S.A.D.E. v1.0")
+   st.write("Bem-vindo(a) ao guia rápido do Sistema de Automação de Distribuição e Expedição! Clique nos tópicos abaixo para entender como usar cada ferramenta.")
     with st.expander("🚀 Como começar (Passos Básicos)"):
         st.markdown("""
         O sistema foi feito para ser simples. Siga sempre esta ordem:
-        1. **Aba 1 (Inserir Novos):** Escolha o tipo da sessão, marque ou desmarque livremente os nomes de quem vai trabalhar no dia nas caixinhas, e insira os processos (digitando um a um ou jogando uma planilha inteira). O sistema divide o trabalho sozinho!
-        2. **Aba 2 (Painel Ativo):** Vá para a aba da sessão que você acabou de criar. É aqui que o trabalho acontece. Conforme a equipe avança, marque as caixinhas de concluído.
-        3. **Fim do dia:** Quando todas as caixinhas de um processo estiverem marcadas, ele some do painel e vai direto para a **Aba 4 (Histórico)**.
+        1. **Aba 1 (Inserir Novos):** Escolha o tipo da sessão, escale a equipe do dia e insira os processos (digitando um a um ou jogando uma planilha inteira). O sistema divide o trabalho de forma justa sozinho!
+        2. **Aba 2 (Painel Ativo):** É aqui que o trabalho acontece. Conforme a equipe avança, marque as caixinhas de concluído.
+        3. **Fim do dia:** Quando todas as caixinhas de um processo estiverem marcadas (incluindo "Despachado"), ele some do painel e vai direto para a **Aba 4 (Histórico)**.
+        """)
+
+    with st.expander("📢 Como funciona o Mural de Avisos (Letreiro)"):
+        st.markdown("""
+        O letreiro vermelho no topo é a nossa central de comunicação rápida!
+        * **Aviso para um Processo:** Na Aba 3, mande um recado sobre um processo específico (ex: "Falta anexo"). Quando o colega despachar esse processo na Aba 2, o aviso some do letreiro automaticamente!
+        * **Aviso para Todos:** Escolha 'Todos' no destinatário para avisos gerais (ex: "Reunião às 15h"). Esse aviso some da tela sozinho às 23h59 do mesmo dia.
+        * **Desativar Manualmente:** Qualquer recado pode ser tirado do ar na Aba 3 > Área Administrativa > Gerenciar Avisos.
         """)
 
     with st.expander("🗂️ Como usar o Painel Ativo (Marcando tarefas)"):
         st.markdown("""
-        Na Aba 2, você verá uma tabela interativa. Você pode clicar diretamente nela para:
+        Na Aba 2, você interage com a tabela de processos:
+        * **Trabalho em Equipe Simultâneo:** A engenharia do sistema permite que toda a equipe trabalhe na mesma tela ao mesmo tempo. Você pode marcar as suas caixas e salvar, sem risco de apagar o trabalho que o colega está salvando no computador dele!
         * **Mudar Responsável:** Se alguém precisar sair, clique no nome da pessoa e troque pelo colega.
         * **Marcar "Expedido" e "Revisado":** Conforme o documento for feito, marque a caixa. O sistema anota a hora exata.
-        * **Sessão Reservada:** Tem caixas extras. Você pode marcar se já enviou o E-mail, enviou pela Mensageria e se o recibo retornou (Recebido).
-        * **Marcar "Despachado":** É a última caixa. Significa que o processo está 100% pronto.
+        * **Sessão Reservada:** Possui caixas extras para controle (E-mail, Mensageria, Recebido).
         """)
 
-    with st.expander("🚨 Socorro! Inseri um processo errado ou ele saiu de pauta."):
+    with st.expander("🗑️ Socorro! Inseri errado ou o processo saiu de pauta."):
         st.markdown("""
         Sem pânico! Vá até a **Aba 3 (Controle O.K.)**, encontre a área **"Remover Processo Específico"**. 
 
-        Digite o número exato do processo e o dia da sessão, depois clique em Remover. O processo será apagado daquele dia e você poderá inseri-lo de novo na data correta.
+        Digite o número exato, escolha a data da sessão e o **Motivo**. O processo será apagado da pauta ativa e enviado diretamente para a **Lixeira de Auditoria** (na Aba 4), mantendo a transparência do nosso fluxo.
         """)
 
     with st.expander("📚 Glossário de Termos do Sistema"):
         st.markdown("""
-        * **Expedição:** É a primeira etapa. Quem está escalado aqui é responsável por pegar o processo cru e preparar os documentos iniciais.
-        * **Revisão:** É a segunda etapa (dupla conferência). Quem revisa valida o trabalho da expedição. O sistema garante que ninguém revise o próprio processo.
-        * **Processo Urgente:** Processos que precisam passar na frente da fila. Se aparecer um no meio do dia, vá na Aba 1, escolha "Urgente" e digite o número. A linha dele vai ficar **em negrito e vermelha** no Painel Ativo para chamar a atenção de todos.
-        * **Sessão Ordinária / Virtual / Reservada / Administrativa:** O sistema distribui automaticamente os processos da sessão entre os colegas que você selecionou no Passo 1, garantindo o melhor equilíbrio de carga.
-        * **Despachado:** Termo final. O documento está assinado e pronto. Quando marcado, o processo encerra seu ciclo.
+        * **Expedição / Revisão:** Etapas de preparação e dupla conferência. O sistema tem uma trava que impede que a mesma pessoa expessa e revise o próprio processo.
+        * **Processo Urgente:** Processos que precisam de prioridade. Ao ser marcado como urgente, a linha dele fica **em negrito e vermelha** no Painel Ativo.
+        * **Distribuição Inteligente:** O código analisa quem já fez parceria com quem, o volume de carga de cada um e o tipo de sessão para distribuir os processos de forma matemática e equilibrada.
+        * **Despachado:** Termo final. O documento está assinado, finalizado e pronto.
         """)
 
-    with st.expander("💾 Limpeza e Segurança dos Dados"):
+    with st.expander("💾 Governança e Segurança dos Dados (Área do Gestor)"):
         st.markdown("""
-        No final da **Aba 3 (Controle)**, existe uma área "Avançada" que só o gestor deve usar:
-        * **Backup:** Gera um arquivo Excel (CSV) de tudo que já foi feito na história do sistema. É recomendado baixar uma vez por semana por segurança.
-        * **Restaurar Sistema:** Se por algum motivo o servidor reiniciar, basta subir o arquivo CSV do backup para recuperar toda a base de dados em segundos.
-        * **Limpeza Seletiva:** Se uma sessão inteira for cancelada, você pode selecionar a data específica e apagar só ela do banco de dados, mantendo o resto intacto.
+        No final da **Aba 3 (Controle)**, existe uma área "Avançada" com ferramentas de administração:
+        * **Gestão de Colaboradores:** Adicione novatos, altere permissões (quem expede/revisa) ou remova pessoas.
+        * **Backup:** Gera um arquivo Excel (CSV) de toda a base de dados em um clique.
+        * **Restaurar Sistema:** Em caso de falha no servidor, basta subir o arquivo CSV do backup para recuperar toda a base em segundos.
+        * **Auditoria Completa (Aba 4):** Todo processo excluído e todo aviso publicado no letreiro geram um histórico permanente, garantindo total rastreabilidade das ações no sistema.
         """)
