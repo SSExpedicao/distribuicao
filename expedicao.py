@@ -98,24 +98,14 @@ def gerenciar_usuario(acao, nome_atual, novo_nome=None, expedicao=0, revisao=0):
     except sqlite3.IntegrityError: return False, "❌ Erro: Este usuário já existe."
     except Exception as e: return False, f"❌ Erro no banco de dados: {e}"
 
-def renomear_sessao(nome_antigo, novo_nome, escopo):
+def renomear_sessao(nome_antigo, novo_nome, tipo_sessao_alvo):
     try:
         with sqlite3.connect(DB_PATH) as conn:
-            # Separa os tipos de acordo com a escolha na tela
-            if escopo == "Virtual":
-                tipos = ("Sessão Ordinária Virtual",)
-            else:
-                # Plenário agrupa as 3 sessões que levam o mesmo número
-                tipos = ("Sessão Ordinária", "Sessão Reservada", "Sessão Administrativa")
-            
-            # Monta a query para alterar SÓ os tipos selecionados daquela data
-            placeholders = ', '.join('?' * len(tipos))
-            query = f"UPDATE processos SET nome_sessao = ? WHERE nome_sessao = ? AND tipo_sessao IN ({placeholders})"
-            
-            # Junta os parâmetros de forma segura para o banco
-            parametros = (novo_nome, nome_antigo) + tipos
-            conn.execute(query, parametros)
-            
+            # A query agora exige o TIPO EXATO além do NOME/DATA antigo
+            conn.execute(
+                "UPDATE processos SET nome_sessao = ? WHERE nome_sessao = ? AND tipo_sessao = ?", 
+                (novo_nome, nome_antigo, tipo_sessao_alvo)
+            )
         return True, f"✅ Número atualizado para: {novo_nome}"
     except Exception as e:
         return False, f"❌ Erro ao renomear: {e}"
@@ -748,16 +738,17 @@ with aba_controle:
         st.markdown("---")
         # -------------------------------
 
-        # --- NOMEAR / IDENTIFICAR SESSÃO ---
+       # --- NOMEAR / IDENTIFICAR SESSÃO ---
         st.subheader("🏷️ Identificar / Nomear Sessão")
-        st.write("Vincule o número oficial da pauta à data, separando as de Plenário da Virtual.")
+        st.write("Vincule o número oficial para cada tipo de sessão individualmente.")
         
         col_sn1, col_sn2, col_sn3, col_sn4 = st.columns([2, 2, 1, 1.5])
         with col_sn1:
             sessoes_disp = sorted(df_geral_status['nome_sessao'].unique(), reverse=True) if not df_geral_status.empty else []
             sessao_alvo = st.selectbox("Data / Sessão Alvo:", sessoes_disp)
         with col_sn2:
-            escopo_nomeacao = st.selectbox("Qual o grupo?", ["Plenário (Ord, Res, Adm)", "Virtual"])
+            tipos_disp = ["Sessão Ordinária", "Sessão Ordinária Virtual", "Sessão Reservada", "Sessão Administrativa"]
+            tipo_alvo = st.selectbox("Qual o Tipo de Sessão?", tipos_disp)
         with col_sn3:
             num_oficial = st.text_input("Número:", placeholder="Ex: 125")
         with col_sn4:
@@ -771,7 +762,8 @@ with aba_controle:
                     else:
                         novo_nome = f"Sessão {num_oficial} - {sessao_alvo}"
                     
-                    ok, msg = renomear_sessao(sessao_alvo, novo_nome, escopo_nomeacao)
+                    # Envia a data alvo, o novo nome e o TIPO exato que deve ser alterado
+                    ok, msg = renomear_sessao(sessao_alvo, novo_nome, tipo_alvo)
                     if ok:
                         st.success(msg)
                         time.sleep(1.5)
