@@ -98,11 +98,25 @@ def gerenciar_usuario(acao, nome_atual, novo_nome=None, expedicao=0, revisao=0):
     except sqlite3.IntegrityError: return False, "❌ Erro: Este usuário já existe."
     except Exception as e: return False, f"❌ Erro no banco de dados: {e}"
 
-def renomear_sessao(nome_antigo, novo_nome):
+def renomear_sessao(nome_antigo, novo_nome, escopo):
     try:
         with sqlite3.connect(DB_PATH) as conn:
-            conn.execute("UPDATE processos SET nome_sessao = ? WHERE nome_sessao = ?", (novo_nome, nome_antigo))
-        return True, f"✅ Sessão atualizada para: {novo_nome}"
+            # Separa os tipos de acordo com a escolha na tela
+            if escopo == "Virtual":
+                tipos = ("Sessão Ordinária Virtual",)
+            else:
+                # Plenário agrupa as 3 sessões que levam o mesmo número
+                tipos = ("Sessão Ordinária", "Sessão Reservada", "Sessão Administrativa")
+            
+            # Monta a query para alterar SÓ os tipos selecionados daquela data
+            placeholders = ', '.join('?' * len(tipos))
+            query = f"UPDATE processos SET nome_sessao = ? WHERE nome_sessao = ? AND tipo_sessao IN ({placeholders})"
+            
+            # Junta os parâmetros de forma segura para o banco
+            parametros = (novo_nome, nome_antigo) + tipos
+            conn.execute(query, parametros)
+            
+        return True, f"✅ Número atualizado para: {novo_nome}"
     except Exception as e:
         return False, f"❌ Erro ao renomear: {e}"
 
@@ -736,27 +750,28 @@ with aba_controle:
 
         # --- NOMEAR / IDENTIFICAR SESSÃO ---
         st.subheader("🏷️ Identificar / Nomear Sessão")
-        st.write("Vincule o número oficial da pauta a uma data de sessão existente.")
+        st.write("Vincule o número oficial da pauta à data, separando as de Plenário da Virtual.")
         
-        col_sn1, col_sn2, col_sn3 = st.columns([2, 2, 1])
+        col_sn1, col_sn2, col_sn3, col_sn4 = st.columns([2, 2, 1, 1.5])
         with col_sn1:
             sessoes_disp = sorted(df_geral_status['nome_sessao'].unique(), reverse=True) if not df_geral_status.empty else []
-            sessao_alvo = st.selectbox("Selecione a Data/Sessão alvo:", sessoes_disp)
+            sessao_alvo = st.selectbox("Data / Sessão Alvo:", sessoes_disp)
         with col_sn2:
-            num_oficial = st.text_input("Número da Sessão:", placeholder="Ex: 125, 42ª...")
+            escopo_nomeacao = st.selectbox("Qual o grupo?", ["Plenário (Ord, Res, Adm)", "Virtual"])
         with col_sn3:
+            num_oficial = st.text_input("Número:", placeholder="Ex: 125")
+        with col_sn4:
             st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("🏷️ Nomear", type="primary", use_container_width=True):
+            if st.button("🏷️ Confirmar", type="primary", use_container_width=True):
                 if num_oficial and sessao_alvo:
-                    # Trava de inteligência: Se já tiver sido renomeada antes (ex: "125 - 26/05/2026"), 
-                    # ele não deixa virar "126 - 125 - 26/05/2026". Ele substitui só a primeira parte.
+                    # Extrai a data pura se a sessão já tiver sido renomeada antes
                     if " - " in sessao_alvo:
                         data_pura = sessao_alvo.split(" - ")[-1].strip()
                         novo_nome = f"Sessão {num_oficial} - {data_pura}"
                     else:
                         novo_nome = f"Sessão {num_oficial} - {sessao_alvo}"
                     
-                    ok, msg = renomear_sessao(sessao_alvo, novo_nome)
+                    ok, msg = renomear_sessao(sessao_alvo, novo_nome, escopo_nomeacao)
                     if ok:
                         st.success(msg)
                         time.sleep(1.5)
@@ -764,10 +779,10 @@ with aba_controle:
                     else:
                         st.error(msg)
                 else:
-                    st.warning("⚠️ Preencha o número da sessão para continuar.")
+                    st.warning("⚠️ Digite o número da pauta.")
         st.markdown("---")
         # -----------------------------------
-        
+               
         # --- RELATÓRIO GERENCIAL ---
         st.subheader("📄 Relatório Gerencial Mensal/Anual (Para Assinatura)")
         st.write("Gere um documento completo com métricas de desempenho para análise da Chefia.")
