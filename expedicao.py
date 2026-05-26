@@ -519,16 +519,13 @@ with aba_sessoes:
         if pendentes > 0: titulo_placeholder.markdown(f"##### 📅 {data_sessao} | ⏳ {pendentes} Pendentes", unsafe_allow_html=True)
         else: titulo_placeholder.markdown(f"##### 📅 {data_sessao} | ✅ Concluído!", unsafe_allow_html=True)
 
-        # --- NOVA LÓGICA DE FORMULÁRIO AQUI (SEM REFRESH AUTOMÁTICO) ---
         with st.form(key=f"form_{key_prefix}_{data_sessao}"):
             edited_df = st.data_editor(styled_df, column_config=cfg_colunas, hide_index=True, use_container_width=True, key=f"{key_prefix}_{data_sessao}")
             
-            # Botão para processar tudo de uma vez
             submit_button = st.form_submit_button("💾 Salvar Alterações desta Sessão", type="primary")
 
-           if submit_button:
+            if submit_button:
                 alteracoes_feitas = 0
-                # Dicionário tradutor: Nome da coluna na Tela -> Nome da coluna no Banco
                 mapa_banco = {
                     'Expedição': 'expedicao', 'Revisão': 'revisao',
                     'Expedido': 'expedido_ok', 'Revisado': 'revisado_ok', 'Despachado': 'despachado',
@@ -542,16 +539,13 @@ with aba_sessoes:
                     if linha_nova != linha_antiga:
                         mudancas = {}
                         for col_tela, col_banco in mapa_banco.items():
-                            # Se a coluna existe na tela e o valor foi alterado pelo usuário
                             if col_tela in linha_nova and linha_nova[col_tela] != linha_antiga.get(col_tela):
                                 val = linha_nova[col_tela]
-                                # Transforma as caixinhas marcadas em 1 ou 0 pro banco
                                 if col_tela in ['Expedido', 'Revisado', 'Despachado', 'E-mail', 'Mensageria', 'Recebido']:
                                     mudancas[col_banco] = 1 if val else 0
                                 else:
-                                    mudancas[col_banco] = val # Guarda o nome (Expedição/Revisão)
+                                    mudancas[col_banco] = val
                         
-                        # Manda pro banco EXATAMENTE SÓ o que esse usuário clicou
                         if mudancas:
                             atualizar_processo(int(linha_nova['id']), mudancas)
                             alteracoes_feitas += 1
@@ -562,7 +556,6 @@ with aba_sessoes:
                     st.rerun() 
                 else:
                     st.toast("⚠️ Nenhuma alteração foi detectada.")
-        # ---------------------------------------------------------------
 
     with sub_aba_ord:
         df_ord = carregar_dados("Sessão Ordinária")
@@ -583,6 +576,7 @@ with aba_sessoes:
         df_adm = carregar_dados("Sessão Administrativa")
         if not df_adm.empty:
             for data in df_adm[~df_adm['nome_sessao'].isin(sessoes_finalizadas)]['nome_sessao'].unique(): exibir_tabela_interativa(df_adm[df_adm['nome_sessao'] == data], "adm", data, "Sessão Administrativa")
+
 # ------------------------------------------
 # ABA 3: CONTROLE DE CARGA E ÁREA ADMINISTRATIVA
 # ------------------------------------------
