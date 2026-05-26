@@ -963,6 +963,81 @@ with aba_dados:
 
         st.markdown("---")
 
+        # ==========================================
+            # 🚀 O "SILICONE" VISUAL ENTRA AQUI
+            # ==========================================
+            st.markdown("### 📊 Painel Visual Interativo")
+
+            col_grafico1, col_grafico2 = st.columns(2)
+
+            with col_grafico1:
+                st.markdown("#### 🏆 Produtividade da Equipe")
+                # Prepara os dados: conta quem fez o que
+                exp_counts = df_dados[df_dados['expedido_ok'] == 1]['expedicao'].value_counts().reset_index()
+                exp_counts.columns = ['Colaborador', 'Volume']
+                exp_counts['Função'] = 'Expedição'
+
+                rev_counts = df_dados[df_dados['revisado_ok'] == 1]['revisao'].value_counts().reset_index()
+                rev_counts.columns = ['Colaborador', 'Volume']
+                rev_counts['Função'] = 'Revisão'
+
+                df_produtividade = pd.concat([exp_counts, rev_counts])
+
+                if not df_produtividade.empty:
+                    # Cria um gráfico de barras empilhadas super elegante
+                    fig_bar = px.bar(
+                        df_produtividade,
+                        x='Colaborador',
+                        y='Volume',
+                        color='Função',
+                        barmode='stack',
+                        color_discrete_sequence=['#FF4B4B', '#FF8C8C'], # Cores da paleta do sistema
+                        text_auto=True
+                    )
+                    # Dá um toque premium tirando o fundo e os títulos repetitivos dos eixos
+                    fig_bar.update_layout(xaxis_title="", yaxis_title="Processos Concluídos", margin=dict(l=0, r=0, t=30, b=0), plot_bgcolor="rgba(0,0,0,0)")
+                    st.plotly_chart(fig_bar, use_container_width=True)
+                else:
+                    st.info("Conclua processos para gerar o gráfico de produtividade.")
+
+            with col_grafico2:
+                st.markdown("#### 📉 Evolução do Tempo de Sessão")
+                df_concluidos = df_dados[df_dados['despachado'] == 1].copy()
+
+                if not df_concluidos.empty:
+                    # Agrupa pelo nome da sessão para pegar o início e fim de cada uma
+                    sessoes_tempo = df_concluidos.groupby('nome_sessao').agg(
+                        inicio=('data_entrada_dt', 'min'),
+                        fim=('data_conclusao_dt', 'max')
+                    ).reset_index()
+
+                    # Calcula a duração em minutos
+                    sessoes_tempo['Duração (min)'] = (sessoes_tempo['fim'] - sessoes_tempo['inicio']).dt.total_seconds() / 60
+                    sessoes_tempo = sessoes_tempo.dropna(subset=['Duração (min)'])
+
+                    # Criação de coluna invisível de Data Real para ordenar o gráfico cronologicamente
+                    sessoes_tempo['Data_Sort'] = pd.to_datetime(sessoes_tempo['nome_sessao'], format="%d/%m/%Y", errors='coerce')
+                    sessoes_tempo = sessoes_tempo.sort_values('Data_Sort')
+
+                    # Cria o gráfico de linha
+                    fig_line = px.line(
+                        sessoes_tempo,
+                        x='nome_sessao',
+                        y='Duração (min)',
+                        markers=True,
+                        line_shape="spline", # Deixa a curva da linha arredondada e suave (spline)
+                        color_discrete_sequence=['#FF4B4B']
+                    )
+                    fig_line.update_traces(marker=dict(size=8, line=dict(width=2, color='DarkSlateGrey')))
+                    fig_line.update_layout(xaxis_title="Data da Sessão", yaxis_title="Tempo Total (Minutos)", margin=dict(l=0, r=0, t=30, b=0), plot_bgcolor="rgba(0,0,0,0)")
+
+                    st.plotly_chart(fig_line, use_container_width=True)
+                else:
+                    st.info("Despache uma sessão inteira para gerar a linha de tendência.")
+
+            st.markdown("---")
+            # ==========================================
+       
         # --- 2. DESEMPENHO DETALHADO POR SESSÃO ---
         st.markdown("### 📅 Desempenho Detalhado por Sessão")
         
