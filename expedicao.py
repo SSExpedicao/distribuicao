@@ -341,7 +341,7 @@ def carregar_historico_avisos():
     df['status'] = status_list
     return df
 
-   def gerar_relatorio_mensal(mes, ano):
+  def gerar_relatorio_mensal(mes, ano):
     df_proc = carregar_dados()
     df_av = carregar_historico_avisos()
     _, _, equipe_total = carregar_equipes()
@@ -436,8 +436,7 @@ def carregar_historico_avisos():
     texto += f"Para aprovação da Chefia: Jessyca\n"
     texto += f"===================================================="
 
-    return True, texto 
-
+    return True, texto
 # ==========================================
 # 2. FRONTEND: INTERFACE DO USUÁRIO
 # ==========================================
