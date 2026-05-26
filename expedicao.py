@@ -404,7 +404,7 @@ def gerar_relatorio_gerencial(mes, ano):
         relatorio_sessoes.append(f"   - ... e mais {len(sessoes_periodo) - 15} sessões geridas com sucesso ao longo do período.")
             
     # Avisos
-   df_av['data_dt'] = pd.to_datetime(df_av['data_criacao'], format="%d/%m/%Y %H:%M:%S", errors='coerce')
+    df_av['data_dt'] = pd.to_datetime(df_av['data_criacao'], format="%d/%m/%Y %H:%M:%S", errors='coerce')
     
     if mes == 0:
         df_av_periodo = df_av[(df_av['data_dt'].dt.year == ano)]
