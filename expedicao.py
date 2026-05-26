@@ -341,22 +341,6 @@ def carregar_historico_avisos():
     df['status'] = status_list
     return df
 
-def carregar_historico_avisos():
-    with sqlite3.connect(DB_PATH) as conn:
-        # Adicionado o 'AS status' ao final do CASE para o pandas reconhecer a coluna
-        query = '''
-            SELECT a.numero_processo, a.usuario, a.mensagem, a.data_criacao,
-                   CASE 
-                       WHEN p.despachado = 1 THEN '✅ Concluído (Despachado)'
-                       WHEN p.numero_processo IS NULL THEN '❌ Processo Removido/Fora de Pauta'
-                       ELSE '⏳ Ativo no Letreiro'
-                   END AS status
-            FROM avisos a
-            LEFT JOIN processos p ON a.numero_processo = p.numero_processo
-        '''
-        df = pd.read_sql_query(query, conn)
-    return df
-
 # ==========================================
 # 2. FRONTEND: INTERFACE DO USUÁRIO
 # ==========================================
