@@ -321,7 +321,8 @@ def carregar_historico_avisos():
         df = pd.read_sql_query(query, conn)
         
     if df.empty:
-        return pd.DataFrame(columns=['Processo', 'Destinatário do Alerta', 'Comunicado / Ordem', 'Data/Hora de Publicação', 'Situação Atual'])
+        # CORREÇÃO AQUI: Mantendo as colunas padrão do Banco de Dados
+        return pd.DataFrame(columns=['numero_processo', 'usuario', 'mensagem', 'data_criacao', 'ativo', 'despachado', 'proc_existe', 'status'])
         
     status_list = []
     for _, row in df.iterrows():
@@ -403,15 +404,17 @@ def gerar_relatorio_gerencial(mes, ano):
         relatorio_sessoes.append(f"   - ... e mais {len(sessoes_periodo) - 15} sessões geridas com sucesso ao longo do período.")
             
     # Avisos
-    df_av['data_dt'] = pd.to_datetime(df_av['Data/Hora de Publicação'], format="%d/%m/%Y %H:%M:%S", errors='coerce')
+   df_av['data_dt'] = pd.to_datetime(df_av['data_criacao'], format="%d/%m/%Y %H:%M:%S", errors='coerce')
+    
     if mes == 0:
         df_av_periodo = df_av[(df_av['data_dt'].dt.year == ano)]
     else:
         df_av_periodo = df_av[(df_av['data_dt'].dt.month == mes) & (df_av['data_dt'].dt.year == ano)]
-    
+        
     avisos_count = {}
     for colab in equipe_operacional:
-        avisos_count[colab] = len(df_av_periodo[df_av_periodo['Destinatário do Alerta'] == colab])
+        # CORREÇÃO AQUI: O destinatário no banco se chama 'usuario'
+        avisos_count[colab] = len(df_av_periodo[df_av_periodo['usuario'] == colab])
         
     mais_avisado = max(avisos_count, key=avisos_count.get) if avisos_count and max(avisos_count.values()) > 0 else "Nenhum"
     qnt_avisos = avisos_count.get(mais_avisado, 0)
