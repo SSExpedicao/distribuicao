@@ -195,8 +195,8 @@ def marcar_urgente(numero_processo):
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
         c.execute("SELECT id FROM processos WHERE numero_processo = ?", (numero_processo,))
-       if not c.fetchone():
-       return False, f"❌ Processo {numero_processo} não encontrado. Insira-o na sua sessão normal primeiro."
+        if not c.fetchone():
+            return False, f"❌ Processo {numero_processo} não encontrado. Insira-o na sua sessão normal primeiro."
         conn.execute('UPDATE processos SET urgente = 1 WHERE numero_processo = ?', (numero_processo,))
     return True, f"🚨 Processo {numero_processo} destacado como URGENTE!"
 
