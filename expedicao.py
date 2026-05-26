@@ -922,26 +922,24 @@ with aba_historico:
             st.download_button(label="📥 Baixar Relatório de Avisos (CSV)", data=csv_avisos, file_name="auditoria_mural_avisos.csv", mime='text/csv', type="secondary")
         else:
             st.info("📢 Nenhum comunicado foi publicado no mural de avisos até o momento.")
-# ------------------------------------------
+# ==========================================
 # ABA 5: DADOS & DESEMPENHO (ANALYTICS)
-# ------------------------------------------
+# ==========================================
 with aba_dados:
-    st.subheader("📈 Relatórios de Agilidade e Desempenho")
+    st.subheader("📈 Analytics e Radar Operacional")
     df_dados = carregar_dados()
     
     if df_dados.empty or 'data_expedido' not in df_dados.columns: 
-        st.info("📊 Comece a despachar processos no Painel Ativo para gerar estatísticas.")
+        st.info("📊 Comece a inserir e despachar processos no Painel Ativo para gerar estatísticas.")
     else:
-        # Função para converter as strings em datas reais
+        # 1. Tratamento das Datas
         def parse_datas(df_in):
             for c in ['data_entrada', 'data_expedido', 'data_revisado', 'data_conclusao']:
-                # Tenta o formato com segundos, se falhar, tenta sem segundos
                 df_in[c + '_dt'] = pd.to_datetime(df_in[c], format="%d/%m/%Y %H:%M:%S", errors='coerce').fillna(pd.to_datetime(df_in[c], format="%d/%m/%Y %H:%M", errors='coerce'))
             return df_in
             
         df_dados = parse_datas(df_dados)
         
-        # Cálculos de tempo (em minutos)
         df_dados['minutos_expedicao'] = (df_dados['data_expedido_dt'] - df_dados['data_entrada_dt']).dt.total_seconds() / 60
         df_dados['minutos_revisao'] = (df_dados['data_revisado_dt'] - df_dados['data_expedido_dt']).dt.total_seconds() / 60
         df_dados['minutos_total'] = (df_dados['data_conclusao_dt'] - df_dados['data_entrada_dt']).dt.total_seconds() / 60
@@ -950,151 +948,91 @@ with aba_dados:
             if pd.isna(minutos) or minutos < 0: return "N/A"
             return f"{int(minutos)} min" if int(minutos) < 60 else f"{int(minutos) // 60}h {int(minutos) % 60}m"
 
-        # --- 1. MÉDIAS GERAIS (TODAS AS SESSÕES) ---
-        st.markdown("### 🌎 Visão Geral (Todo o Histórico)")
-        df_exp = df_dados.dropna(subset=['minutos_expedicao'])
-        df_rev = df_dados.dropna(subset=['minutos_revisao'])
-        df_conc = df_dados.dropna(subset=['minutos_total'])
+        # ========================================================
+        # 📡 CAMADA 1: RADAR EM TEMPO REAL (PAINEL ATIVO)
+        # ========================================================
+        st.markdown("### 📡 Radar em Tempo Real (Sessões em Andamento)")
+        
+        # Filtra a base para pegar SÓ o que ainda está no Painel Ativo
+        df_ativos = df_dados[~df_dados['nome_sessao'].isin(sessoes_finalizadas)].copy()
+        
+        if not df_ativos.empty:
+            # Conta o status exato de cada processo agora
+            col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+            col_r1.metric("📋 Total na Pauta", len(df_ativos))
+            col_r2.metric("⏳ Faltam Expedir", len(df_ativos[df_ativos['expedido_ok'] == 0]))
+            col_r3.metric("🔍 Faltam Revisar", len(df_ativos[(df_ativos['expedido_ok'] == 1) & (df_ativos['revisado_ok'] == 0)]))
+            col_r4.metric("✍️ Prontos p/ Despachar", len(df_ativos[(df_ativos['revisado_ok'] == 1) & (df_ativos['despachado'] == 0)]))
+            
+            st.markdown("#### 🏃‍♂️ Quem está produzindo agora? (Tarefas feitas na pauta ativa)")
+            
+            # Puxa quem já fez tarefas nas sessões que estão abertas
+            exp_ativos = df_ativos[df_ativos['expedido_ok'] == 1]['expedicao'].value_counts().reset_index()
+            exp_ativos.columns = ['Colaborador', 'Volume']
+            exp_ativos['Função'] = 'Expedição'
 
-        col1, col2, col3, col4 = st.columns(4)
-        with col1: st.metric("Média Geral - Expedição", format_tempo(df_exp['minutos_expedicao'].mean()) if not df_exp.empty else "N/A")
-        with col2: st.metric("Média Geral - Revisão", format_tempo(df_rev['minutos_revisao'].mean()) if not df_rev.empty else "N/A")
-        with col3: st.metric("Média Geral - Ciclo (Até Despacho)", format_tempo(df_conc['minutos_total'].mean()) if not df_conc.empty else "N/A")
-        with col4: st.metric("Total Geral de Processos Despachados", len(df_dados[df_dados['despachado'] == 1]))
+            rev_ativos = df_ativos[df_ativos['revisado_ok'] == 1]['revisao'].value_counts().reset_index()
+            rev_ativos.columns = ['Colaborador', 'Volume']
+            rev_ativos['Função'] = 'Revisão'
+
+            df_prod_ativos = pd.concat([exp_ativos, rev_ativos])
+            
+            if not df_prod_ativos.empty:
+                # O Gráfico de barras agrupadas usando Plotly
+                fig_ativos = px.bar(
+                    df_prod_ativos, x='Colaborador', y='Volume', color='Função',
+                    barmode='group', text_auto=True, color_discrete_sequence=['#FF4B4B', '#FF8C8C']
+                )
+                fig_ativos.update_layout(xaxis_title="", yaxis_title="Tarefas Concluídas", margin=dict(l=0, r=0, t=30, b=0), plot_bgcolor="rgba(0,0,0,0)")
+                st.plotly_chart(fig_ativos, use_container_width=True)
+            else:
+                st.info("A equipe ainda não concluiu nenhuma etapa nas sessões ativas.")
+        else:
+            st.success("✨ Pauta limpa! Não há processos pendentes no momento.")
 
         st.markdown("---")
 
-        # ==========================================
-            # 🚀 O "SILICONE" VISUAL ENTRA AQUI
-            # ==========================================
-            st.markdown("### 📊 Painel Visual Interativo")
-
-            col_grafico1, col_grafico2 = st.columns(2)
-
-            with col_grafico1:
-                st.markdown("#### 🏆 Produtividade da Equipe")
-                # Prepara os dados: conta quem fez o que
-                exp_counts = df_dados[df_dados['expedido_ok'] == 1]['expedicao'].value_counts().reset_index()
-                exp_counts.columns = ['Colaborador', 'Volume']
-                exp_counts['Função'] = 'Expedição'
-
-                rev_counts = df_dados[df_dados['revisado_ok'] == 1]['revisao'].value_counts().reset_index()
-                rev_counts.columns = ['Colaborador', 'Volume']
-                rev_counts['Função'] = 'Revisão'
-
-                df_produtividade = pd.concat([exp_counts, rev_counts])
-
-                if not df_produtividade.empty:
-                    # Cria um gráfico de barras empilhadas super elegante
-                    fig_bar = px.bar(
-                        df_produtividade,
-                        x='Colaborador',
-                        y='Volume',
-                        color='Função',
-                        barmode='stack',
-                        color_discrete_sequence=['#FF4B4B', '#FF8C8C'], # Cores da paleta do sistema
-                        text_auto=True
-                    )
-                    # Dá um toque premium tirando o fundo e os títulos repetitivos dos eixos
-                    fig_bar.update_layout(xaxis_title="", yaxis_title="Processos Concluídos", margin=dict(l=0, r=0, t=30, b=0), plot_bgcolor="rgba(0,0,0,0)")
-                    st.plotly_chart(fig_bar, use_container_width=True)
-                else:
-                    st.info("Conclua processos para gerar o gráfico de produtividade.")
-
-            with col_grafico2:
-                st.markdown("#### 📉 Evolução do Tempo de Sessão")
-                df_concluidos = df_dados[df_dados['despachado'] == 1].copy()
-
-                if not df_concluidos.empty:
-                    # Agrupa pelo nome da sessão para pegar o início e fim de cada uma
-                    sessoes_tempo = df_concluidos.groupby('nome_sessao').agg(
-                        inicio=('data_entrada_dt', 'min'),
-                        fim=('data_conclusao_dt', 'max')
-                    ).reset_index()
-
-                    # Calcula a duração em minutos
-                    sessoes_tempo['Duração (min)'] = (sessoes_tempo['fim'] - sessoes_tempo['inicio']).dt.total_seconds() / 60
-                    sessoes_tempo = sessoes_tempo.dropna(subset=['Duração (min)'])
-
-                    # Criação de coluna invisível de Data Real para ordenar o gráfico cronologicamente
-                    sessoes_tempo['Data_Sort'] = pd.to_datetime(sessoes_tempo['nome_sessao'], format="%d/%m/%Y", errors='coerce')
-                    sessoes_tempo = sessoes_tempo.sort_values('Data_Sort')
-
-                    # Cria o gráfico de linha
-                    fig_line = px.line(
-                        sessoes_tempo,
-                        x='nome_sessao',
-                        y='Duração (min)',
-                        markers=True,
-                        line_shape="spline", # Deixa a curva da linha arredondada e suave (spline)
-                        color_discrete_sequence=['#FF4B4B']
-                    )
-                    fig_line.update_traces(marker=dict(size=8, line=dict(width=2, color='DarkSlateGrey')))
-                    fig_line.update_layout(xaxis_title="Data da Sessão", yaxis_title="Tempo Total (Minutos)", margin=dict(l=0, r=0, t=30, b=0), plot_bgcolor="rgba(0,0,0,0)")
-
-                    st.plotly_chart(fig_line, use_container_width=True)
-                else:
-                    st.info("Despache uma sessão inteira para gerar a linha de tendência.")
-
-            st.markdown("---")
-            # ==========================================
-       
-        # --- 2. DESEMPENHO DETALHADO POR SESSÃO ---
-        st.markdown("### 📅 Desempenho Detalhado por Sessão")
+        # ========================================================
+        # 🌎 CAMADA 2: HISTÓRICO E TENDÊNCIAS (SESSÕES CONCLUÍDAS)
+        # ========================================================
+        st.markdown("### 🌎 Histórico: Médias e Evolução")
         
-        # Filtro para escolher a sessão
-        sessoes_disponiveis = sorted(df_dados['nome_sessao'].unique(), reverse=True)
-        sessao_sel = st.selectbox("Selecione a Sessão para análise:", sessoes_disponiveis)
+        df_concluidos = df_dados[df_dados['despachado'] == 1].copy()
         
-        # Filtrar o DataFrame apenas para a sessão escolhida
-        df_s = df_dados[df_dados['nome_sessao'] == sessao_sel]
-        
-        # Cálculo: Tempo total que a sessão demorou para ser finalizada
-        inicio_sessao = df_s['data_entrada_dt'].min()
-        fim_sessao = df_s['data_conclusao_dt'].max()
-        
-        duracao_sessao = None
-        if pd.notna(inicio_sessao) and pd.notna(fim_sessao):
-            duracao_sessao = (fim_sessao - inicio_sessao).total_seconds() / 60
+        if not df_concluidos.empty:
+            col1, col2, col3, col4 = st.columns(4)
+            with col1: st.metric("Média Geral - Expedição", format_tempo(df_concluidos['minutos_expedicao'].mean()))
+            with col2: st.metric("Média Geral - Revisão", format_tempo(df_concluidos['minutos_revisao'].mean()))
+            with col3: st.metric("Média Geral - Ciclo", format_tempo(df_concluidos['minutos_total'].mean()))
+            with col4: st.metric("Total de Processos Finalizados", len(df_concluidos))
+
+            st.markdown("#### 📉 Evolução do Tempo de Fechamento de Sessão")
             
-        st.info(f"⏳ **Tempo Total da Sessão ({sessao_sel}):** {format_tempo(duracao_sessao)} *(Calculado do 1º processo inserido até o último ser despachado)*")
+            # Agrupa as sessões finalizadas para criar a linha de tendência
+            sessoes_tempo = df_concluidos.groupby('nome_sessao').agg(
+                inicio=('data_entrada_dt', 'min'),
+                fim=('data_conclusao_dt', 'max')
+            ).reset_index()
 
-        st.markdown("<br>", unsafe_allow_html=True)
-        col_a, col_b = st.columns(2)
-        
-        # Tabela de Expedição
-        with col_a:
-            st.markdown("#### 🛡️ Desempenho: Equipe de Expedição")
-            if not df_s.empty:
-                # Agrupando por quem fez a expedição
-                exp_stats = df_s.groupby('expedicao').agg(
-                    Processos=('id', 'count'),
-                    Despachados=('expedido_ok', 'sum'),
-                    Tempo_Medio=('minutos_expedicao', 'mean')
-                ).reset_index()
-                
-                # Formatando os números para visualização
-                exp_stats['Tempo_Medio'] = exp_stats['Tempo_Medio'].apply(format_tempo)
-                exp_stats = exp_stats.rename(columns={'expedicao': 'Colaborador', 'Processos': 'Volume Total', 'Despachados': 'Concluídos', 'Tempo_Medio': 'Média/Processo'})
-                
-                st.dataframe(exp_stats, hide_index=True, use_container_width=True)
+            sessoes_tempo['Duração (min)'] = (sessoes_tempo['fim'] - sessoes_tempo['inicio']).dt.total_seconds() / 60
+            sessoes_tempo = sessoes_tempo.dropna(subset=['Duração (min)'])
 
-        # Tabela de Revisão
-        with col_b:
-            st.markdown("#### 🔍 Desempenho: Equipe de Revisão")
-            if not df_s.empty:
-                # Agrupando por quem fez a revisão
-                rev_stats = df_s.groupby('revisao').agg(
-                    Processos=('id', 'count'),
-                    Despachados=('revisado_ok', 'sum'),
-                    Tempo_Medio=('minutos_revisao', 'mean')
-                ).reset_index()
-                
-                # Formatando os números para visualização
-                rev_stats['Tempo_Medio'] = rev_stats['Tempo_Medio'].apply(format_tempo)
-                rev_stats = rev_stats.rename(columns={'revisao': 'Colaborador', 'Processos': 'Volume Total', 'Despachados': 'Concluídos', 'Tempo_Medio': 'Média/Processo'})
-                
-                st.dataframe(rev_stats, hide_index=True, use_container_width=True)
+            if not sessoes_tempo.empty:
+                sessoes_tempo['Data_Sort'] = pd.to_datetime(sessoes_tempo['nome_sessao'], format="%d/%m/%Y", errors='coerce')
+                sessoes_tempo = sessoes_tempo.sort_values('Data_Sort')
+
+                fig_line = px.line(
+                    sessoes_tempo, x='nome_sessao', y='Duração (min)', markers=True,
+                    line_shape="spline", color_discrete_sequence=['#FF4B4B']
+                )
+                fig_line.update_traces(marker=dict(size=8, line=dict(width=2, color='DarkSlateGrey')))
+                fig_line.update_layout(xaxis_title="Data da Sessão", yaxis_title="Tempo Total (Minutos)", margin=dict(l=0, r=0, t=30, b=0), plot_bgcolor="rgba(0,0,0,0)")
+
+                st.plotly_chart(fig_line, use_container_width=True)
+            else:
+                st.info("Feche uma sessão completa para gerar a linha de tendência.")
+        else:
+            st.info("Nenhum processo foi finalizado ainda para calcular o histórico.")
 
 # ------------------------------------------
 # ABA 6: AJUDA E GLOSSÁRIO
