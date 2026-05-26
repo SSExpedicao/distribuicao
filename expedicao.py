@@ -729,7 +729,8 @@ with aba_controle:
         with col_m1:
             mes_selecionado = st.selectbox("Mês:", range(1, 13), index=mes_atual-1, format_func=lambda x: meses_nomes[x-1])
         with col_m2:
-            ano_selecionado = st.selectbox("Ano:", range(2024, ano_atual + 2), index=ano_atual-2024)
+            # Lista dinâmica: começa em 2024 e cresce automaticamente até o ano atual!
+            ano_selecionado = st.selectbox("Ano:", range(2024, ano_atual + 1), index=ano_atual-2024)
         with col_m3:
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("📊 Compilar Relatório", type="primary", use_container_width=True):
