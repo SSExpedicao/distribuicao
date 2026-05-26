@@ -268,16 +268,66 @@ def adicionar_aviso(usuario, numero_processo, mensagem):
     return True, "✅ Aviso publicado no letreiro!"
 
 def obter_avisos_pendentes():
-    # Puxa os avisos apenas se o processo correspondente estiver com despachado = 0
+    hoje = datetime.now().strftime("%d/%m/%Y")
     with sqlite3.connect(DB_PATH) as conn:
         query = '''
-            SELECT a.usuario, a.numero_processo, p.nome_sessao, a.mensagem 
+            SELECT a.id, a.usuario, a.numero_processo, p.nome_sessao, a.mensagem, a.data_criacao 
             FROM avisos a
-            JOIN processos p ON a.numero_processo = p.numero_processo
-            WHERE p.despachado = 0
+            LEFT JOIN processos p ON a.numero_processo = p.numero_processo
+            WHERE a.ativo = 1 AND (a.numero_processo = '' OR p.despachado = 0)
         '''
         df_avisos = pd.read_sql_query(query, conn)
-    return df_avisos
+    
+    if df_avisos.empty:
+        return df_avisos
+        
+    linhas_validas = []
+    for index, row in df_avisos.iterrows():
+        data_aviso = row['data_criacao'].split()[0]
+        
+        if row['usuario'] == 'Todos':
+            if data_aviso == hoje:
+                linhas_validas.append(row)
+        else:
+            linhas_validas.append(row)
+            
+    return pd.DataFrame(linhas_validas) if linhas_validas else pd.DataFrame(columns=df_avisos.columns)
+
+def desativar_aviso(id_aviso):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("UPDATE avisos SET ativo = 0 WHERE id = ?", (id_aviso,))
+
+def carregar_historico_avisos():
+    hoje = datetime.now().strftime("%d/%m/%Y")
+    with sqlite3.connect(DB_PATH) as conn:
+        query = '''
+            SELECT a.numero_processo, a.usuario, a.mensagem, a.data_criacao, a.ativo,
+                   p.despachado, p.numero_processo AS proc_existe
+            FROM avisos a
+            LEFT JOIN processos p ON a.numero_processo = p.numero_processo
+        '''
+        df = pd.read_sql_query(query, conn)
+        
+    if df.empty:
+        return pd.DataFrame(columns=['Processo', 'Destinatário do Alerta', 'Comunicado / Ordem', 'Data/Hora de Publicação', 'Situação Atual'])
+        
+    status_list = []
+    for _, row in df.iterrows():
+        data_aviso = row['data_criacao'].split()[0]
+        
+        if row['ativo'] == 0:
+            status_list.append('❌ Desativado Manualmente')
+        elif row['usuario'] == 'Todos' and data_aviso != hoje:
+            status_list.append('⏳ Expirado Automaticamente (23:59h)')
+        elif row['numero_processo'] != '' and row['despachado'] == 1:
+            status_list.append('✅ Concluído (Despachado)')
+        elif row['numero_processo'] != '' and pd.isna(row['proc_existe']):
+            status_list.append('❌ Processo Removido')
+        else:
+            status_list.append('⏳ Ativo no Letreiro')
+            
+    df['status'] = status_list
+    return df
 
 def carregar_historico_avisos():
     with sqlite3.connect(DB_PATH) as conn:
