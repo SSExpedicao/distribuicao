@@ -11,6 +11,34 @@ import time
 # ==========================================
 DB_PATH = 'gestao_processos.db'
 
+def higienizar_dados(processo, relator=""):
+    # 1. Limpa o Processo (Tira espaços em branco e remove o -e do final)
+    proc_limpo = str(processo).strip()
+    
+    # Se terminar com -e ou -E, o código "arranca" os dois últimos caracteres
+    if proc_limpo.lower().endswith("-e"):
+        proc_limpo = proc_limpo[:-2]
+        
+    # 2. Limpa e padroniza o Relator
+    rel_limpo = str(relator).strip().upper() # Deixa tudo maiúsculo e sem espaços sobrando
+    
+    # Dicionário de conversão automática (De -> Para)
+    mapa_relatores = {
+        "RR": "GCRR",
+        "AM": "GCAM",
+        "PT": "GCPT",
+        "AC": "GCAC",
+        "IM": "GCIM",
+        "MM": "GCMM",
+        "VF": "GAVF"
+    }
+    
+    # Se a sigla digitada estiver no nosso mapa, ele troca pela oficial completa
+    if rel_limpo in mapa_relatores:
+        rel_limpo = mapa_relatores[rel_limpo]
+        
+    return proc_limpo, rel_limpo
+    
 def init_db():
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
@@ -161,11 +189,14 @@ def processo_existe(numero_processo):
     return existe
 
 def marcar_urgente(numero_processo):
+    # 🪄 Limpa o número do processo (ignora o relator com o '_')
+    numero_processo, _ = higienizar_dados(numero_processo)
+    
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
         c.execute("SELECT id FROM processos WHERE numero_processo = ?", (numero_processo,))
-        if not c.fetchone():
-            return False, f"❌ Processo {numero_processo} não encontrado. Insira-o na sua sessão normal primeiro."
+       if not c.fetchone():
+       return False, f"❌ Processo {numero_processo} não encontrado. Insira-o na sua sessão normal primeiro."
         conn.execute('UPDATE processos SET urgente = 1 WHERE numero_processo = ?', (numero_processo,))
     return True, f"🚨 Processo {numero_processo} destacado como URGENTE!"
 
@@ -242,9 +273,11 @@ def obter_revisor(expedidor, nome_sessao, revisores_ativos):
     return melhor_cand
 
 def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, expedidores, revisores):
+    # 🪄 A MÁGICA ACONTECE AQUI: Passa os dados pelo "Lava-Jato" antes de qualquer coisa
+    numero_processo, relator = higienizar_dados(numero_processo, relator)
+    
     if processo_existe(numero_processo): return False, "❌ Processo já existe no sistema."
-    exp_seguros, rev_seguros = [e for e in expedidores], [r for r in revisores]
-
+  
     if not exp_seguros or not rev_seguros: return False, "❌ ERRO: Selecione ao menos um Expedidor e um Revisor."
 
     responsavel_expedicao = obter_expedidor(exp_seguros, nome_sessao)
