@@ -1087,54 +1087,71 @@ with aba_dados:
 # ABA 6: AJUDA E GLOSSÁRIO
 # ------------------------------------------
 with aba_ajuda:
-    st.header("📖 Manual do Usuário e Glossário - S.A.D.E. v1.0")
-    st.write("Bem-vindo(a) ao guia rápido do Sistema de Automação de Distribuição e Expedição! Clique nos tópicos abaixo para entender como usar cada ferramenta.")
+    st.header("📖 Manual do Usuário e Ajuda Detalhada - S.A.D.E.")
+    st.write("Bem-vindo(a) ao guia passo a passo do Sistema de Automação de Distribuição e Expedição. Clique nos tópicos abaixo para entender como usar cada ferramenta. Este manual foi feito para ser simples e direto, para te ajudar no dia a dia!")
 
-    with st.expander("🚀 Como começar (Passos Básicos)"):
+    with st.expander("📥 1. Como usar a Aba 1 (Inserir Novos) e Importar Planilhas"):
         st.markdown("""
-        O sistema foi feito para ser simples. Siga sempre esta ordem:
-        1. **Aba 1 (Inserir Novos):** Escolha o tipo da sessão, escale a equipe do dia e insira os processos (digitando um a um ou jogando uma planilha inteira). O sistema divide o trabalho de forma justa sozinho!
-        2. **Aba 2 (Painel Ativo):** É aqui que o trabalho acontece. Conforme a equipe avança, marque as caixinhas de concluído.
-        3. **Fim do dia:** Quando todas as caixinhas de um processo estiverem marcadas (incluindo "Despachado"), ele some do painel e vai direto para a **Aba 4 (Histórico)**.
+        A primeira aba é onde o trabalho começa. Aqui você diz ao sistema quais processos entrarão na pauta do dia. Você tem duas opções:
+        
+        **Opção A: Digitar um por vez (Inserção Manual)**
+        Ideal para quando chegarem poucos processos.
+        1. Escolha o **Destino** (Ex: Sessão Ordinária).
+        2. Digite o número da sessão (opcional).
+        3. Selecione quem da equipe vai trabalhar hoje nas caixas de Expedição e Revisão.
+        4. Digite o número do processo e o nome do Relator e clique no botão azul "Verificar e Processar".
+        
+        ---
+
+        **Opção B: Importar Planilha (Para inserir muitos processos de uma vez)**
+        Se você tem 10, 20 ou mais processos, não perca tempo digitando um por um. Use o método em lote! Siga este passo a passo com atenção:
+        
+        * **Passo 1:** Clique no botão cinza **"📥 Baixar Planilha Modelo"**. O computador vai salvar um arquivo no seu formato padrão (geralmente na sua pasta Downloads).
+        * **Passo 2:** Abra esse arquivo no Excel (ou no programa de planilhas do seu computador). Você verá apenas duas colunas escritas: `Processo` e `Relator`.
+        * **Passo 3:** Preencha com os seus dados! Apague os números de exemplo e cole a sua lista de processos na primeira coluna e os relatores na segunda.
+        
+        ⚠️ **Regras de Ouro do Excel para não dar erro no sistema:**
+        * **NÃO** mude o nome das colunas lá em cima (deixe escrito exatamente "Processo" e "Relator").
+        * **NÃO** deixe linhas totalmente em branco no meio da lista.
+        * **NÃO** adicione outras colunas inventadas (como "Data", "Observação", etc). O sistema só quer saber do número e do relator.
+        
+        * **Passo 4:** Salve o arquivo no seu computador e feche o Excel.
+        * **Passo 5:** Volte para o sistema na Aba 1, clique em **"Browse files"** (ou arraste o arquivo que você salvou para dentro da caixinha tracejada).
+        * **Passo 6:** O sistema vai te mostrar uma "amostra" para você ver se os dados estão certos. Estando tudo OK, clique no botão azul **"🚀 Iniciar Importação"**. Em poucos segundos, todo o lote será distribuído para a equipe!
         """)
 
-    with st.expander("📢 Como funciona o Mural de Avisos (Letreiro)"):
+    with st.expander("🗂️ 2. Como usar a Aba 2 (Painel Ativo)"):
         st.markdown("""
-        O letreiro vermelho no topo é a nossa central de comunicação rápida!
-        * **Aviso para um Processo:** Na Aba 3, mande um recado sobre um processo específico (ex: "Falta anexo"). Quando o colega despachar esse processo na Aba 2, o aviso some do letreiro automaticamente!
-        * **Aviso para Todos:** Escolha 'Todos' no destinatário para avisos gerais (ex: "Reunião às 15h"). Esse aviso some da tela sozinho às 23h59 do mesmo dia.
-        * **Desativar Manualmente:** Qualquer recado pode ser tirado do ar na Aba 3 > Área Administrativa > Gerenciar Avisos.
+        Esta é a mesa de trabalho digital da equipe. 
+        
+        * **Trabalho em Equipe:** Todo mundo pode ficar com essa tela aberta ao mesmo tempo no próprio computador.
+        * **Marcando as Tarefas:** Conforme o documento for feito, marque a caixinha **"Expedido"**. O colega que revisar o documento marca **"Revisado"**.
+        * **Mudando Nomes:** Se o sistema escalou a pessoa "A" para fazer um processo, mas a pessoa "B" vai fazer no lugar, é só clicar no nome da pessoa "A" na tabela e trocar na hora.
+        * **Finalizando:** Quando o processo estiver 100% pronto, assinado e entregue, marque a caixa **"Despachado"**. 
+        
+        ⚠️ **IMPORTANTE:** Sempre que marcar as caixinhas, lembre-se de clicar no botão azul embaixo da tabela **"💾 Salvar Alterações desta Sessão"**. O processo que foi "Despachado" vai sumir da sua frente e será guardado em segurança no Histórico.
         """)
 
-    with st.expander("🗂️ Como usar o Painel Ativo (Marcando tarefas)"):
+    with st.expander("📊 3. Como usar a Aba 3 (Controle, Letreiro e Correções)"):
         st.markdown("""
-        Na Aba 2, você interage com a tabela de processos:
-        * **Trabalho em Equipe Simultâneo:** A engenharia do sistema permite que toda a equipe trabalhe na mesma tela ao mesmo tempo. Você pode marcar as suas caixas e salvar, sem risco de apagar o trabalho que o colega está salvando no computador dele!
-        * **Mudar Responsável:** Se alguém precisar sair, clique no nome da pessoa e troque pelo colega.
-        * **Marcar "Expedido" e "Revisado":** Conforme o documento for feito, marque a caixa. O sistema anota a hora exata.
-        * **Sessão Reservada:** Possui caixas extras para controle (E-mail, Mensageria, Recebido).
+        Esta aba é a sala da Chefia e de quem precisa arrumar erros ou gerenciar a comunicação.
+        
+        * **📢 Mural de Avisos (Letreiro Vermelho):** Precisa dar um alerta para a equipe? Vá no Mural, escolha para quem é o recado, coloque o número do processo e a mensagem. O recado fica passando no topo da tela de todos. Quando a equipe despachar aquele processo na Aba 2, o recado some sozinho!
+        * **🗑️ Remover Processo Específico:** Alguém importou um processo errado na Aba 1? Sem pânico. Digite o número dele aqui, a data e o motivo. Ele será retirado da equipe e enviado para a Lixeira de Auditoria.
+        * **🏷️ Nomear Sessões:** É aqui que a chefia organiza a casa. Escolha a data de hoje, escolha o tipo (Ex: Sessão Reservada), e digite o número oficial da pauta (Ex: 45). Todas as tabelas da equipe vão ser atualizadas para esse nome oficial automaticamente.
         """)
 
-    with st.expander("🗑️ Socorro! Inseri errado ou o processo saiu de pauta."):
+    with st.expander("🗄️ 4. Abas 4 e 5 (Histórico e Desempenho Visual)"):
         st.markdown("""
-        Sem pânico! Vá até a **Aba 3 (Controle O.K.)**, encontre a área **"Remover Processo Específico"**. 
-
-        Digite o número exato, escolha a data da sessão e o **Motivo**. O processo será apagado da pauta ativa e enviado diretamente para a **Lixeira de Auditoria** (na Aba 4), mantendo a transparência do nosso fluxo.
+        O sistema guarda e analisa o trabalho sozinho para você não ter que usar calculadoras.
+        
+        * **Aba 4 (Histórico):** É o "Arquivo Morto" digital. Quando todos os processos de uma sessão são despachados, eles vêm pra cá. Lá você pode pesquisar processos antigos, ver a "Lixeira" de processos apagados e ver o relatório de avisos que já saíram do letreiro.
+        * **Aba 5 (Desempenho):** Onde os gráficos são gerados. O sistema cria um Radar em Tempo real para ver o que a equipe está fazendo agora, e também cria linhas de tendência mostrando se a equipe está demorando mais ou menos horas para fechar as sessões com o passar das semanas.
         """)
 
-    with st.expander("📚 Glossário de Termos do Sistema"):
+    with st.expander("📚 5. Glossário (O que significa cada termo?)"):
         st.markdown("""
-        * **Expedição / Revisão:** Etapas de preparação e dupla conferência. O sistema tem uma trava que impede que a mesma pessoa expessa e revise o próprio processo.
-        * **Processo Urgente:** Processos que precisam de prioridade. Ao ser marcado como urgente, a linha dele fica **em negrito e vermelha** no Painel Ativo.
-        * **Distribuição Inteligente:** O código analisa quem já fez parceria com quem, o volume de carga de cada um e o tipo de sessão para distribuir os processos de forma matemática e equilibrada.
-        * **Despachado:** Termo final. O documento está assinado, finalizado e pronto.
-        """)
-
-    with st.expander("💾 Governança e Segurança dos Dados (Área do Gestor)"):
-        st.markdown("""
-        No final da **Aba 3 (Controle)**, existe uma área "Avançada" com ferramentas de administração:
-        * **Gestão de Colaboradores:** Adicione novatos, altere permissões (quem expede/revisa) ou remova pessoas.
-        * **Backup:** Gera um arquivo Excel (CSV) de toda a base de dados em um clique.
-        * **Restaurar Sistema:** Em caso de falha no servidor, basta subir o arquivo CSV do backup para recuperar toda a base em segundos.
-        * **Auditoria Completa (Aba 4):** Todo processo excluído e todo aviso publicado no letreiro geram um histórico permanente, garantindo total rastreabilidade das ações no sistema.
+        * **Processo Urgente:** Processos que furam a fila. Quando inseridos como urgentes, a linha deles fica **vermelha e em negrito** no Painel Ativo, chamando a atenção de todos.
+        * **Expedição / Revisão:** O trabalho em dupla de fazer o documento e conferir. O robô do sistema é inteligente e bloqueia tentativas da mesma pessoa expedir e revisar o próprio documento.
+        * **Despachado:** O processo chegou ao fim da linha dentro do setor. Tarefa 100% concluída.
         """)
