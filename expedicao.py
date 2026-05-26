@@ -341,56 +341,55 @@ def carregar_historico_avisos():
     df['status'] = status_list
     return df
     
-def gerar_relatorio_mensal(mes, ano):
+def gerar_relatorio_gerencial(mes, ano):
     df_proc = carregar_dados()
     df_av = carregar_historico_avisos()
     _, _, equipe_total = carregar_equipes()
     
-    # 1. Filtra a equipe para excluir a Chefia (Jessyca) das métricas de peão
+    # 1. Filtra a equipe para excluir a Chefia (Jessyca)
     equipe_operacional = [n for n in equipe_total if n.lower() != 'jessyca']
     
-    # 2. Arruma as datas do banco de dados para formato matemático
+    # 2. Arruma as datas
     df_proc['data_conclusao_dt'] = pd.to_datetime(df_proc['data_conclusao'], format="%d/%m/%Y %H:%M:%S", errors='coerce')
     df_proc['data_entrada_dt'] = pd.to_datetime(df_proc['data_entrada'], format="%d/%m/%Y %H:%M:%S", errors='coerce')
     
-    # 3. Filtra apenas os processos despachados no mês e ano selecionados
-    df_mes = df_proc[(df_proc['data_conclusao_dt'].dt.month == mes) & 
-                     (df_proc['data_conclusao_dt'].dt.year == ano) & 
-                     (df_proc['despachado'] == 1)].copy()
+    # 3. Lógica Inteligente: Se mes == 0, puxa o ano inteiro. Se não, puxa o mês.
+    if mes == 0:
+        df_periodo = df_proc[(df_proc['data_conclusao_dt'].dt.year == ano) & (df_proc['despachado'] == 1)].copy()
+        titulo_periodo = f"ANO COMPLETO DE {ano}"
+    else:
+        df_periodo = df_proc[(df_proc['data_conclusao_dt'].dt.month == mes) & (df_proc['data_conclusao_dt'].dt.year == ano) & (df_proc['despachado'] == 1)].copy()
+        titulo_periodo = f"{mes:02d}/{ano}"
                      
-    if df_mes.empty:
-        return False, f"Nenhum processo foi despachado no período de {mes:02d}/{ano}."
+    if df_periodo.empty:
+        return False, f"Nenhum processo foi despachado no período selecionado ({titulo_periodo})."
         
-    # --- MÉTRICAS DE BIG DATA ---
+    # --- MÉTRICAS ---
+    total_despachado = len(df_periodo)
     
-    # Total
-    total_despachado = len(df_mes)
-    
-    # Tempo Médio de Otimização
-    df_mes['tempo_min'] = (df_mes['data_conclusao_dt'] - df_mes['data_entrada_dt']).dt.total_seconds() / 60
-    tempo_medio = df_mes['tempo_min'].mean()
+    df_periodo['tempo_min'] = (df_periodo['data_conclusao_dt'] - df_periodo['data_entrada_dt']).dt.total_seconds() / 60
+    tempo_medio = df_periodo['tempo_min'].mean()
     tempo_str = f"{int(tempo_medio)} minutos" if pd.notna(tempo_medio) else "N/A"
     
-    # Mais Eficiente (Quem trabalhou em mais processos somando Expedição + Revisão)
     desempenho = {}
     for colab in equipe_operacional:
-        exp_count = len(df_mes[df_mes['expedicao'] == colab])
-        rev_count = len(df_mes[df_mes['revisao'] == colab])
+        exp_count = len(df_periodo[df_periodo['expedicao'] == colab])
+        rev_count = len(df_periodo[df_periodo['revisao'] == colab])
         if (exp_count + rev_count) > 0:
             desempenho[colab] = exp_count + rev_count
             
     mais_eficiente = max(desempenho, key=desempenho.get) if desempenho else "N/A"
     ops_eficiente = desempenho.get(mais_eficiente, 0)
     
-    # Ficou de Fora (Zero participação no mês)
-    participantes_ativos = set(df_mes['expedicao'].dropna().unique()).union(set(df_mes['revisao'].dropna().unique()))
+    participantes_ativos = set(df_periodo['expedicao'].dropna().unique()).union(set(df_periodo['revisao'].dropna().unique()))
     ficou_de_fora = [c for c in equipe_operacional if c not in participantes_ativos]
     
-    # Fechamento de Sessões
-    sessoes_mes = df_mes['nome_sessao'].unique()
+    # Fechamento de Sessões (Com limitador para o Relatório Anual não ficar gigante)
+    sessoes_periodo = df_periodo['nome_sessao'].unique()
     relatorio_sessoes = []
-    for s in sessoes_mes:
-        df_s = df_mes[df_mes['nome_sessao'] == s]
+    
+    for s in sessoes_periodo[:15]: # Mostra detalhado só até 15 sessões
+        df_s = df_periodo[df_periodo['nome_sessao'] == s]
         inicio = df_s['data_entrada_dt'].min()
         fim = df_s['data_conclusao_dt'].max()
         if pd.notna(inicio) and pd.notna(fim):
@@ -400,20 +399,26 @@ def gerar_relatorio_mensal(mes, ano):
             tempo_fechamento = f"{horas}h {mins}m" if horas > 0 else f"{mins} minutos"
             relatorio_sessoes.append(f"   - Sessão {s}: {tempo_fechamento}")
             
-    # Avisos (Quem tomou mais puxão de orelha no letreiro)
+    if len(sessoes_periodo) > 15:
+        relatorio_sessoes.append(f"   - ... e mais {len(sessoes_periodo) - 15} sessões geridas com sucesso ao longo do período.")
+            
+    # Avisos
     df_av['data_dt'] = pd.to_datetime(df_av['Data/Hora de Publicação'], format="%d/%m/%Y %H:%M:%S", errors='coerce')
-    df_av_mes = df_av[(df_av['data_dt'].dt.month == mes) & (df_av['data_dt'].dt.year == ano)]
+    if mes == 0:
+        df_av_periodo = df_av[(df_av['data_dt'].dt.year == ano)]
+    else:
+        df_av_periodo = df_av[(df_av['data_dt'].dt.month == mes) & (df_av['data_dt'].dt.year == ano)]
     
     avisos_count = {}
     for colab in equipe_operacional:
-        avisos_count[colab] = len(df_av_mes[df_av_mes['Destinatário do Alerta'] == colab])
+        avisos_count[colab] = len(df_av_periodo[df_av_periodo['Destinatário do Alerta'] == colab])
         
     mais_avisado = max(avisos_count, key=avisos_count.get) if avisos_count and max(avisos_count.values()) > 0 else "Nenhum"
     qnt_avisos = avisos_count.get(mais_avisado, 0)
 
     # --- MONTAGEM DO DOCUMENTO PARA ASSINATURA ---
     texto = f"====================================================\n"
-    texto += f" RELATÓRIO GERENCIAL DO SETOR - {mes:02d}/{ano}\n"
+    texto += f" RELATÓRIO GERENCIAL DO SETOR - {titulo_periodo}\n"
     texto += f"====================================================\n\n"
     texto += f"1. VOLUME DE PRODUÇÃO\n"
     texto += f"   - Total de processos concluídos (Despachados): {total_despachado}\n\n"
@@ -428,17 +433,16 @@ def gerar_relatorio_mensal(mes, ano):
     texto += "\n\n"
     texto += f"6. ESCALA DA EQUIPE\n"
     if ficou_de_fora:
-        texto += f"   - Colaboradores sem atuações neste mês: {', '.join(ficou_de_fora)}\n\n"
+        texto += f"   - Colaboradores sem atuações neste período: {', '.join(ficou_de_fora)}\n\n"
     else:
-        texto += "   - Todos os colaboradores operacionais participaram da pauta do mês.\n\n"
+        texto += "   - Todos os colaboradores operacionais participaram da pauta no período.\n\n"
     texto += f"====================================================\n"
     texto += f"Documento gerado e auditado automaticamente pelo S.A.D.E.\n"
     texto += f"Para aprovação da Chefia: Jessyca\n"
     texto += f"===================================================="
 
     return True, texto
-
-
+    
 # ==========================================
 # 2. FRONTEND: INTERFACE DO USUÁRIO
 # ==========================================
@@ -718,31 +722,34 @@ with aba_controle:
         st.markdown("---")
         # -------------------------------
 
-        st.subheader("📄 Relatório Gerencial Mensal (Para Assinatura)")
+       st.subheader("📄 Relatório Gerencial Mensal/Anual (Para Assinatura)")
         st.write("Gere um documento completo com métricas de desempenho para análise da Chefia.")
         col_m1, col_m2, col_m3 = st.columns([1, 1, 2])
         
-        meses_nomes = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+        # O número 0 aciona a lógica do "Ano Inteiro" no backend
+        meses_dict = {0: "🗓️ Anual (Ano Inteiro)", 1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril", 5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto", 9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"}
         mes_atual = datetime.now().month
         ano_atual = datetime.now().year
         
         with col_m1:
-            mes_selecionado = st.selectbox("Mês:", range(1, 13), index=mes_atual-1, format_func=lambda x: meses_nomes[x-1])
+            mes_selecionado = st.selectbox("Período:", list(meses_dict.keys()), index=mes_atual, format_func=lambda x: meses_dict[x])
         with col_m2:
-            # Lista dinâmica: começa em 2024 e cresce automaticamente até o ano atual!
             ano_selecionado = st.selectbox("Ano:", range(2024, ano_atual + 1), index=ano_atual-2024)
         with col_m3:
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("📊 Compilar Relatório", type="primary", use_container_width=True):
-                ok, texto_relatorio = gerar_relatorio_mensal(mes_selecionado, ano_selecionado)
+                ok, texto_relatorio = gerar_relatorio_gerencial(mes_selecionado, ano_selecionado)
                 if ok:
                     st.success("Relatório gerado com sucesso!")
                     st.code(texto_relatorio, language="markdown")
                     
+                    # Nomeia o arquivo do jeito certo dependendo se é Anual ou Mensal
+                    nome_arquivo = f"Relatorio_Gerencial_{ano_selecionado}.txt" if mes_selecionado == 0 else f"Relatorio_Gerencial_{mes_selecionado:02d}_{ano_selecionado}.txt"
+                    
                     st.download_button(
-                        label="📥 Baixar Relatório (Arquivo de Texto para o SEI)", 
+                        label="📥 Baixar Relatório (Arquivo de Texto)", 
                         data=texto_relatorio.encode('utf-8'), 
-                        file_name=f"Relatorio_Gerencial_{mes_selecionado:02d}_{ano_selecionado}.txt", 
+                        file_name=nome_arquivo, 
                         mime="text/plain",
                         type="secondary"
                     )
