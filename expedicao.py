@@ -14,6 +14,7 @@ def init_db():
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
 
+        # 1. Tabela Processos
         c.execute('''CREATE TABLE IF NOT EXISTS processos (
                                           id INTEGER PRIMARY KEY AUTOINCREMENT,
                                           numero_processo TEXT UNIQUE,
@@ -33,14 +34,15 @@ def init_db():
             try: c.execute(f'''ALTER TABLE processos ADD COLUMN {col} {tipo}''')
             except sqlite3.OperationalError: pass
 
+        # 2. Tabela Equipe
         c.execute('''CREATE TABLE IF NOT EXISTS equipe (
                                        id INTEGER PRIMARY KEY AUTOINCREMENT,
                                        nome TEXT UNIQUE,
                                        expedicao INTEGER DEFAULT 0,
                                        revisao INTEGER DEFAULT 0
                      )''')
-                     
-        # --- NOVA TABELA: LIXEIRA / AUDITORIA ---
+
+        # 3. Tabela Processos Excluídos (Auditoria)
         c.execute('''CREATE TABLE IF NOT EXISTS processos_excluidos (
                                           id INTEGER PRIMARY KEY AUTOINCREMENT,
                                           numero_processo TEXT,
@@ -49,7 +51,7 @@ def init_db():
                                           motivo TEXT
                      )''')
 
-        # --- NOVA TABELA: MURAL DE AVISOS ---
+        # 4. Tabela Avisos
         c.execute('''CREATE TABLE IF NOT EXISTS avisos (
                                           id INTEGER PRIMARY KEY AUTOINCREMENT,
                                           usuario TEXT,
@@ -57,7 +59,12 @@ def init_db():
                                           mensagem TEXT,
                                           data_criacao TEXT
                      )''')
-        
+                     
+        # Garante que a coluna 'ativo' exista na tabela de avisos
+        try: c.execute("ALTER TABLE avisos ADD COLUMN ativo INTEGER DEFAULT 1")
+        except sqlite3.OperationalError: pass
+
+        # 5. Popula a equipe inicial se estiver vazia
         c.execute("SELECT COUNT(*) FROM equipe")
         if c.fetchone()[0] == 0:
             iniciais = [
