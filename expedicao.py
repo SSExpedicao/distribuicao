@@ -768,7 +768,45 @@ with aba_controle:
             if st.button("➕ Adicionar", type="primary", key="add_user"):
                 ok, m = gerenciar_usuario('adicionar', novo_colab, expedicao=int(faz_exp), revisao=int(faz_rev))
                 if ok: st.success(m); time.sleep(1); st.rerun()
+
+       
+        # --- RELATÓRIO GERENCIAL ---
+        st.subheader("📄 Relatório Gerencial Mensal/Anual (Para Assinatura)")
+        st.write("Gere um documento completo com métricas de desempenho para análise da Chefia.")
+        col_m1, col_m2, col_m3 = st.columns([1, 1, 2])
         
+        # O número 0 aciona a lógica do "Ano Inteiro" no backend
+        meses_dict = {0: "🗓️ Anual (Ano Inteiro)", 1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril", 5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto", 9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"}
+        mes_atual = datetime.now().month
+        ano_atual = datetime.now().year
+        
+        with col_m1:
+            mes_selecionado = st.selectbox("Período:", list(meses_dict.keys()), index=mes_atual, format_func=lambda x: meses_dict[x])
+        with col_m2:
+            ano_selecionado = st.selectbox("Ano:", range(2024, ano_atual + 1), index=ano_atual-2024)
+        with col_m3:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("📊 Compilar Relatório", type="primary", use_container_width=True):
+                ok, texto_relatorio = gerar_relatorio_gerencial(mes_selecionado, ano_selecionado)
+                if ok:
+                    st.success("Relatório gerado com sucesso!")
+                    st.code(texto_relatorio, language="markdown")
+                    
+                    # Nomeia o arquivo do jeito certo dependendo se é Anual ou Mensal
+                    nome_arquivo = f"Relatorio_Gerencial_{ano_selecionado}.txt" if mes_selecionado == 0 else f"Relatorio_Gerencial_{mes_selecionado:02d}_{ano_selecionado}.txt"
+                    
+                    st.download_button(
+                        label="📥 Baixar Relatório (Arquivo de Texto)", 
+                        data=texto_relatorio.encode('utf-8'), 
+                        file_name=nome_arquivo, 
+                        mime="text/plain",
+                        type="secondary"
+                    )
+                else:
+                    st.warning(texto_relatorio)
+                    
+        st.markdown("---")
+
         elif acao_equipe == "Editar Permissões":
             col1, col2, col3 = st.columns(3)
             colab_editar = col1.selectbox("Selecione o colaborador", TODOS_NOMES)
@@ -823,6 +861,7 @@ with aba_controle:
                     except Exception as e: st.error(f"Erro ao ler o arquivo: {e}")
 
         st.markdown("---")
+
         st.subheader("🧹 Limpeza Seletiva do Sistema (Apagar Sessão)")
         col_tipo, col_data, col_motivo_sess, col_btn = st.columns([2, 2, 2, 1])
         with col_tipo: tipo_apagar = st.selectbox("Apagar de qual tipo?", ["Sessão Ordinária", "Sessão Ordinária Virtual", "Sessão Reservada", "Sessão Administrativa"])
