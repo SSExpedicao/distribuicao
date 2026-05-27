@@ -276,14 +276,25 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
     # 🪄 A MÁGICA ACONTECE AQUI: Passa os dados pelo "Lava-Jato" antes de qualquer coisa
     numero_processo, relator = higienizar_dados(numero_processo, relator)
     
-    if processo_existe(numero_processo): return False, "❌ Processo já existe no sistema."
+    if processo_existe(numero_processo): 
+        return False, "❌ Processo já existe no sistema."
   
-    # CORREÇÃO: Usando os mesmos nomes passados como parâmetro na função
-    if not expedidores or not revisores: return False, "❌ ERRO: Selecione ao menos um Expedidor e um Revisor."
+    # Variáveis corrigidas batendo certinho com os parâmetros da função
+    if not expedidores or not revisores: 
+        return False, "❌ ERRO: Selecione ao menos um Expedidor e um Revisor."
 
-    # CORREÇÃO: Repassando 'expedidores' e 'revisores'
     responsavel_expedicao = obter_expedidor(expedidores, nome_sessao)
     responsavel_revisao = obter_revisor(responsavel_expedicao, nome_sessao, revisores)
+    
+    data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute('''INSERT INTO processos (numero_processo, relator, tipo_sessao, nome_sessao, expedicao, revisao, data_entrada, 
+                                               expedido_ok, revisado_ok, despachado, urgente, enviado_email, enviado_mensageria, recebido) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0)''', 
+                     (numero_processo, relator, tipo_sessao, nome_sessao, responsavel_expedicao, responsavel_revisao, data_atual))
+                     
+    return True, f"✅ Distribuído! Expedição: **{responsavel_expedicao}** | Revisão: **{responsavel_revisao}**"
 
 def carregar_dados(tipo_sessao=None):
     with sqlite3.connect(DB_PATH) as conn:
