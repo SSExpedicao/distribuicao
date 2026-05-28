@@ -754,7 +754,7 @@ with aba_controle:
             file_name="modelo_historico.csv", mime="text/csv", type="secondary"
         )
         
-       col_h1, col_h2 = st.columns(2)
+       col_h1, col_h2 = st.columns
         with col_h1:
             hist_tipo = st.selectbox("Tipo de Sessão (Histórico):", ["Sessão Ordinária", "Sessão Ordinária Virtual", "Sessão Reservada", "Sessão Administrativa"], key="hist_tipo")
             hist_sessao = st.text_input("Nome ou Número da Sessão (Ex: Sessão 125):", key="hist_sessao")
@@ -762,7 +762,7 @@ with aba_controle:
             hist_proc = st.text_input("Nº do Processo (Manual):", key="hist_proc")
             hist_rel = st.text_input("Relator (Manual):", key="hist_rel")
             
-        col_hx, col_hy = st.columns(2)
+        col_hx, col_hy = st.columns
         with col_hx: 
             hist_exp = st.text_input("Expedidor:", placeholder="Digite o nome...", key="hist_exp")
         with col_hy: 
