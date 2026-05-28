@@ -761,9 +761,13 @@ with aba_controle:
             hist_proc = st.text_input("Nº do Processo (Manual):", key="hist_proc")
             hist_rel = st.text_input("Relator (Manual):", key="hist_rel")
             
-        col_hx, col_hy = st.columns(2)
-        with col_hx: hist_exp = st.selectbox("Expedidor Padrão:", TODOS_NOMES, key="hist_exp")
-        with col_hy: hist_rev = st.selectbox("Revisor Padrão:", TODOS_NOMES, key="hist_rev")
+       col_hx, col_hy = st.columns(2)
+        with col_hx: 
+            # Mudamos de selectbox para text_input para você digitar qualquer nome
+            hist_exp = st.text_input("Expedidor:", placeholder="Digite o nome...", key="hist_exp")
+        with col_hy: 
+            # Mudamos de selectbox para text_input para você digitar qualquer nome
+            hist_rev = st.text_input("Revisor:", placeholder="Digite o nome...", key="hist_rev")
 
         arquivo_hist = st.file_uploader("Planilha de Recuperação (CSV/XLSX):", type=["csv", "xlsx"], key="hist_up")
 
