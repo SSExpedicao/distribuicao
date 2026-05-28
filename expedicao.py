@@ -741,23 +741,30 @@ with aba_controle:
 
         st.markdown("---")
 
-        # --- INSERÇÃO DIRETA NO HISTÓRICO (RECUPERAÇÃO/MIGRAÇÃO) ---
+       # --- INSERÇÃO DIRETA NO HISTÓRICO (RECUPERAÇÃO/MIGRAÇÃO) ---
         st.subheader("🕰️ Migração de Processos Direto para o Histórico")
         st.write("Insira processos antigos já finalizados. Eles pularão o Painel Ativo e irão direto para o Arquivo.")
+        
+        # --- GERADOR DA PLANILHA MODELO PARA HISTÓRICO ---
+        df_modelo_hist = pd.DataFrame({"Processo": ["12345/2026", "67890/2026"], "Relator": ["Conselheiro A", "Conselheiro B"]})
+        st.download_button(
+            label="📥 Baixar Modelo para Histórico (CSV)",
+            data=df_modelo_hist.to_csv(index=False).encode('utf-8'),
+            file_name="modelo_historico.csv", mime="text/csv", type="secondary"
+        )
         
         col_h1, col_h2 = st.columns(2)
         with col_h1:
             hist_tipo = st.selectbox("Tipo de Sessão (Histórico):", ["Sessão Ordinária", "Sessão Ordinária Virtual", "Sessão Reservada", "Sessão Administrativa"], key="hist_tipo")
             hist_sessao = st.text_input("Nome ou Número da Sessão (Ex: Sessão 125):", key="hist_sessao")
         with col_h2:
-            hist_proc = st.text_input("Nº do Processo (Para inserção manual):", key="hist_proc")
-            hist_rel = st.text_input("Relator (Para inserção manual):", key="hist_rel")
+            hist_proc = st.text_input("Nº do Processo (Manual):", key="hist_proc")
+            hist_rel = st.text_input("Relator (Manual):", key="hist_rel")
             
         col_hx, col_hy = st.columns(2)
         with col_hx: hist_exp = st.selectbox("Expedidor Padrão:", TODOS_NOMES, key="hist_exp")
         with col_hy: hist_rev = st.selectbox("Revisor Padrão:", TODOS_NOMES, key="hist_rev")
 
-        st.info("💡 Para recuperar vários de uma vez, deixe o 'Processo' acima em branco e suba uma planilha com colunas 'Processo' e 'Relator'.")
         arquivo_hist = st.file_uploader("Planilha de Recuperação (CSV/XLSX):", type=["csv", "xlsx"], key="hist_up")
 
         if st.button("💾 Enviar Direto para o Histórico", type="primary", use_container_width=True):
