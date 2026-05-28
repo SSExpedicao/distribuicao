@@ -579,15 +579,21 @@ with aba_controle:
         # --- PAINEL DO LETREIRO AQUI ---
         st.subheader("📢 Mural de Avisos (Letreiro)")
         col_av1, col_av2, col_av3 = st.columns([1, 1, 2])
+        
+        # Correção: Verifica se TODOS_NOMES tem conteúdo antes de montar a lista
+        opcoes_usuarios = ["Todos"] + (TODOS_NOMES if TODOS_NOMES else ["NENHUMA EQUIPE ENCONTRADA"])
+        
         with col_av1:
-            aviso_usuario = st.selectbox("Para quem?", ["Todos"] + TODOS_NOMES, key="aviso_usr")
+            aviso_usuario = st.selectbox("Para quem?", opcoes_usuarios, key="aviso_usr")
         with col_av2:
             aviso_processo = st.text_input("Nº do Processo Ativo", key="aviso_proc")
         with col_av3:
-            aviso_msg = st.text_input("Mensagem", placeholder="Ex: Tratar com urgência, falta anexo...", key="aviso_msg")
+            aviso_msg = st.text_input("Mensagem", placeholder="Ex: Tratar com urgência...", key="aviso_msg")
         
         if st.button("📢 Publicar no Letreiro", type="primary", use_container_width=True):
-            if aviso_processo and aviso_msg:
+            if aviso_usuario == "NENHUMA EQUIPE ENCONTRADA":
+                st.error("❌ Erro: Não encontrei colaboradores na base de dados.")
+            elif aviso_processo and aviso_msg:
                 ok, msg = adicionar_aviso(aviso_usuario, aviso_processo, aviso_msg)
                 if ok:
                     st.success(msg)
