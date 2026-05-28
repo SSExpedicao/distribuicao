@@ -5,99 +5,6 @@ import sqlite3
 from datetime import datetime
 import io
 import time
-from st_supabase_connection import SupabaseConnection
-
-# 1. Conecta automaticamente usando os Secrets que você já configurou
-conn = st.connection("supabase", type=SupabaseConnection)
-
-st.title("S.A.D.E. - Sistema de Análise de Processos")
-
-# ==========================================
-# PASSO 1: FORMULÁRIO PARA INSERIR DADOS
-# ==========================================
-st.subheader("📝 Cadastrar Novo Processo")
-
-with st.form("form_processo", clear_on_submit=True):
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        numero = st.text_input("Número do Processo", placeholder="Ex: 00123/2026")
-        tipo = st.selectbox("Tipo do Processo", ["Administrativo", "Fiscalização", "Pessoal", "Outros"])
-    
-    with col2:
-        status = st.selectbox("Status / Situação", ["Em andamento", "Concluído", "Suspenso", "Arquivado"])
-        data_autuacao = st.date_input("Data de Autuação")
-
-    orgao = st.text_input("Órgão/Setor de Origem")
-    descricao = st.text_area("Descrição / Detalhes")
-    
-    botao_salvar = st.form_submit_button("Salvar no Banco de Dados")
-
-# Se o usuário clicar em salvar, o Python envia os dados para o Supabase
-if botao_salvar:
-    if numero: # Garante que o número não tá vazio
-        try:
-            # Monta o dicionário com os nomes EXACTOS das colunas que criamos lá
-            dados_processo = {
-                "numero_processo": numero,
-                "tipo_processo": tipo,
-                "status_situacao": status,
-                "data_autuacao": data_autuacao.isoformat(), # Transforma a data em texto pro banco
-                "orgao_origem": orgao if orgao else None,
-                "descricao_detalhes": descricao if descricao else None
-            }
-            
-            # Envia o comando de INSERT para a tabela 'processos'
-            conn.table("processos").insert(dados_processo).execute()
-            st.success(f"Processo {numero} salvo com sucesso na nuvem!")
-            
-            # Limpa o cache para a listagem atualizar na hora
-            st.cache_data.clear()
-            
-        except Exception as e:
-            st.error(f"Erro ao salvar! Verifique se esse número de processo já não foi cadastrado. Erro: {e}")
-    else:
-        st.warning("Por favor, preencha o número do processo.")
-
-
-# ==========================================
-# PASSO 2: LEITURA E CÁLCULO DE PADRÕES
-# ==========================================
-st.subheader("📊 Histórico de Processos e Padrões")
-
-# Função com cache para o app ficar ultra rápido ao ler dados grandes
-@st.cache_data(ttl=600) # Atualiza a cada 10 minutos ou quando limpamos o cache acima
-def carregar_dados():
-    # Busca tudo da tabela processos
-    resposta = conn.table("processos").select("*").execute()
-    return pd.DataFrame(resposta.data)
-
-df_processos = carregar_dados()
-
-if not df_processos.empty:
-    # 1. Mostra a lista bonitinha na tela
-    st.write(f"Total de processos armazenados de forma segura: **{len(df_processos)}**")
-    st.dataframe(df_processos)
-    
-    # 2. Exemplo simples de cálculo de padrão/estatística
-    st.subheader("📈 Análise de Padrões Recorrentes")
-    
-    # Conta quantos processos tem de cada tipo
-    padrao_tipos = df_processos['tipo_processo'].value_counts()
-    st.bar_chart(padrao_tipos)
-    
-else:
-    st.info("O banco de dados está pronto, mas ainda não tem nenhum processo cadastrado. Use o formulário acima para testar!")
-# Carrega os dados
-df_processos = carregar_historico_processos()
-
-# 1. Aqui você roda seus cálculos de padrões usando o DataFrame
-st.subheader("Análise de Padrões")
-# ex: total_por_tipo = df_processos['tipo'].value_counts()
-
-# 2. Aqui você mostra a lista de processos de forma interativa
-st.subheader("Lista de Processos Cadastrados")
-st.dataframe(df_processos)
 
 # ==========================================
 # 1. BACKEND: BANCO DE DADOS E LÓGICA
@@ -366,13 +273,11 @@ def obter_revisor(expedidor, nome_sessao, revisores_ativos):
     return melhor_cand
 
 def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, expedidores, revisores):
-    # 🪄 A MÁGICA ACONTECE AQUI: Passa os dados pelo "Lava-Jato" antes de qualquer coisa
     numero_processo, relator = higienizar_dados(numero_processo, relator)
     
     if processo_existe(numero_processo): 
         return False, "❌ Processo já existe no sistema."
   
-    # Variáveis corrigidas batendo certinho com os parâmetros da função
     if not expedidores or not revisores: 
         return False, "❌ ERRO: Selecione ao menos um Expedidor e um Revisor."
 
@@ -410,7 +315,6 @@ EQUIPE_EXPEDICAO, EQUIPE_REVISAO, TODOS_NOMES = carregar_equipes()
 def adicionar_aviso(usuario, numero_processo, mensagem):
     with sqlite3.connect(DB_PATH) as conn_sq:
         c = conn_sq.cursor()
-        # Verifica se o processo existe e se não está despachado
         c.execute("SELECT despachado FROM processos WHERE numero_processo = ?", (numero_processo,))
         res = c.fetchone()
         if not res:
@@ -465,7 +369,6 @@ def carregar_historico_avisos():
         df = pd.read_sql_query(query, conn_sq)
         
     if df.empty:
-        # CORREÇÃO AQUI: Mantendo as colunas padrão do Banco de Dados
         return pd.DataFrame(columns=['numero_processo', 'usuario', 'mensagem', 'data_criacao', 'ativo', 'despachado', 'proc_existe', 'status'])
         
     status_list = []
@@ -491,14 +394,11 @@ def gerar_relatorio_gerencial(mes, ano):
     df_av = carregar_historico_avisos()
     _, _, equipe_total = carregar_equipes()
     
-    # 1. Filtra a equipe para excluir a Chefia (Jessyca)
     equipe_operacional = [n for n in equipe_total if n.lower() != 'jessyca']
     
-    # 2. Arruma as datas
     df_proc['data_conclusao_dt'] = pd.to_datetime(df_proc['data_conclusao'], format="%d/%m/%Y %H:%M:%S", errors='coerce')
     df_proc['data_entrada_dt'] = pd.to_datetime(df_proc['data_entrada'], format="%d/%m/%Y %H:%M:%S", errors='coerce')
     
-    # 3. Lógica Inteligente: Se mes == 0, puxa o ano inteiro. Se não, puxa o mês.
     if mes == 0:
         df_periodo = df_proc[(df_proc['data_conclusao_dt'].dt.year == ano) & (df_proc['despachado'] == 1)].copy()
         titulo_periodo = f"ANO COMPLETO DE {ano}"
@@ -509,7 +409,6 @@ def gerar_relatorio_gerencial(mes, ano):
     if df_periodo.empty:
         return False, f"Nenhum processo foi despachado no período selecionado ({titulo_periodo})."
         
-    # --- MÉTRICAS ---
     total_despachado = len(df_periodo)
     
     df_periodo['tempo_min'] = (df_periodo['data_conclusao_dt'] - df_periodo['data_entrada_dt']).dt.total_seconds() / 60
@@ -529,11 +428,10 @@ def gerar_relatorio_gerencial(mes, ano):
     participantes_ativos = set(df_periodo['expedicao'].dropna().unique()).union(set(df_periodo['revisao'].dropna().unique()))
     ficou_de_fora = [c for c in equipe_operacional if c not in participantes_ativos]
     
-    # Fechamento de Sessões (Com limitador para o Relatório Anual não ficar gigante)
     sessoes_periodo = df_periodo['nome_sessao'].unique()
     relatorio_sessoes = []
     
-    for s in sessoes_periodo[:15]: # Mostra detalhado só até 15 sessões
+    for s in sessoes_periodo[:15]:
         df_s = df_periodo[df_periodo['nome_sessao'] == s]
         inicio = df_s['data_entrada_dt'].min()
         fim = df_s['data_conclusao_dt'].max()
@@ -547,7 +445,6 @@ def gerar_relatorio_gerencial(mes, ano):
     if len(sessoes_periodo) > 15:
         relatorio_sessoes.append(f"   - ... e mais {len(sessoes_periodo) - 15} sessões geridas com sucesso ao longo do período.")
             
-    # Avisos
     df_av['data_dt'] = pd.to_datetime(df_av['data_criacao'], format="%d/%m/%Y %H:%M:%S", errors='coerce')
     
     if mes == 0:
@@ -557,13 +454,11 @@ def gerar_relatorio_gerencial(mes, ano):
         
     avisos_count = {}
     for colab in equipe_operacional:
-        # CORREÇÃO AQUI: O destinatário no banco se chama 'usuario'
         avisos_count[colab] = len(df_av_periodo[df_av_periodo['usuario'] == colab])
         
     mais_avisado = max(avisos_count, key=avisos_count.get) if avisos_count and max(avisos_count.values()) > 0 else "Nenhum"
     qnt_avisos = avisos_count.get(mais_avisado, 0)
 
-    # --- MONTAGEM DO DOCUMENTO PARA ASSINATURA ---
     texto = f"====================================================\n"
     texto += f" RELATÓRIO GERENCIAL DO SETOR - {titulo_periodo}\n"
     texto += f"====================================================\n\n"
@@ -627,7 +522,7 @@ aba_inserir, aba_sessoes, aba_controle, aba_historico, aba_dados, aba_ajuda = st
     "❓ 6. Ajuda & Glossário"
 ])
 
-# VARIÁVEIS ESSENCIAIS (Isso aqui que estava faltando e dando o erro vermelho!)
+# VARIÁVEIS ESSENCIAIS 
 nome_sessao_atual = datetime.now().strftime("%d/%m/%Y")
 df_geral_status = carregar_dados_sqlite()
 sessoes_finalizadas = []
