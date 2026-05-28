@@ -5,23 +5,89 @@ import sqlite3
 from datetime import datetime
 import io
 import time
-import streamlit as st
 from st_supabase_connection import SupabaseConnection
 
-# Inicializa a conexão com o banco de dados
+# 1. Conecta automaticamente usando os Secrets que você já configurou
 conn = st.connection("supabase", type=SupabaseConnection)
 
-# Função para buscar a lista de processos (com cache para ficar ultra rápido)
-@st.cache_data(ttl=3600) # Atualiza a cada 1 hora, ou o tempo que preferir
-def carregar_historico_processos():
-    # Busca todas as linhas da tabela 'processos'
-    resultado = conn.table("processos").select("*").execute()
-    
-    # Transforma o resultado diretamente em um DataFrame do Pandas
-    import pandas as pd
-    df = pd.DataFrame(resultado.data)
-    return df
+st.title("S.A.D.E. - Sistema de Análise de Processos")
 
+# ==========================================
+# PASSO 1: FORMULÁRIO PARA INSERIR DADOS
+# ==========================================
+st.subheader("📝 Cadastrar Novo Processo")
+
+with st.form("form_processo", clear_on_submit=True):
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        numero = st.text_input("Número do Processo", placeholder="Ex: 00123/2026")
+        tipo = st.selectbox("Tipo do Processo", ["Administrativo", "Fiscalização", "Pessoal", "Outros"])
+    
+    with col2:
+        status = st.selectbox("Status / Situação", ["Em andamento", "Concluído", "Suspenso", "Arquivado"])
+        data_autuacao = st.date_input("Data de Autuação")
+
+    orgao = st.text_input("Órgão/Setor de Origem")
+    descricao = st.text_area("Descrição / Detalhes")
+    
+    botao_salvar = st.form_submit_button("Salvar no Banco de Dados")
+
+# Se o usuário clicar em salvar, o Python envia os dados para o Supabase
+if botao_salvar:
+    if numero: # Garante que o número não tá vazio
+        try:
+            # Monta o dicionário com os nomes EXACTOS das colunas que criamos lá
+            dados_processo = {
+                "numero_processo": numero,
+                "tipo_processo": tipo,
+                "status_situacao": status,
+                "data_autuacao": data_autuacao.isoformat(), # Transforma a data em texto pro banco
+                "orgao_origem": orgao if orgao else None,
+                "descricao_detalhes": descricao if descricao else None
+            }
+            
+            # Envia o comando de INSERT para a tabela 'processos'
+            conn.table("processos").insert(dados_processo).execute()
+            st.success(f"Processo {numero} salvo com sucesso na nuvem!")
+            
+            # Limpa o cache para a listagem atualizar na hora
+            st.cache_data.clear()
+            
+        except Exception as e:
+            st.error(f"Erro ao salvar! Verifique se esse número de processo já não foi cadastrado. Erro: {e}")
+    else:
+        st.warning("Por favor, preencha o número do processo.")
+
+
+# ==========================================
+# PASSO 2: LEITURA E CÁLCULO DE PADRÕES
+# ==========================================
+st.subheader("📊 Histórico de Processos e Padrões")
+
+# Função com cache para o app ficar ultra rápido ao ler dados grandes
+@st.cache_data(ttl=600) # Atualiza a cada 10 minutos ou quando limpamos o cache acima
+def carregar_dados():
+    # Busca tudo da tabela processos
+    resposta = conn.table("processos").select("*").execute()
+    return pd.DataFrame(resposta.data)
+
+df_processos = carregar_dados()
+
+if not df_processos.empty:
+    # 1. Mostra a lista bonitinha na tela
+    st.write(f"Total de processos armazenados de forma segura: **{len(df_processos)}**")
+    st.dataframe(df_processos)
+    
+    # 2. Exemplo simples de cálculo de padrão/estatística
+    st.subheader("📈 Análise de Padrões Recorrentes")
+    
+    # Conta quantos processos tem de cada tipo
+    padrao_tipos = df_processos['tipo_processo'].value_counts()
+    st.bar_chart(padrao_tipos)
+    
+else:
+    st.info("O banco de dados está pronto, mas ainda não tem nenhum processo cadastrado. Use o formulário acima para testar!")
 # Carrega os dados
 df_processos = carregar_historico_processos()
 
