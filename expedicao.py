@@ -5,6 +5,33 @@ import sqlite3
 from datetime import datetime
 import io
 import time
+import streamlit as st
+from st_supabase_connection import SupabaseConnection
+
+# Inicializa a conexão com o banco de dados
+conn = st.connection("supabase", type=SupabaseConnection)
+
+# Função para buscar a lista de processos (com cache para ficar ultra rápido)
+@st.cache_data(ttl=3600) # Atualiza a cada 1 hora, ou o tempo que preferir
+def carregar_historico_processos():
+    # Busca todas as linhas da tabela 'processos'
+    resultado = conn.table("processos").select("*").execute()
+    
+    # Transforma o resultado diretamente em um DataFrame do Pandas
+    import pandas as pd
+    df = pd.DataFrame(resultado.data)
+    return df
+
+# Carrega os dados
+df_processos = carregar_historico_processos()
+
+# 1. Aqui você roda seus cálculos de padrões usando o DataFrame
+st.subheader("Análise de Padrões")
+# ex: total_por_tipo = df_processos['tipo'].value_counts()
+
+# 2. Aqui você mostra a lista de processos de forma interativa
+st.subheader("Lista de Processos Cadastrados")
+st.dataframe(df_processos)
 
 # ==========================================
 # 1. BACKEND: BANCO DE DADOS E LÓGICA
