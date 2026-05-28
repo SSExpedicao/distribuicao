@@ -675,4 +675,136 @@ with aba_controle:
         if acao_equipe == "Adicionar Novo":
             col1, col2 = st.columns(2)
             novo_colab = col1.text_input("Nome do novo colaborador")
-            faz_exp, faz_rev = col2.checkbox("Participa da Expedição", value
+            faz_exp, faz_rev = col2.checkbox("Participa da Expedição", value=True), col2.checkbox("Participa da Revisão", value=True)
+            if st.button("➕ Adicionar", type="primary", key="add_user"):
+                ok, m = gerenciar_usuario('adicionar', novo_colab, expedicao=int(faz_exp), revisao=int(faz_rev))
+                if ok: st.success(m); time.sleep(0.5); st.rerun()
+
+        elif acao_equipe == "Editar Permissões":
+            col1, col2, col3 = st.columns(3)
+            colab_editar = col1.selectbox("Selecione o colaborador", TODOS_NOMES)
+            faz_exp = col2.checkbox("Participa da Expedição", value=True, key="edit_exp")
+            faz_rev = col3.checkbox("Participa da Revisão", value=True, key="edit_rev")
+            if st.button("✏️ Atualizar Permissões", type="primary", key="edit_user"):
+                ok, m = gerenciar_usuario('editar', colab_editar, expedicao=int(faz_exp), revisao=int(faz_rev))
+                if ok: st.success(m); time.sleep(0.5); st.rerun()
+
+        elif acao_equipe == "Substituir Nome":
+            col1, col2, col3 = st.columns(3)
+            colab_atual = col1.selectbox("Quem vai sair?", TODOS_NOMES)
+            novo_nome = col2.text_input("Qual o nome de quem vai entrar?")
+            faz_exp, faz_rev = col3.checkbox("Entra na Expedição?", value=True), col3.checkbox("Entra na Revisão?", value=True)
+            if st.button("🔄 Substituir", type="primary", key="subst_user"):
+                ok, m = gerenciar_usuario('substituir', colab_atual, novo_nome=novo_nome, expedicao=int(faz_exp), revisao=int(faz_rev))
+                if ok: st.success(m); time.sleep(0.5); st.rerun()
+
+        elif acao_equipe == "Remover Colaborador":
+            colab_remover = st.selectbox("Selecione quem será removido", TODOS_NOMES)
+            if st.button("🗑️ Remover Definitivamente", type="primary", key="rem_user"):
+                ok, m = gerenciar_usuario('remover', colab_remover)
+                if ok: st.success(m); time.sleep(0.5); st.rerun()
+
+        st.markdown("---")
+        st.subheader("💾 Backup e Restauração de Dados")
+        col_down, col_up = st.columns(2)
+        with col_down:
+            st.markdown("**1. Gerar Arquivo de Segurança**")
+            if not df_geral_status.empty:
+                csv = df_geral_status.to_csv(index=False).encode('utf-8')
+                st.download_button(label="📥 Baixar Backup (CSV)", data=csv, file_name=f"backup_processos_{datetime.now().strftime('%d_%m_%Y')}.csv", mime='text/csv', type="primary", use_container_width=True)
+            else: st.info("O banco de dados está vazio.")
+
+        with col_up:
+            st.markdown("**2. Restaurar Sistema**")
+            arquivo_backup = st.file_uploader("Suba o arquivo CSV para restaurar", type=['csv'], label_visibility="collapsed")
+            if arquivo_backup is not None:
+                if st.button("⚠️ Restaurar Dados Agora", type="primary", use_container_width=True):
+                    df_up = pd.read_csv(arquivo_backup)
+                    ok, msg = restaurar_backup(df_up)
+                    if ok: st.success(msg); time.sleep(0.5); st.rerun()
+                    else: st.error(msg)
+
+        st.markdown("---")
+        st.subheader("🧹 Limpeza Seletiva do Sistema (Apagar Sessão)")
+        col_tipo, col_data, col_motivo_sess, col_btn = st.columns([2, 2, 2, 1])
+        with col_tipo: tipo_apagar = st.selectbox("Apagar de qual tipo?", ["Sessão Ordinária", "Sessão Ordinária Virtual", "Sessão Reservada", "Sessão Administrativa"])
+        with col_data:
+            datas_disp_apagar = df_geral_status[df_geral_status['tipo_sessao'] == tipo_apagar]['nome_sessao'].unique() if not df_geral_status.empty else []
+            data_apagar = st.selectbox("Qual data?", sorted(datas_disp_apagar, reverse=True)) if len(datas_disp_apagar) > 0 else st.selectbox("Qual data?", ["Sem dados"])
+        with col_motivo_sess: motivo_sessao = st.selectbox("Motivo da Exclusão:", ["Sessão Cancelada", "Fora de pauta", "Incluído errado"], key="motivo_sess")
+        with col_btn:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("🗑️ Apagar Sessão", type="primary", use_container_width=True) and data_apagar != "Sem dados":
+                apagar_sessao_especifica(tipo_apagar, data_apagar, motivo_sessao)
+                st.success(f"Sessão de {data_apagar} apagada com sucesso!")
+                time.sleep(0.5); st.rerun()
+
+# ------------------------------------------
+# ABA 4: HISTÓRICO, EXCLUSÕES E AVISOS
+# ------------------------------------------
+with aba_historico:
+    s_concluidas, s_lixeira, s_avisos = st.tabs(["✅ Arquivo: Concluídas", "🗑️ Auditoria: Processos Excluídos", "📢 Auditoria: Histórico de Avisos"])
+    
+    with s_concluidas:
+        st.subheader("Sessões 100% Concluídas")
+        if sessoes_finalizadas:
+            df_historico = df_geral_status[df_geral_status['nome_sessao'].isin(sessoes_finalizadas)].copy()
+            df_hist_disp = df_historico[['numero_processo', 'urgente', 'relator', 'expedicao', 'revisao', 'data_conclusao', 'tipo_sessao', 'nome_sessao']].rename(
+                columns={'numero_processo': 'Processo', 'urgente': 'urgente_flag', 'relator': 'Conselheiro', 'expedicao': 'Expedidor', 'revisao': 'Revisor', 'data_conclusao': 'Data/Hora Conclusão', 'tipo_sessao': 'Tipo de Sessão', 'nome_sessao': 'Data da Sessão'}
+            )
+            col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+            with col_f1: filtro_sessao = st.multiselect("📅 Data da Sessão", options=sorted(df_hist_disp['Data da Sessão'].unique(), reverse=True))
+            with col_f2: filtro_usuario = st.multiselect("👥 Colaborador", options=TODOS_NOMES)
+            with col_f3: filtro_processo = st.text_input("📄 Nº do Processo")
+            with col_f4: filtro_relator = st.text_input("⚖️ Relator")
+
+            df_fil = df_hist_disp.copy()
+            if filtro_sessao: df_fil = df_fil[df_fil['Data da Sessão'].isin(filtro_sessao)]
+            if filtro_usuario: df_fil = df_fil[df_fil['Expedidor'].isin(filtro_usuario) | df_fil['Revisor'].isin(filtro_usuario)]
+            if filtro_processo: df_fil = df_fil[df_fil['Processo'].astype(str).str.contains(filtro_processo, case=False, na=False)]
+            if filtro_relator: df_fil = df_fil[df_fil['Conselheiro'].astype(str).str.contains(filtro_relator, case=False, na=False)]
+
+            st.dataframe(df_fil.iloc[::-1].style.apply(color_urgentes, axis=1), hide_index=True, use_container_width=True, column_config={"urgente_flag": None})
+        else: st.info("📭 Nenhuma sessão foi 100% concluída ainda.")
+
+    with s_lixeira:
+        st.subheader("Registro de Exclusões (Auditoria de Pauta)")
+        df_ex = carregar_excluidos()
+        if not df_ex.empty:
+            st.dataframe(df_ex.rename(columns={'numero_processo': 'Processo', 'relator': 'Relator', 'data_exclusao': 'Data/Hora Exclusão', 'motivo': 'Motivo'}), hide_index=True, use_container_width=True)
+        else: st.success("✨ A lixeira está vazia.")
+
+    with s_avisos:
+        st.subheader("Histórico Completo de Avisos Publicados")
+        df_hi_av = carregar_historico_avisos()
+        if not df_hi_av.empty:
+            st.dataframe(df_hi_av.rename(columns={'numero_processo': 'Processo', 'usuario': 'Destinatário', 'mensagem': 'Comunicado', 'data_criacao': 'Data/Hora Publicação', 'status': 'Situação'}), hide_index=True, use_container_width=True)
+
+# ------------------------------------------
+# ABA 5: DADOS & DESEMPENHO (ANALYTICS)
+# ------------------------------------------
+with aba_dados:
+    st.subheader("📈 Analytics e Radar Operacional")
+    if not df_geral_status.empty and 'data_expedido' in df_geral_status.columns:
+        df_dados = df_geral_status.copy()
+        for c in ['data_entrada', 'data_expedido', 'data_revisado', 'data_conclusao']:
+            df_dados[c + '_dt'] = pd.to_datetime(df_dados[c], format="%d/%m/%Y %H:%M:%S", errors='coerce')
+        
+        df_dados['minutos_total'] = (df_dados['data_conclusao_dt'] - df_dados['data_entrada_dt']).dt.total_seconds() / 60
+        st.metric("Total de Processos Cadastrados de Forma Segura", len(df_dados))
+        
+        fig = px.histogram(df_dados, x="expedicao", color="tipo_sessao", barmode="group", title="Volume de Distribuição por Colaborador")
+        st.plotly_chart(fig, use_container_width=True)
+    else: st.info("📊 Insira e conclua processos para gerar métricas de desempenho.")
+
+# ------------------------------------------
+# ABA 6: AJUDA E GLOSSÁRIO
+# ------------------------------------------
+with aba_ajuda:
+    st.header("📖 Manual do Usuário e Ajuda Detalhada - S.A.D.E.")
+    with st.expander("📥 1. Inserir Novos e Importar Planilhas"):
+        st.markdown("Instruções de como preencher e baixar a planilha modelo do Excel, respeitando as colunas obrigatórias.")
+    with st.expander("🗂️ 2. Painel Ativo de Trabalho"):
+        st.markdown("Como atualizar os status de Expedido, Revisado e Despachado, lembrando sempre de salvar as alterações.")
+    with st.expander("📊 3. Área Administrativa Avançada"):
+        st.markdown("Gerenciamento de letreiros, lixeira de auditoria e geração automatizada de relatórios em formato TXT para a chefia.")
