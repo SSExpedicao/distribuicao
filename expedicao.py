@@ -763,10 +763,8 @@ with aba_controle:
             
        col_hx, col_hy = st.columns(2)
         with col_hx: 
-            # Mudamos de selectbox para text_input para você digitar qualquer nome
             hist_exp = st.text_input("Expedidor:", placeholder="Digite o nome...", key="hist_exp")
         with col_hy: 
-            # Mudamos de selectbox para text_input para você digitar qualquer nome
             hist_rev = st.text_input("Revisor:", placeholder="Digite o nome...", key="hist_rev")
 
         arquivo_hist = st.file_uploader("Planilha de Recuperação (CSV/XLSX):", type=["csv", "xlsx"], key="hist_up")
