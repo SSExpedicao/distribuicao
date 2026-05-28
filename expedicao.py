@@ -541,7 +541,8 @@ with aba_sessoes:
         df_adm = carregar_dados_sqlite("Sessão Administrativa")
         if not df_adm.empty:
             for data in df_adm[~df_adm['nome_sessao'].isin(sessoes_finalizadas)]['nome_sessao'].unique(): exibir_tabela_interativa(df_adm[df_adm['nome_sessao'] == data], "adm", data, "Sessão Administrativa")
-# ------------------------------------------
+                
+   # ------------------------------------------
 # ABA 3: CONTROLE DE CARGA E ÁREA ADMINISTRATIVA
 # ------------------------------------------
 with aba_controle:
@@ -579,21 +580,16 @@ with aba_controle:
         # --- PAINEL DO LETREIRO AQUI ---
         st.subheader("📢 Mural de Avisos (Letreiro)")
         col_av1, col_av2, col_av3 = st.columns([1, 1, 2])
-        
-        # Correção: Verifica se TODOS_NOMES tem conteúdo antes de montar a lista
-        opcoes_usuarios = ["Todos"] + (TODOS_NOMES if TODOS_NOMES else ["NENHUMA EQUIPE ENCONTRADA"])
-        
         with col_av1:
-            aviso_usuario = st.selectbox("Para quem?", opcoes_usuarios, key="aviso_usr")
+            # CORREÇÃO APLICADA AQUI: ADIÇÃO DO ["Todos"]
+            aviso_usuario = st.selectbox("Para quem?", ["Todos"] + TODOS_NOMES, key="aviso_usr")
         with col_av2:
             aviso_processo = st.text_input("Nº do Processo Ativo", key="aviso_proc")
         with col_av3:
-            aviso_msg = st.text_input("Mensagem", placeholder="Ex: Tratar com urgência...", key="aviso_msg")
+            aviso_msg = st.text_input("Mensagem", placeholder="Ex: Tratar com urgência, falta anexo...", key="aviso_msg")
         
         if st.button("📢 Publicar no Letreiro", type="primary", use_container_width=True):
-            if aviso_usuario == "NENHUMA EQUIPE ENCONTRADA":
-                st.error("❌ Erro: Não encontrei colaboradores na base de dados.")
-            elif aviso_processo and aviso_msg:
+            if aviso_processo and aviso_msg:
                 ok, msg = adicionar_aviso(aviso_usuario, aviso_processo, aviso_msg)
                 if ok:
                     st.success(msg)
@@ -602,11 +598,14 @@ with aba_controle:
                 else:
                     st.error(msg)
             else:
-                st.warning("⚠️ Preencha o número do processo e a mensagem.")
+                st.warning("⚠️ Preencha o número do processo e a mensagem para publicar.")
         st.markdown("---")
-        
-        # --- NOMEAR / IDENTIFICAR SESSÃO ---
+        # -------------------------------
+
+       # --- NOMEAR / IDENTIFICAR SESSÃO ---
         st.subheader("🏷️ Identificar / Nomear Sessão")
+        st.write("Vincule o número oficial para cada tipo de sessão individualmente.")
+        
         col_sn1, col_sn2, col_sn3, col_sn4 = st.columns([2, 2, 1, 1.5])
         with col_sn1:
             sessoes_disp = sorted(df_geral_status['nome_sessao'].unique(), reverse=True) if not df_geral_status.empty else []
@@ -620,63 +619,144 @@ with aba_controle:
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("🏷️ Confirmar", type="primary", use_container_width=True):
                 if num_oficial and sessao_alvo:
-                    novo_nome = f"Sessão {num_oficial} - {sessao_alvo.split(' - ')[-1]}" if " - " in sessao_alvo else f"Sessão {num_oficial} - {sessao_alvo}"
+                    # Extrai a data pura se a sessão já tiver sido renomeada antes
+                    if " - " in sessao_alvo:
+                        data_pura = sessao_alvo.split(" - ")[-1].strip()
+                        novo_nome = f"Sessão {num_oficial} - {data_pura}"
+                    else:
+                        novo_nome = f"Sessão {num_oficial} - {sessao_alvo}"
+                    
+                    # Envia a data alvo, o novo nome e o TIPO exato que deve ser alterado
                     ok, msg = renomear_sessao(sessao_alvo, novo_nome, tipo_alvo)
-                    if ok: st.success(msg); time.sleep(1.5); st.rerun()
-                    else: st.error(msg)
+                    if ok:
+                        st.success(msg)
+                        time.sleep(1.5)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+                else:
+                    st.warning("⚠️ Digite o número da pauta.")
         st.markdown("---")
-
+        # -----------------------------------
+                
         # --- RELATÓRIO GERENCIAL ---
-        st.subheader("📄 Relatório Gerencial")
+        st.subheader("📄 Relatório Gerencial Mensal/Anual (Para Assinatura)")
+        st.write("Gere um documento completo com métricas de desempenho para análise da Chefia.")
         col_m1, col_m2, col_m3 = st.columns([1, 1, 2])
-        meses_dict = {0: "Anual", 1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr", 5: "Mai", 6: "Jun", 7: "Jul", 8: "Ago", 9: "Set", 10: "Out", 11: "Nov", 12: "Dez"}
-        with col_m1: mes_sel = st.selectbox("Período:", list(meses_dict.keys()), format_func=lambda x: meses_dict[x])
-        with col_m2: ano_sel = st.selectbox("Ano:", range(2024, datetime.now().year + 1), index=datetime.now().year-2024)
+        
+        # O número 0 aciona a lógica do "Ano Inteiro" no backend
+        meses_dict = {0: "🗓️ Anual (Ano Inteiro)", 1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril", 5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto", 9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"}
+        mes_atual = datetime.now().month
+        ano_atual = datetime.now().year
+        
+        with col_m1:
+            mes_selecionado = st.selectbox("Período:", list(meses_dict.keys()), index=mes_atual, format_func=lambda x: meses_dict[x])
+        with col_m2:
+            ano_selecionado = st.selectbox("Ano:", range(2024, ano_atual + 1), index=ano_atual-2024)
         with col_m3:
+            st.markdown("<br>", unsafe_allow_html=True)
             if st.button("📊 Compilar Relatório", type="primary", use_container_width=True):
-                ok, txt = gerar_relatorio_gerencial(mes_sel, ano_sel)
-                if ok: st.code(txt); st.download_button("📥 Baixar Relatório", data=txt.encode('utf-8'), file_name="relatorio.txt")
-                else: st.warning(txt)
+                ok, texto_relatorio = gerar_relatorio_gerencial(mes_selecionado, ano_selecionado)
+                if ok:
+                    st.success("Relatório gerado com sucesso!")
+                    st.code(texto_relatorio, language="markdown")
+                    
+                    # Nomeia o arquivo do jeito certo dependendo se é Anual ou Mensal
+                    nome_arquivo = f"Relatorio_Gerencial_{ano_selecionado}.txt" if mes_selecionado == 0 else f"Relatorio_Gerencial_{mes_selecionado:02d}_{ano_selecionado}.txt"
+                    
+                    st.download_button(
+                        label="📥 Baixar Relatório (Arquivo de Texto)", 
+                        data=texto_relatorio.encode('utf-8'), 
+                        file_name=nome_arquivo, 
+                        mime="text/plain",
+                        type="secondary"
+                    )
+                else:
+                    st.warning(texto_relatorio)
         st.markdown("---")
+        # -------------------------------
         
-        # --- GESTÃO COLABORADORES ---
         st.subheader("👥 Gestão de Colaboradores")
-        # (Sua lógica de gestão aqui)
+        acao_equipe = st.radio("Selecione a ação:", ["Adicionar Novo", "Editar Permissões", "Substituir Nome", "Remover Colaborador"], horizontal=True)
 
-        # --- MIGRAÇÃO HISTÓRICO ---
-        st.subheader("🕰️ Migração de Processos Direto para o Histórico")
-        df_modelo_hist = pd.DataFrame({"Processo": ["12345/2026"], "Relator": ["Conselheiro A"]})
-        st.download_button("📥 Baixar Modelo para Histórico (CSV)", data=df_modelo_hist.to_csv(index=False).encode('utf-8'), file_name="modelo_historico.csv", mime="text/csv", type="secondary")
-        
-        col_h1, col_h2 = st.columns(2)
-        with col_h1:
-            hist_tipo = st.selectbox("Tipo de Sessão:", ["Sessão Ordinária", "Sessão Ordinária Virtual", "Sessão Reservada", "Sessão Administrativa"], key="hist_tipo")
-            hist_sessao = st.text_input("Nome da Sessão (Ex: Sessão 125):", key="hist_sessao")
-        with col_h2:
-            hist_proc = st.text_input("Nº do Processo (Manual):", key="hist_proc")
-            hist_rel = st.text_input("Relator (Manual):", key="hist_rel")
-        
-        col_hx, col_hy = st.columns(2)
-        with col_hx: hist_exp = st.text_input("Expedidor:", placeholder="Digite o nome...", key="hist_exp")
-        with col_hy: hist_rev = st.text_input("Revisor:", placeholder="Digite o nome...", key="hist_rev")
+        if acao_equipe == "Adicionar Novo":
+            col1, col2 = st.columns(2)
+            novo_colab = col1.text_input("Nome do novo colaborador")
+            faz_exp, faz_rev = col2.checkbox("Participa da Expedição", value=True), col2.checkbox("Participa da Revisão", value=True)
+            if st.button("➕ Adicionar", type="primary", key="add_user"):
+                ok, m = gerenciar_usuario('adicionar', novo_colab, expedicao=int(faz_exp), revisao=int(faz_rev))
+                if ok: st.success(m); time.sleep(1); st.rerun()
 
-        arquivo_hist = st.file_uploader("Planilha de Recuperação (CSV/XLSX):", type=["csv", "xlsx"], key="hist_up")
+        elif acao_equipe == "Editar Permissões":
+            col1, col2, col3 = st.columns(3)
+            colab_editar = col1.selectbox("Selecione o colaborador", TODOS_NOMES)
+            faz_exp = col2.checkbox("Participa da Expedição", value=True, key="edit_exp")
+            faz_rev = col3.checkbox("Participa da Revisão", value=True, key="edit_rev")
+            if st.button("✏️ Atualizar Permissões", type="primary", key="edit_user"):
+                ok, m = gerenciar_usuario('editar', colab_editar, expedicao=int(faz_exp), revisao=int(faz_rev))
+                if ok: 
+                    st.success(m)
+                    time.sleep(1)
+                    st.rerun()
 
-        if st.button("💾 Enviar Direto para o Histórico", type="primary", use_container_width=True):
-            if not hist_sessao: st.warning("⚠️ Digite o Nome da Sessão.")
-            else:
-                agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                sucessos = 0
-                if arquivo_hist:
-                    df_up = pd.read_csv(arquivo_hist) if arquivo_hist.name.endswith('.csv') else pd.read_excel(arquivo_hist)
-                    for _, row in df_up.iterrows():
-                        if pd.notna(row.get('Processo')) and not processo_existe(str(row['Processo'])):
-                            conn.table("processos").insert({"numero_processo": str(row['Processo']), "relator": str(row['Relator']), "tipo_sessao": hist_tipo, "nome_sessao": hist_sessao, "expedicao": hist_exp, "revisao": hist_rev, "data_entrada": agora, "data_conclusao": agora, "despachado": 1, "expedido_ok": 1, "revisado_ok": 1}).execute()
-                            sucessos += 1
-                elif hist_proc and not processo_existe(hist_proc):
-                    conn.table("processos").insert({"numero_processo": hist_proc, "relator": hist_rel, "tipo_sessao": hist_tipo, "nome_sessao": hist_sessao, "expedicao": hist_exp, "revisao": hist_rev, "data_entrada": agora, "data_conclusao": agora, "despachado": 1, "expedido_ok": 1, "revisado_ok": 1}).execute()
-                    sucessos += 1
-                if sucessos > 0: st.success("✅ Processos enviados!"); time.sleep(1); st.rerun()
+        elif acao_equipe == "Substituir Nome":
+            col1, col2, col3 = st.columns(3)
+            colab_atual = col1.selectbox("Quem vai sair?", TODOS_NOMES)
+            novo_nome = col2.text_input("Qual o nome de quem vai entrar?")
+            faz_exp, faz_rev = col3.checkbox("Entra na Expedição?", value=True), col3.checkbox("Entra na Revisão?", value=True)
+            if st.button("🔄 Substituir", type="primary", key="subst_user"):
+                ok, m = gerenciar_usuario('substituir', colab_atual, novo_nome=novo_nome, expedicao=int(faz_exp), revisao=int(faz_rev))
+                if ok: st.success(m); time.sleep(1); st.rerun()
+
+        elif acao_equipe == "Remover Colaborador":
+            colab_remover = st.selectbox("Selecione quem será removido", TODOS_NOMES)
+            if st.button("🗑️ Remover Definitivamente", type="primary", key="rem_user"):
+                ok, m = gerenciar_usuario('remover', colab_remover)
+                if ok: st.success(m); time.sleep(1); st.rerun()
+
+        st.markdown("---")
+        st.subheader("💾 Backup e Restauração de Dados")
+
+        col_down, col_up = st.columns(2)
+        with col_down:
+            st.markdown("**1. Gerar Arquivo de Segurança**")
+            if not df_geral_status.empty:
+                csv = df_geral_status.to_csv(index=False).encode('utf-8')
+                st.download_button(label="📥 Baixar Backup (CSV)", data=csv, file_name=f"backup_processos_{datetime.now().strftime('%d_%m_%Y')}.csv", mime='text/csv', type="primary", use_container_width=True)
+            else: st.info("O banco de dados está vazio.")
+
+        with col_up:
+            st.markdown("**2. Restaurar Sistema**")
+            arquivo_backup = st.file_uploader("Suba o arquivo CSV para restaurar", type=['csv'], label_visibility="collapsed")
+            if arquivo_backup is not None:
+                if st.button("⚠️ Restaurar Dados Agora", type="primary", use_container_width=True):
+                    try:
+                        df_upload = pd.read_csv(arquivo_backup)
+                        ok, msg = restaurar_backup(df_upload)
+                        if ok:
+                            st.success(msg)
+                            time.sleep(1.5)
+                            st.rerun()
+                        else: st.error(msg)
+                    except Exception as e: st.error(f"Erro ao ler o arquivo: {e}")
+
+        st.markdown("---")
+
+        st.subheader("🧹 Limpeza Seletiva do Sistema (Apagar Sessão)")
+        col_tipo, col_data, col_motivo_sess, col_btn = st.columns([2, 2, 2, 1])
+        with col_tipo: tipo_apagar = st.selectbox("Apagar de qual tipo?", ["Sessão Ordinária", "Sessão Ordinária Virtual", "Sessão Reservada", "Sessão Administrativa"])
+        with col_data:
+            datas_disp_apagar = df_geral_status[df_geral_status['tipo_sessao'] == tipo_apagar]['nome_sessao'].unique() if not df_geral_status.empty else []
+            data_apagar = st.selectbox("Qual data?", sorted(datas_disp_apagar, reverse=True)) if len(datas_disp_apagar) > 0 else st.selectbox("Qual data?", ["Sem dados"])
+        with col_motivo_sess:
+            motivo_sessao = st.selectbox("Motivo da Exclusão:", ["Sessão Cancelada", "Fora de pauta", "Incluído errado", "Teste", "Outros"], key="motivo_sess")
+        with col_btn:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("🗑️ Apagar Sessão", type="primary", use_container_width=True) and data_apagar != "Sem dados":
+                apagar_sessao_especifica(tipo_apagar, data_apagar, motivo_sessao)
+                st.success(f"Sessão de {data_apagar} enviada para a lixeira com sucesso!")
+                time.sleep(1.5)
+                st.rerun()
 
 # ------------------------------------------
 # ABA 4: HISTÓRICO, EXCLUSÕES E AVISOS
@@ -941,4 +1021,4 @@ with aba_ajuda:
         * **Processo Urgente:** Processos que furam a fila. Quando inseridos como urgentes, a linha deles fica **vermelha e em negrito** no Painel Ativo, chamando a atenção de todos.
         * **Expedição / Revisão:** O trabalho em dupla de fazer o documento e conferir. O robô do sistema é inteligente e bloqueia tentativas da mesma pessoa expedir e revisar o próprio documento.
         * **Despachado:** O processo chegou ao fim da linha dentro do setor. Tarefa 100% concluída.
-        """)
+        """)             
