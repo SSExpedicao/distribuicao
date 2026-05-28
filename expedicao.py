@@ -739,10 +739,11 @@ with aba_controle:
     with st.expander("⚙️ Área Administrativa Avançada (Equipe e Banco de Dados)"):
         
         # --- PAINEL DO LETREIRO AQUI ---
+        # --- PAINEL DO LETREIRO AQUI ---
         st.subheader("📢 Mural de Avisos (Letreiro)")
         col_av1, col_av2, col_av3 = st.columns([1, 1, 2])
         with col_av1:
-            aviso_usuario = st.selectbox("Para quem?", TODOS_NOMES, key="aviso_usr")
+            aviso_usuario = st.selectbox("Para quem?", ["Todos"] + TODOS_NOMES, key="aviso_usr")
         with col_av2:
             aviso_processo = st.text_input("Nº do Processo Ativo", key="aviso_proc")
         with col_av3:
