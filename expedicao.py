@@ -1,436 +1,284 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import sqlite3
 from datetime import datetime
 import io
 import time
+from st_supabase_connection import SupabaseConnection
 
 # ==========================================
-# 1. BACKEND: BANCO DE DADOS E LÓGICA
+# 1. FRONTEND: CONFIGURAÇÃO INICIAL DA PÁGINA
 # ==========================================
-DB_PATH = 'gestao_processos.db'
+st.set_page_config(page_title="Sistema de Sessões", layout="wide")
+
+# ==========================================
+# 2. BACKEND: CONEXÃO COM A NUVEM SUPABASE
+# ==========================================
+conn = st.connection("supabase", type=SupabaseConnection)
 
 def higienizar_dados(processo, relator=""):
-    # 1. Limpa o Processo (Tira espaços em branco e remove o -e do final)
     proc_limpo = str(processo).strip()
-    
-    # Se terminar com -e ou -E, o código "arranca" os dois últimos caracteres
     if proc_limpo.lower().endswith("-e"):
         proc_limpo = proc_limpo[:-2]
         
-    # 2. Limpa e padroniza o Relator
-    rel_limpo = str(relator).strip().upper() # Deixa tudo maiúsculo e sem espaços sobrando
-    
-    # Dicionário de conversão automática (De -> Para)
+    rel_limpo = str(relator).strip().upper()
     mapa_relatores = {
-        "RR": "GCRR",
-        "AM": "GCAM",
-        "PT": "GCPT",
-        "AC": "GCAC",
-        "IM": "GCIM",
-        "MM": "GCMM",
-        "VF": "GAVF"
+        "RR": "GCRR", "AM": "GCAM", "PT": "GCPT", 
+        "AC": "GCAC", "IM": "GCIM", "MM": "GCMM", "VF": "GAVF"
     }
-    
-    # Se a sigla digitada estiver no nosso mapa, ele troca pela oficial completa
     if rel_limpo in mapa_relatores:
         rel_limpo = mapa_relatores[rel_limpo]
         
     return proc_limpo, rel_limpo
     
 def init_db():
-    with sqlite3.connect(DB_PATH) as conn_sq:
-        c = conn_sq.cursor()
-
-        # 1. Tabela Processos
-        c.execute('''CREATE TABLE IF NOT EXISTS processos (
-                                          id INTEGER PRIMARY KEY AUTOINCREMENT,
-                                          numero_processo TEXT UNIQUE,
-                                          relator TEXT,
-                                          tipo_sessao TEXT,
-                                          expedicao TEXT,
-                                          revisao TEXT,
-                                          data_entrada TEXT
-                     )''')
-
-        colunas = ['nome_sessao', 'expedido_ok', 'revisado_ok', 'despachado',
-                   'data_conclusao', 'data_expedido', 'data_revisado', 'urgente',
-                   'enviado_email', 'enviado_mensageria', 'recebido']
-
-        for col in colunas:
-            tipo = "INTEGER DEFAULT 0" if "ok" in col or col in ["despachado", "urgente", "enviado_email", "enviado_mensageria", "recebido"] else "TEXT"
-            try: c.execute(f'''ALTER TABLE processos ADD COLUMN {col} {tipo}''')
-            except sqlite3.OperationalError: pass
-
-        # 2. Tabela Equipe
-        c.execute('''CREATE TABLE IF NOT EXISTS equipe (
-                                       id INTEGER PRIMARY KEY AUTOINCREMENT,
-                                       nome TEXT UNIQUE,
-                                       expedicao INTEGER DEFAULT 0,
-                                       revisao INTEGER DEFAULT 0
-                     )''')
-
-        # 3. Tabela Processos Excluídos (Auditoria)
-        c.execute('''CREATE TABLE IF NOT EXISTS processos_excluidos (
-                                          id INTEGER PRIMARY KEY AUTOINCREMENT,
-                                          numero_processo TEXT,
-                                          relator TEXT,
-                                          data_exclusao TEXT,
-                                          motivo TEXT
-                     )''')
-
-        # 4. Tabela Avisos
-        c.execute('''CREATE TABLE IF NOT EXISTS avisos (
-                                          id INTEGER PRIMARY KEY AUTOINCREMENT,
-                                          usuario TEXT,
-                                          numero_processo TEXT,
-                                          mensagem TEXT,
-                                          data_criacao TEXT
-                     )''')
-                     
-        # Garante que a coluna 'ativo' exista na tabela de avisos
-        try: c.execute("ALTER TABLE avisos ADD COLUMN ativo INTEGER DEFAULT 1")
-        except sqlite3.OperationalError: pass
-
-        # 5. Popula a equipe inicial se estiver vazia
-        c.execute("SELECT COUNT(*) FROM equipe")
-        if c.fetchone()[0] == 0:
+    try:
+        res = conn.table("equipe").select("id", count="exact").execute()
+        if res.count == 0:
             iniciais = [
-                ("André", 1, 1), ("Elaine", 1, 1), ("Kátia", 1, 1),
-                ("Luana C", 1, 1), ("Jessyca", 1, 1), ("Lu Fiorote", 1, 1),
-                ("Mariana", 1, 1), ("Maurício", 1, 1)
+                {"nome": "André", "expedicao": 1, "revisao": 1},
+                {"nome": "Elaine", "expedicao": 1, "revisao": 1},
+                {"nome": "Kátia", "expedicao": 1, "revisao": 1},
+                {"nome": "Luana C", "expedicao": 1, "revisao": 1},
+                {"nome": "Jessyca", "expedicao": 1, "revisao": 1},
+                {"nome": "Lu Fiorote", "expedicao": 1, "revisao": 1},
+                {"nome": "Mariana", "expedicao": 1, "revisao": 1},
+                {"nome": "Maurício", "expedicao": 1, "revisao": 1}
             ]
-            c.executemany("INSERT INTO equipe (nome, expedicao, revisao) VALUES (?, ?, ?)", iniciais)
+            conn.table("equipe").insert(iniciais).execute()
+    except: pass
 
 def carregar_equipes():
-    with sqlite3.connect(DB_PATH) as conn_sq:
-        c = conn_sq.cursor()
-        c.execute("SELECT nome FROM equipe WHERE expedicao = 1")
-        eq_exp = [row[0] for row in c.fetchall()]
-        c.execute("SELECT nome FROM equipe WHERE revisao = 1")
-        eq_rev = [row[0] for row in c.fetchall()]
-        c.execute("SELECT nome FROM equipe")
-        todos = [row[0] for row in c.fetchall()]
-    return eq_exp, eq_rev, todos
+    try:
+        eq_exp = [row['nome'] for row in conn.table("equipe").select("nome").eq("expedicao", 1).execute().data]
+        eq_rev = [row['nome'] for row in conn.table("equipe").select("nome").eq("revisao", 1).execute().data]
+        todos = [row['nome'] for row in conn.table("equipe").select("nome").execute().data]
+        return eq_exp, eq_rev, todos
+    except: return [], [], []
 
 def gerenciar_usuario(acao, nome_atual, novo_nome=None, expedicao=0, revisao=0):
     try:
-        with sqlite3.connect(DB_PATH) as conn_sq:
-            c = conn_sq.cursor()
-            if acao == 'adicionar': c.execute("INSERT INTO equipe (nome, expedicao, revisao) VALUES (?, ?, ?)", (nome_atual, expedicao, revisao))
-            elif acao == 'remover': c.execute("DELETE FROM equipe WHERE nome = ?", (nome_atual,))
-            elif acao == 'substituir': c.execute("UPDATE equipe SET nome = ?, expedicao = ?, revisao = ? WHERE nome = ?", (novo_nome, expedicao, revisao, nome_atual))
-            elif acao == 'editar': c.execute("UPDATE equipe SET expedicao = ?, revisao = ? WHERE nome = ?", (expedicao, revisao, nome_atual))
+        if acao == 'adicionar': conn.table("equipe").insert({"nome": nome_atual, "expedicao": expedicao, "revisao": revisao}).execute()
+        elif acao == 'remover': conn.table("equipe").delete().eq("nome", nome_atual).execute()
+        elif acao == 'substituir': conn.table("equipe").update({"nome": novo_nome, "expedicao": expedicao, "revisao": revisao}).eq("nome", nome_atual).execute()
+        elif acao == 'editar': conn.table("equipe").update({"expedicao": expedicao, "revisao": revisao}).eq("nome", nome_atual).execute()
         return True, "✅ Operação realizada com sucesso!"
-    except sqlite3.IntegrityError: return False, "❌ Erro: Este usuário já existe."
     except Exception as e: return False, f"❌ Erro no banco de dados: {e}"
 
 def renomear_sessao(nome_antigo, novo_nome, tipo_sessao_alvo):
     try:
-        with sqlite3.connect(DB_PATH) as conn_sq:
-            # A query agora exige o TIPO EXATO além do NOME/DATA antigo
-            conn_sq.execute(
-                "UPDATE processos SET nome_sessao = ? WHERE nome_sessao = ? AND tipo_sessao = ?", 
-                (novo_nome, nome_antigo, tipo_sessao_alvo)
-            )
+        conn.table("processos").update({"nome_sessao": novo_nome}).eq("nome_sessao", nome_antigo).eq("tipo_sessao", tipo_sessao_alvo).execute()
         return True, f"✅ Número atualizado para: {novo_nome}"
-    except Exception as e:
-        return False, f"❌ Erro ao renomear: {e}"
+    except Exception as e: return False, f"❌ Erro ao renomear: {e}"
 
 def remover_processo(numero_processo, nome_sessao, motivo):
     agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-    with sqlite3.connect(DB_PATH) as conn_sq:
-        c = conn_sq.cursor()
-        # 1. Pega os dados antes de apagar
-        c.execute("SELECT id, relator FROM processos WHERE numero_processo = ? AND nome_sessao = ?", (numero_processo, nome_sessao))
-        resultado = c.fetchone()
-        
-        if not resultado:
-            return False, f"❌ Processo '{numero_processo}' não encontrado na sessão do dia {nome_sessao}."
-            
-        id_proc, relator = resultado
-        
-        # 2. Salva na Lixeira
-        c.execute("INSERT INTO processos_excluidos (numero_processo, relator, data_exclusao, motivo) VALUES (?, ?, ?, ?)",
-                  (numero_processo, relator, agora, motivo))
-                  
-        # 3. Apaga do sistema ativo
-        c.execute("DELETE FROM processos WHERE id = ?", (id_proc,))
-    return True, f"✅ Processo '{numero_processo}' removido e enviado para o histórico de exclusões!"
+    try:
+        resultado = conn.table("processos").select("id, relator").eq("numero_processo", numero_processo).eq("nome_sessao", nome_sessao).execute().data
+        if not resultado: return False, f"❌ Processo '{numero_processo}' não encontrado na sessão do dia {nome_sessao}."
+        id_proc, relator = resultado[0]['id'], resultado[0]['relator']
+        conn.table("processos_excluidos").insert({"numero_processo": numero_processo, "relator": relator, "data_exclusao": agora, "motivo": motivo}).execute()
+        conn.table("processos").delete().eq("id", id_proc).execute()
+        return True, f"✅ Processo '{numero_processo}' removido e enviado para o histórico de exclusões!"
+    except Exception as e: return False, f"❌ Erro: {e}"
 
 def apagar_sessao_especifica(tipo_sessao, nome_sessao, motivo):
     agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-    with sqlite3.connect(DB_PATH) as conn_sq:
-        c = conn_sq.cursor()
-        
-        # 1. Pega todos os processos dessa sessão
-        c.execute("SELECT numero_processo, relator FROM processos WHERE tipo_sessao = ? AND nome_sessao = ?", (tipo_sessao, nome_sessao))
-        processos_sessao = c.fetchall()
-
-        # 2. Salva todos na Lixeira
+    try:
+        processos_sessao = conn.table("processos").select("numero_processo, relator").eq("tipo_sessao", tipo_sessao).eq("nome_sessao", nome_sessao).execute().data
         for proc in processos_sessao:
-            c.execute("INSERT INTO processos_excluidos (numero_processo, relator, data_exclusao, motivo) VALUES (?, ?, ?, ?)",
-                      (proc[0], proc[1], agora, motivo))
-
-        # 3. Apaga a sessão do sistema ativo
-        conn_sq.execute('DELETE FROM processos WHERE tipo_sessao = ? AND nome_sessao = ?', (tipo_sessao, nome_sessao))
+            conn.table("processos_excluidos").insert({"numero_processo": proc['numero_processo'], "relator": proc['relator'], "data_exclusao": agora, "motivo": motivo}).execute()
+        conn.table("processos").delete().eq("tipo_sessao", tipo_sessao).eq("nome_sessao", nome_sessao).execute()
+    except: pass
 
 def carregar_excluidos():
-    with sqlite3.connect(DB_PATH) as conn_sq:
-        df = pd.read_sql_query("SELECT * FROM processos_excluidos", conn_sq)
-    return df
+    try: return pd.DataFrame(conn.table("processos_excluidos").select("*").execute().data)
+    except: return pd.DataFrame()
     
 def processo_existe(numero_processo):
-    with sqlite3.connect(DB_PATH) as conn_sq:
-        c = conn_sq.cursor()
-        c.execute("SELECT COUNT(*) FROM processos WHERE numero_processo = ?", (numero_processo,))
-        existe = c.fetchone()[0] > 0
-    return existe
+    try:
+        res = conn.table("processos").select("id", count="exact").eq("numero_processo", numero_processo).execute()
+        return res.count > 0
+    except: return False
 
 def marcar_urgente(numero_processo):
-    # 🪄 Limpa o número do processo (ignora o relator com o '_')
     numero_processo, _ = higienizar_dados(numero_processo)
-    
-    with sqlite3.connect(DB_PATH) as conn_sq:
-        c = conn_sq.cursor()
-        c.execute("SELECT id FROM processos WHERE numero_processo = ?", (numero_processo,))
-        if not c.fetchone():
-            return False, f"❌ Processo {numero_processo} não encontrado. Insira-o na sua sessão normal primeiro."
-        conn_sq.execute('UPDATE processos SET urgente = 1 WHERE numero_processo = ?', (numero_processo,))
-    return True, f"🚨 Processo {numero_processo} destacado como URGENTE!"
+    try:
+        res = conn.table("processos").select("id").eq("numero_processo", numero_processo).execute().data
+        if not res: return False, f"❌ Processo {numero_processo} não encontrado. Insira-o na sua sessão normal primeiro."
+        conn.table("processos").update({"urgente": 1}).eq("numero_processo", numero_processo).execute()
+        return True, f"🚨 Processo {numero_processo} destacado como URGENTE!"
+    except Exception as e: return False, f"❌ Erro: {e}"
 
 def atualizar_processo(id_processo, mudancas):
     if not mudancas: return
     agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-    
-    with sqlite3.connect(DB_PATH) as conn_sq:
-        colunas_set = []
-        valores = []
-        
-        # Constrói o comando do banco de dados SOB DEMANDA, só com o que mudou
-        for col_banco, val in mudancas.items():
-            colunas_set.append(f"{col_banco} = ?")
-            valores.append(val)
-            
-            # Se marcou uma caixinha de status, carimba a data automaticamente
-            if col_banco == 'expedido_ok':
-                colunas_set.append("data_expedido = ?")
-                valores.append(agora if val == 1 else None)
-            elif col_banco == 'revisado_ok':
-                colunas_set.append("data_revisado = ?")
-                valores.append(agora if val == 1 else None)
-            elif col_banco == 'despachado':
-                colunas_set.append("data_conclusao = ?")
-                valores.append(agora if val == 1 else None)
-
-        query = f"UPDATE processos SET {', '.join(colunas_set)} WHERE id = ?"
-        valores.append(id_processo)
-        conn_sq.execute(query, tuple(valores))
+    payload = {}
+    for col_banco, val in mudancas.items():
+        payload[col_banco] = val
+        if col_banco == 'expedido_ok': payload["data_expedido"] = agora if val == 1 else None
+        elif col_banco == 'revisado_ok': payload["data_revisado"] = agora if val == 1 else None
+        elif col_banco == 'despachado': payload["data_conclusao"] = agora if val == 1 else None
+    try: conn.table("processos").update(payload).eq("id", id_processo).execute()
+    except: pass
 
 def obter_expedidor(elegiveis, nome_sessao):
     if not elegiveis: return "Nenhum escalado"
     contagem = {p: 0 for p in elegiveis}
-    with sqlite3.connect(DB_PATH) as conn_sq:
-        c = conn_sq.cursor()
-        c.execute("SELECT expedicao, COUNT(*) FROM processos WHERE expedicao IS NOT NULL AND nome_sessao = ? GROUP BY expedicao", (nome_sessao,))
-        for row in c.fetchall():
-            if row[0] in contagem: contagem[row[0]] = row[1]
+    try:
+        linhas = conn.table("processos").select("expedicao").not_.is_("expedicao", "null").eq("nome_sessao", nome_sessao).execute().data
+        for row in linhas:
+            if row.get('expedicao') in contagem: contagem[row['expedicao']] += 1
+    except: pass
     return min(contagem, key=contagem.get)
 
 def obter_revisor(expedidor, nome_sessao, revisores_ativos):
     if not revisores_ativos: return "Nenhum escalado"
-    with sqlite3.connect(DB_PATH) as conn_sq:
-        c = conn_sq.cursor()
-        c.execute("SELECT revisao FROM processos WHERE expedicao = ? AND nome_sessao = ? LIMIT 1", (expedidor, nome_sessao))
-        resultado = c.fetchone()
-        if resultado and resultado[0] in revisores_ativos:
-            return resultado[0]
-
+    try:
+        linhas_sessao = conn.table("processos").select("expedicao, revisao").eq("nome_sessao", nome_sessao).execute().data
+        df_sessao = pd.DataFrame(linhas_sessao) if linhas_sessao else pd.DataFrame(columns=['expedicao', 'revisao'])
+        linhas_total = conn.table("processos").select("revisao").execute().data
+        df_total = pd.DataFrame(linhas_total) if linhas_total else pd.DataFrame(columns=['revisao'])
+        
         candidatos = [r for r in revisores_ativos if r != expedidor]
         if not candidatos: return "Sem Revisor (Conflito)"
-
         melhor_cand = None
         menor_score = (float('inf'), float('inf'), float('inf'), float('inf'), float('inf'))
-
         for cand in candidatos:
-            c.execute("SELECT COUNT(DISTINCT expedicao) FROM processos WHERE revisao = ? AND nome_sessao = ?", (cand, nome_sessao))
-            parcerias_sessao = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM processos WHERE expedicao = ? AND revisao = ? AND nome_sessao = ?", (cand, expedidor, nome_sessao))
-            is_reciprocal = 1 if c.fetchone()[0] > 0 else 0
-            c.execute("SELECT COUNT(*) FROM processos WHERE revisao = ? AND nome_sessao = ?", (cand, nome_sessao))
-            carga_sessao = c.fetchone()[0]
-            c.execute("SELECT COUNT(DISTINCT nome_sessao) FROM processos WHERE expedicao = ? AND revisao = ? AND nome_sessao != ?", (expedidor, cand, nome_sessao))
-            vezes_parceiro = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM processos WHERE revisao = ?", (cand,))
-            carga_total = c.fetchone()[0]
-
+            parcerias_sessao = len(df_sessao[df_sessao['revisao'] == cand]['expedicao'].unique()) if 'revisao' in df_sessao.columns else 0
+            is_reciprocal = 1 if not df_sessao.empty and len(df_sessao[(df_sessao['expedicao'] == cand) & (df_sessao['revisao'] == expedidor)]) > 0 else 0
+            carga_sessao = len(df_sessao[df_sessao['revisao'] == cand]) if 'revisao' in df_sessao.columns else 0
+            vezes_parceiro = 0
+            carga_total = len(df_total[df_total['revisao'] == cand]) if 'revisao' in df_total.columns else 0
             score = (parcerias_sessao, is_reciprocal, carga_sessao, vezes_parceiro, carga_total)
             if score < menor_score:
                 menor_score = score
                 melhor_cand = cand
-
-    return melhor_cand
+        return melhor_cand
+    except:
+        candidatos = [r for r in revisores_ativos if r != expedidor]
+        return candidatos[0] if candidatos else "Nenhum escalado"
 
 def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, expedidores, revisores):
     numero_processo, relator = higienizar_dados(numero_processo, relator)
-    
-    if processo_existe(numero_processo): 
-        return False, "❌ Processo já existe no sistema."
-  
-    if not expedidores or not revisores: 
-        return False, "❌ ERRO: Selecione ao menos um Expedidor e um Revisor."
-
+    if processo_existe(numero_processo): return False, "❌ Processo já existe no sistema."
+    if not expedidores or not revisores: return False, "❌ ERRO: Selecione ao menos um Expedidor e um Revisor."
     responsavel_expedicao = obter_expedidor(expedidores, nome_sessao)
     responsavel_revisao = obter_revisor(responsavel_expedicao, nome_sessao, revisores)
-    
     data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-
-    with sqlite3.connect(DB_PATH) as conn_sq:
-        conn_sq.execute('''INSERT INTO processos (numero_processo, relator, tipo_sessao, nome_sessao, expedicao, revisao, data_entrada, 
-                                               expedido_ok, revisado_ok, despachado, urgente, enviado_email, enviado_mensageria, recebido) 
-                        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0)''', 
-                     (numero_processo, relator, tipo_sessao, nome_sessao, responsavel_expedicao, responsavel_revisao, data_atual))
-                     
-    return True, f"✅ Distribuído! Expedição: **{responsavel_expedicao}** | Revisão: **{responsavel_revisao}**"
+    try:
+        conn.table("processos").insert({
+            "numero_processo": numero_processo, "relator": relator, "tipo_sessao": tipo_sessao, 
+            "nome_sessao": nome_sessao, "expedicao": responsavel_expedicao, "revisao": responsavel_revisao, 
+            "data_entrada": data_atual, "expedido_ok": 0, "revisado_ok": 0, "despachado": 0, "urgente": 0,
+            "enviado_email": 0, "enviado_mensageria": 0, "recebido": 0
+        }).execute()
+        return True, f"✅ Distribuído! Expedição: **{responsavel_expedicao}** | Revisão: **{responsavel_revisao}**"
+    except Exception as e: return False, f"❌ Erro ao salvar: {e}"
 
 def carregar_dados_sqlite(tipo_sessao=None):
-    with sqlite3.connect(DB_PATH) as conn_sq:
-        if tipo_sessao: df = pd.read_sql_query(f"SELECT * FROM processos WHERE tipo_sessao = '{tipo_sessao}'", conn_sq)
-        else: df = pd.read_sql_query("SELECT * FROM processos", conn_sq)
-    return df
+    try:
+        if tipo_sessao: dados = conn.table("processos").select("*").eq("tipo_sessao", tipo_sessao).execute().data
+        else: dados = conn.table("processos").select("*").execute().data
+        return pd.DataFrame(dados)
+    except: return pd.DataFrame()
 
 def restaurar_backup(df_backup):
     try:
-        with sqlite3.connect(DB_PATH) as conn_sq:
-            conn_sq.execute('DELETE FROM processos')
-            df_backup.to_sql('processos', conn_sq, if_exists='append', index=False)
-        return True, "✅ Dados restaurados com sucesso! O sistema voltou ao estado do backup."
-    except Exception as e:
-        return False, f"❌ Erro ao tentar restaurar os dados: {e}"
+        conn.table("processos").delete().neq("numero_processo", "vazio").execute()
+        records = df_backup.to_dict(orient="records")
+        for r in records:
+            if 'id' in r: del r['id']
+            if 'created_at' in r: del r['created_at']
+        conn.table("processos").insert(records).execute()
+        return True, "✅ Dados restaurados com sucesso!"
+    except Exception as e: return False, f"❌ Erro ao tentar restaurar: {e}"
 
 init_db()
 EQUIPE_EXPEDICAO, EQUIPE_REVISAO, TODOS_NOMES = carregar_equipes()
 
 def adicionar_aviso(usuario, numero_processo, mensagem):
-    with sqlite3.connect(DB_PATH) as conn_sq:
-        c = conn_sq.cursor()
-        c.execute("SELECT despachado FROM processos WHERE numero_processo = ?", (numero_processo,))
-        res = c.fetchone()
-        if not res:
-            return False, f"❌ Processo '{numero_processo}' não encontrado no sistema."
-        if res[0] == 1:
-            return False, f"❌ O processo '{numero_processo}' já foi concluído/despachado."
-        
+    try:
+        res = conn.table("processos").select("despachado").eq("numero_processo", numero_processo).execute().data
+        if not res: return False, f"❌ Processo '{numero_processo}' não encontrado no sistema."
+        if res[0]['despachado'] == 1: return False, f"❌ O processo '{numero_processo}' já foi concluído."
         agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-        c.execute("INSERT INTO avisos (usuario, numero_processo, mensagem, data_criacao) VALUES (?, ?, ?, ?)",
-                  (usuario, numero_processo, mensagem, agora))
-    return True, "✅ Aviso publicado no letreiro!"
+        conn.table("avisos").insert({"usuario": usuario, "numero_processo": numero_processo, "mensagem": mensagem, "data_criacao": agora, "ativo": 1}).execute()
+        return True, "✅ Aviso publicado no letreiro!"
+    except Exception as e: return False, f"❌ Erro: {e}"
 
 def obter_avisos_pendentes():
     hoje = datetime.now().strftime("%d/%m/%Y")
-    with sqlite3.connect(DB_PATH) as conn_sq:
-        query = '''
-            SELECT a.id, a.usuario, a.numero_processo, p.nome_sessao, a.mensagem, a.data_criacao 
-            FROM avisos a
-            LEFT JOIN processos p ON a.numero_processo = p.numero_processo
-            WHERE a.ativo = 1 AND (a.numero_processo = '' OR p.despachado = 0)
-        '''
-        df_avisos = pd.read_sql_query(query, conn_sq)
-    
-    if df_avisos.empty:
-        return df_avisos
-        
-    linhas_validas = []
-    for index, row in df_avisos.iterrows():
-        data_aviso = row['data_criacao'].split()[0]
-        
-        if row['usuario'] == 'Todos':
-            if data_aviso == hoje:
-                linhas_validas.append(row)
-        else:
-            linhas_validas.append(row)
-            
-    return pd.DataFrame(linhas_validas) if linhas_validas else pd.DataFrame(columns=df_avisos.columns)
+    try:
+        df_av = pd.DataFrame(conn.table("avisos").select("*").eq("ativo", 1).execute().data)
+        df_proc = pd.DataFrame(conn.table("processos").select("numero_processo, nome_sessao, despachado").execute().data)
+        if df_av.empty: return pd.DataFrame()
+        if df_proc.empty: df_proc = pd.DataFrame(columns=['numero_processo', 'nome_sessao', 'despachado'])
+        df_avisos = pd.merge(df_av, df_proc, on='numero_processo', how='left')
+        df_avisos = df_avisos[(df_avisos['numero_processo'] == '') | (df_avisos['despachado'] == 0)]
+        linhas_validas = []
+        for index, row in df_avisos.iterrows():
+            data_aviso = row['data_criacao'].split()[0]
+            if row['usuario'] == 'Todos':
+                if data_aviso == hoje: linhas_validas.append(row)
+            else: linhas_validas.append(row)
+        return pd.DataFrame(linhas_validas) if linhas_validas else pd.DataFrame(columns=df_avisos.columns)
+    except: return pd.DataFrame()
 
 def desativar_aviso(id_aviso):
-    with sqlite3.connect(DB_PATH) as conn_sq:
-        conn_sq.execute("UPDATE avisos SET ativo = 0 WHERE id = ?", (id_aviso,))
+    try: conn.table("avisos").update({"ativo": 0}).eq("id", int(id_aviso)).execute()
+    except: pass
 
 def carregar_historico_avisos():
     hoje = datetime.now().strftime("%d/%m/%Y")
-    with sqlite3.connect(DB_PATH) as conn_sq:
-        query = '''
-            SELECT a.numero_processo, a.usuario, a.mensagem, a.data_criacao, a.ativo,
-                   p.despachado, p.numero_processo AS proc_existe
-            FROM avisos a
-            LEFT JOIN processos p ON a.numero_processo = p.numero_processo
-        '''
-        df = pd.read_sql_query(query, conn_sq)
-        
-    if df.empty:
-        return pd.DataFrame(columns=['numero_processo', 'usuario', 'mensagem', 'data_criacao', 'ativo', 'despachado', 'proc_existe', 'status'])
-        
-    status_list = []
-    for _, row in df.iterrows():
-        data_aviso = row['data_criacao'].split()[0]
-        
-        if row['ativo'] == 0:
-            status_list.append('❌ Desativado Manualmente')
-        elif row['usuario'] == 'Todos' and data_aviso != hoje:
-            status_list.append('⏳ Expirado Automaticamente (23:59h)')
-        elif row['numero_processo'] != '' and row['despachado'] == 1:
-            status_list.append('✅ Concluído (Despachado)')
-        elif row['numero_processo'] != '' and pd.isna(row['proc_existe']):
-            status_list.append('❌ Processo Removido')
-        else:
-            status_list.append('⏳ Ativo no Letreiro')
-            
-    df['status'] = status_list
-    return df
+    try:
+        df_av = pd.DataFrame(conn.table("avisos").select("*").execute().data)
+        df_proc = pd.DataFrame(conn.table("processos").select("numero_processo, despachado").execute().data)
+        if df_av.empty: return pd.DataFrame(columns=['numero_processo', 'usuario', 'mensagem', 'data_criacao', 'ativo', 'despachado', 'proc_existe', 'status'])
+        df_proc['proc_existe'] = df_proc['numero_processo'] if not df_proc.empty else None
+        df = pd.merge(df_av, df_proc, on='numero_processo', how='left')
+        status_list = []
+        for _, row in df.iterrows():
+            data_aviso = row['data_criacao'].split()[0]
+            if row['ativo'] == 0: status_list.append('❌ Desativado Manualmente')
+            elif row['usuario'] == 'Todos' and data_aviso != hoje: status_list.append('⏳ Expirado Automaticamente (23:59h)')
+            elif row['numero_processo'] != '' and row['despachado'] == 1: status_list.append('✅ Concluído (Despachado)')
+            elif row['numero_processo'] != '' and pd.isna(row.get('proc_existe')): status_list.append('❌ Processo Removido')
+            else: status_list.append('⏳ Ativo no Letreiro')
+        df['status'] = status_list
+        return df
+    except: return pd.DataFrame(columns=['numero_processo', 'usuario', 'mensagem', 'data_criacao', 'ativo', 'despachado', 'proc_existe', 'status'])
     
 def gerar_relatorio_gerencial(mes, ano):
     df_proc = carregar_dados_sqlite()
     df_av = carregar_historico_avisos()
     _, _, equipe_total = carregar_equipes()
-    
     equipe_operacional = [n for n in equipe_total if n.lower() != 'jessyca']
-    
+    if df_proc.empty: return False, "Nenhum dado encontrado."
     df_proc['data_conclusao_dt'] = pd.to_datetime(df_proc['data_conclusao'], format="%d/%m/%Y %H:%M:%S", errors='coerce')
     df_proc['data_entrada_dt'] = pd.to_datetime(df_proc['data_entrada'], format="%d/%m/%Y %H:%M:%S", errors='coerce')
-    
     if mes == 0:
         df_periodo = df_proc[(df_proc['data_conclusao_dt'].dt.year == ano) & (df_proc['despachado'] == 1)].copy()
         titulo_periodo = f"ANO COMPLETO DE {ano}"
     else:
         df_periodo = df_proc[(df_proc['data_conclusao_dt'].dt.month == mes) & (df_proc['data_conclusao_dt'].dt.year == ano) & (df_proc['despachado'] == 1)].copy()
         titulo_periodo = f"{mes:02d}/{ano}"
-                     
-    if df_periodo.empty:
-        return False, f"Nenhum processo foi despachado no período selecionado ({titulo_periodo})."
-        
+    if df_periodo.empty: return False, f"Nenhum processo foi despachado no período selecionado ({titulo_periodo})."
     total_despachado = len(df_periodo)
-    
     df_periodo['tempo_min'] = (df_periodo['data_conclusao_dt'] - df_periodo['data_entrada_dt']).dt.total_seconds() / 60
     tempo_medio = df_periodo['tempo_min'].mean()
     tempo_str = f"{int(tempo_medio)} minutos" if pd.notna(tempo_medio) else "N/A"
-    
     desempenho = {}
     for colab in equipe_operacional:
         exp_count = len(df_periodo[df_periodo['expedicao'] == colab])
         rev_count = len(df_periodo[df_periodo['revisao'] == colab])
-        if (exp_count + rev_count) > 0:
-            desempenho[colab] = exp_count + rev_count
-            
+        if (exp_count + rev_count) > 0: desempenho[colab] = exp_count + rev_count
     mais_eficiente = max(desempenho, key=desempenho.get) if desempenho else "N/A"
     ops_eficiente = desempenho.get(mais_eficiente, 0)
-    
     participantes_ativos = set(df_periodo['expedicao'].dropna().unique()).union(set(df_periodo['revisao'].dropna().unique()))
     ficou_de_fora = [c for c in equipe_operacional if c not in participantes_ativos]
-    
     sessoes_periodo = df_periodo['nome_sessao'].unique()
     relatorio_sessoes = []
-    
     for s in sessoes_periodo[:15]:
         df_s = df_periodo[df_periodo['nome_sessao'] == s]
         inicio = df_s['data_entrada_dt'].min()
@@ -441,21 +289,12 @@ def gerar_relatorio_gerencial(mes, ano):
             mins = int(duracao % 60)
             tempo_fechamento = f"{horas}h {mins}m" if horas > 0 else f"{mins} minutos"
             relatorio_sessoes.append(f"   - Sessão {s}: {tempo_fechamento}")
-            
-    if len(sessoes_periodo) > 15:
-        relatorio_sessoes.append(f"   - ... e mais {len(sessoes_periodo) - 15} sessões geridas com sucesso ao longo do período.")
-            
+    if len(sessoes_periodo) > 15: relatorio_sessoes.append(f"   - ... e mais {len(sessoes_periodo) - 15} sessões geridas com sucesso ao longo do período.")
     df_av['data_dt'] = pd.to_datetime(df_av['data_criacao'], format="%d/%m/%Y %H:%M:%S", errors='coerce')
-    
-    if mes == 0:
-        df_av_periodo = df_av[(df_av['data_dt'].dt.year == ano)]
-    else:
-        df_av_periodo = df_av[(df_av['data_dt'].dt.month == mes) & (df_av['data_dt'].dt.year == ano)]
-        
+    if mes == 0: df_av_periodo = df_av[(df_av['data_dt'].dt.year == ano)]
+    else: df_av_periodo = df_av[(df_av['data_dt'].dt.month == mes) & (df_av['data_dt'].dt.year == ano)]
     avisos_count = {}
-    for colab in equipe_operacional:
-        avisos_count[colab] = len(df_av_periodo[df_av_periodo['usuario'] == colab])
-        
+    for colab in equipe_operacional: avisos_count[colab] = len(df_av_periodo[df_av_periodo['usuario'] == colab])
     mais_avisado = max(avisos_count, key=avisos_count.get) if avisos_count and max(avisos_count.values()) > 0 else "Nenhum"
     qnt_avisos = avisos_count.get(mais_avisado, 0)
 
@@ -474,20 +313,19 @@ def gerar_relatorio_gerencial(mes, ano):
     texto += "\n".join(relatorio_sessoes) if relatorio_sessoes else "   - Dados insuficientes para cálculo."
     texto += "\n\n"
     texto += f"6. ESCALA DA EQUIPE\n"
-    if ficou_de_fora:
-        texto += f"   - Colaboradores sem atuações neste período: {', '.join(ficou_de_fora)}\n\n"
-    else:
-        texto += "   - Todos os colaboradores operacionais participaram da pauta no período.\n\n"
+    if ficou_de_fora: texto += f"   - Colaboradores sem atuações neste período: {', '.join(ficou_de_fora)}\n\n"
+    else: texto += "   - Todos os colaboradores operacionais participaram da pauta no período.\n\n"
     texto += f"====================================================\n"
     texto += f"Documento gerado e auditado automaticamente pelo S.A.D.E.\n"
     texto += f"Para aprovação da Chefia: Jessyca\n"
     texto += f"===================================================="
-
     return True, texto
 # ==========================================
-# 2. FRONTEND: INTERFACE DO USUÁRIO
+# 3. FRONTEND: RENDERIZAÇÃO DA INTERFACE UI
 # ==========================================
-st.set_page_config(page_title="Sistema de Sessões", layout="wide")
+init_db()
+EQUIPE_EXPEDICAO, EQUIPE_REVISAO, TODOS_NOMES = carregar_equipes()
+
 st.title("⚖️ S.A.D.E. - Sistema de Automação de Distribuição e Expedição")
 
 # ==========================================
@@ -739,10 +577,10 @@ with aba_controle:
     with st.expander("⚙️ Área Administrativa Avançada (Equipe e Banco de Dados)"):
         
         # --- PAINEL DO LETREIRO AQUI ---
-        # --- PAINEL DO LETREIRO AQUI ---
         st.subheader("📢 Mural de Avisos (Letreiro)")
         col_av1, col_av2, col_av3 = st.columns([1, 1, 2])
         with col_av1:
+            # CORREÇÃO APLICADA AQUI: ADIÇÃO DO ["Todos"]
             aviso_usuario = st.selectbox("Para quem?", ["Todos"] + TODOS_NOMES, key="aviso_usr")
         with col_av2:
             aviso_processo = st.text_input("Nº do Processo Ativo", key="aviso_proc")
@@ -918,6 +756,7 @@ with aba_controle:
                 st.success(f"Sessão de {data_apagar} enviada para a lixeira com sucesso!")
                 time.sleep(1.5)
                 st.rerun()
+
 # ------------------------------------------
 # ABA 4: HISTÓRICO, EXCLUSÕES E AVISOS
 # ------------------------------------------
@@ -997,6 +836,7 @@ with aba_historico:
                 st.download_button(label="📥 Baixar Relatório de Avisos (CSV)", data=csv_avisos, file_name="auditoria_mural_avisos.csv", mime='text/csv', type="secondary")
         else:
             st.info("📢 Nenhum comunicado foi publicado no mural de avisos até o momento.")
+
 # ==========================================
 # ABA 5: DADOS & DESEMPENHO (ANALYTICS)
 # ==========================================
