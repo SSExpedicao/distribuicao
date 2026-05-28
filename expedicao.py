@@ -9,13 +9,11 @@ from st_supabase_connection import SupabaseConnection
 # ==========================================
 # 1. FRONTEND: CONFIGURAÇÃO INICIAL DA PÁGINA
 # ==========================================
-# O set_page_config OBRIGATORIAMENTE deve ser o primeiro comando Streamlit do app
 st.set_page_config(page_title="Sistema de Sessões", layout="wide")
 
 # ==========================================
 # 2. BACKEND: CONEXÃO COM A NUVEM SUPABASE
 # ==========================================
-# Conecta usando os Secrets do Streamlit
 conn = st.connection("supabase", type=SupabaseConnection)
 
 def higienizar_dados(processo, relator=""):
@@ -48,7 +46,7 @@ def init_db():
                 {"nome": "Maurício", "expedicao": 1, "revisao": 1}
             ]
             conn.table("equipe").insert(iniciais).execute()
-    except Exception as e:
+    except:
         pass
 
 def carregar_equipes():
@@ -62,38 +60,29 @@ def carregar_equipes():
 
 def gerenciar_usuario(acao, nome_atual, novo_nome=None, expedicao=0, revisao=0):
     try:
-        if acao == 'adicionar':
-            conn.table("equipe").insert({"nome": nome_atual, "expedicao": expedicao, "revisao": revisao}).execute()
-        elif acao == 'remover':
-            conn.table("equipe").delete().eq("nome", nome_atual).execute()
-        elif acao == 'substituir':
-            conn.table("equipe").update({"nome": novo_nome, "expedicao": expedicao, "revisao": revisao}).eq("nome", nome_atual).execute()
-        elif acao == 'editar':
-            conn.table("equipe").update({"expedicao": expedicao, "revisao": revisao}).eq("nome", nome_atual).execute()
+        if acao == 'adicionar': conn.table("equipe").insert({"nome": nome_atual, "expedicao": expedicao, "revisao": revisao}).execute()
+        elif acao == 'remover': conn.table("equipe").delete().eq("nome", nome_atual).execute()
+        elif acao == 'substituir': conn.table("equipe").update({"nome": novo_nome, "expedicao": expedicao, "revisao": revisao}).eq("nome", nome_atual).execute()
+        elif acao == 'editar': conn.table("equipe").update({"expedicao": expedicao, "revisao": revisao}).eq("nome", nome_atual).execute()
         return True, "✅ Operação realizada com sucesso!"
-    except Exception as e:
-        return False, f"❌ Erro no banco de dados: {e}"
+    except Exception as e: return False, f"❌ Erro no banco: {e}"
 
 def renomear_sessao(nome_antigo, novo_nome, tipo_sessao_alvo):
     try:
         conn.table("processos").update({"nome_sessao": novo_nome}).eq("nome_sessao", nome_antigo).eq("tipo_sessao", tipo_sessao_alvo).execute()
         return True, f"✅ Número atualizado para: {novo_nome}"
-    except Exception as e:
-        return False, f"❌ Erro ao renomear: {e}"
+    except Exception as e: return False, f"❌ Erro: {e}"
 
 def remover_processo(numero_processo, nome_sessao, motivo):
     agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     try:
         resultado = conn.table("processos").select("id, relator").eq("numero_processo", numero_processo).eq("nome_sessao", nome_sessao).execute().data
-        if not resultado:
-            return False, f"❌ Processo '{numero_processo}' não encontrado na sessão do dia {nome_sessao}."
-            
+        if not resultado: return False, f"❌ Processo '{numero_processo}' não encontrado."
         id_proc, relator = resultado[0]['id'], resultado[0]['relator']
         conn.table("processos_excluidos").insert({"numero_processo": numero_processo, "relator": relator, "data_exclusao": agora, "motivo": motivo}).execute()
         conn.table("processos").delete().eq("id", id_proc).execute()
-        return True, f"✅ Processo '{numero_processo}' removido e enviado para o histórico de exclusões!"
-    except Exception as e:
-        return False, f"❌ Erro: {e}"
+        return True, f"✅ Processo '{numero_processo}' removido e enviado para exclusões!"
+    except Exception as e: return False, f"❌ Erro: {e}"
 
 def apagar_sessao_especifica(tipo_sessao, nome_sessao, motivo):
     agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
@@ -102,44 +91,36 @@ def apagar_sessao_especifica(tipo_sessao, nome_sessao, motivo):
         for proc in processos_sessao:
             conn.table("processos_excluidos").insert({"numero_processo": proc['numero_processo'], "relator": proc['relator'], "data_exclusao": agora, "motivo": motivo}).execute()
         conn.table("processos").delete().eq("tipo_sessao", tipo_sessao).eq("nome_sessao", nome_sessao).execute()
-    except:
-        pass
+    except: pass
 
 def carregar_excluidos():
-    try:
-        return pd.DataFrame(conn.table("processos_excluidos").select("*").execute().data)
-    except:
-        return pd.DataFrame()
+    try: return pd.DataFrame(conn.table("processos_excluidos").select("*").execute().data)
+    except: return pd.DataFrame()
     
 def processo_existe(numero_processo):
     try:
         res = conn.table("processos").select("id", count="exact").eq("numero_processo", numero_processo).execute()
         return res.count > 0
-    except:
-        return False
+    except: return False
 
 def marcar_urgente(numero_processo):
     numero_processo, _ = higienizar_dados(numero_processo)
     try:
         res = conn.table("processos").select("id").eq("numero_processo", numero_processo).execute().data
-        if not res:
-            return False, f"❌ Processo {numero_processo} não encontrado. Insira-o na sua sessão normal primeiro."
+        if not res: return False, f"❌ Processo {numero_processo} não encontrado ativo."
         conn.table("processos").update({"urgente": 1}).eq("numero_processo", numero_processo).execute()
         return True, f"🚨 Processo {numero_processo} destacado como URGENTE!"
-    except Exception as e:
-        return False, f"❌ Erro: {e}"
+    except Exception as e: return False, f"❌ Erro: {e}"
 
 def atualizar_processo(id_processo, mudancas):
     if not mudancas: return
     agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     payload = {}
-    
     for col_banco, val in mudancas.items():
         payload[col_banco] = val
         if col_banco == 'expedido_ok': payload["data_expedido"] = agora if val == 1 else None
         elif col_banco == 'revisado_ok': payload["data_revisado"] = agora if val == 1 else None
         elif col_banco == 'despachado': payload["data_conclusao"] = agora if val == 1 else None
-
     try: conn.table("processos").update(payload).eq("id", id_processo).execute()
     except: pass
 
@@ -158,23 +139,19 @@ def obter_revisor(expedidor, nome_sessao, revisores_ativos):
     try:
         linhas_sessao = conn.table("processos").select("expedicao, revisao").eq("nome_sessao", nome_sessao).execute().data
         df_sessao = pd.DataFrame(linhas_sessao) if linhas_sessao else pd.DataFrame(columns=['expedicao', 'revisao'])
-        
         linhas_total = conn.table("processos").select("revisao").execute().data
         df_total = pd.DataFrame(linhas_total) if linhas_total else pd.DataFrame(columns=['revisao'])
         
         candidatos = [r for r in revisores_ativos if r != expedidor]
         if not candidatos: return "Sem Revisor (Conflito)"
-
         melhor_cand = None
         menor_score = (float('inf'), float('inf'), float('inf'), float('inf'), float('inf'))
-
         for cand in candidatos:
             parcerias_sessao = len(df_sessao[df_sessao['revisao'] == cand]['expedicao'].unique()) if 'revisao' in df_sessao.columns else 0
             is_reciprocal = 1 if not df_sessao.empty and len(df_sessao[(df_sessao['expedicao'] == cand) & (df_sessao['revisao'] == expedidor)]) > 0 else 0
             carga_sessao = len(df_sessao[df_sessao['revisao'] == cand]) if 'revisao' in df_sessao.columns else 0
             vezes_parceiro = 0
             carga_total = len(df_total[df_total['revisao'] == cand]) if 'revisao' in df_total.columns else 0
-
             score = (parcerias_sessao, is_reciprocal, carga_sessao, vezes_parceiro, carga_total)
             if score < menor_score:
                 menor_score = score
@@ -188,11 +165,9 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
     numero_processo, relator = higienizar_dados(numero_processo, relator)
     if processo_existe(numero_processo): return False, "❌ Processo já existe no sistema."
     if not expedidores or not revisores: return False, "❌ ERRO: Selecione ao menos um Expedidor e um Revisor."
-
     responsavel_expedicao = obter_expedidor(expedidores, nome_sessao)
     responsavel_revisao = obter_revisor(responsavel_expedicao, nome_sessao, revisores)
     data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-
     try:
         conn.table("processos").insert({
             "numero_processo": numero_processo, "relator": relator, "tipo_sessao": tipo_sessao, 
@@ -201,9 +176,7 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
             "enviado_email": 0, "enviado_mensageria": 0, "recebido": 0
         }).execute()
         return True, f"✅ Distribuído! Expedição: **{responsavel_expedicao}** | Revisão: **{responsavel_revisao}**"
-    except Exception as e:
-        return False, f"❌ Erro ao salvar: {e}"
-
+    except Exception as e: return False, f"❌ Erro ao salvar: {e}"
 def carregar_dados_sqlite(tipo_sessao=None):
     try:
         if tipo_sessao: dados = conn.table("processos").select("*").eq("tipo_sessao", tipo_sessao).execute().data
@@ -290,7 +263,7 @@ def gerar_relatorio_gerencial(mes, ano):
     
     equipe_operacional = [n for n in equipe_total if n.lower() != 'jessyca']
     
-    if df_proc.empty: return False, "Nenhum dado encontrado no banco de dados."
+    if df_proc.empty: return False, "Nenhum dado encontrado."
     
     df_proc['data_conclusao_dt'] = pd.to_datetime(df_proc['data_conclusao'], format="%d/%m/%Y %H:%M:%S", errors='coerce')
     df_proc['data_entrada_dt'] = pd.to_datetime(df_proc['data_entrada'], format="%d/%m/%Y %H:%M:%S", errors='coerce')
@@ -371,47 +344,29 @@ def gerar_relatorio_gerencial(mes, ano):
     return True, texto
 
 # ==========================================
-# 3. FRONTEND: RENDERIZAÇÃO DA INTERFACE UI
+# 3. FRONTEND: RENDERIZAÇÃO DA INTERFACE
 # ==========================================
-
-# Executa cargas e sincroniza as equipes na inicialização do script
-init_db()
-EQUIPE_EXPEDICAO, EQUIPE_REVISAO, TODOS_NOMES = carregar_equipes()
-
 st.title("⚖️ S.A.D.E. - Sistema de Automação de Distribuição e Expedição")
 
-# ==========================================
-# 📢 LETREIRO DE AVISOS (MURAL DINÂMICO)
-# ==========================================
 df_avisos = obter_avisos_pendentes()
 if not df_avisos.empty:
     textos_aviso = []
     for _, row in df_avisos.iterrows():
         textos_aviso.append(f"🚨 <b>{row['usuario']}</b>: Processo <b>{row['numero_processo']}</b> ({row['nome_sessao']}) ➔ {row['mensagem']}")
-    
-    # Junta todos os avisos com um separador visual
     texto_marquee = " &nbsp;&nbsp;&nbsp;&nbsp; | &nbsp;&nbsp;&nbsp;&nbsp; ".join(textos_aviso)
-    
-    # Cria o letreiro animado em HTML
-    st.markdown(f"""
+    st.markdown(f'''
         <marquee behavior="scroll" direction="left" scrollamount="8" 
                  style="background-color: #ff4b4b; color: white; padding: 10px; 
                         font-size: 18px; border-radius: 5px; margin-bottom: 20px; font-weight: 500;">
             {texto_marquee}
         </marquee>
-    """, unsafe_allow_html=True)
-# ==========================================
+    ''', unsafe_allow_html=True)
 
 aba_inserir, aba_sessoes, aba_controle, aba_historico, aba_dados, aba_ajuda = st.tabs([
-    "📥 1. Inserir Novos",
-    "🗂️ 2. Painel Ativo",
-    "📊 3. Controle O.K.",
-    "🗄️ 4. Histórico",
-    "📈 5. Dados & Desempenho",
-    "❓ 6. Ajuda & Glossário"
+    "📥 1. Inserir Novos", "🗂️ 2. Painel Ativo", "📊 3. Controle O.K.", 
+    "🗄️ 4. Histórico", "📈 5. Dados & Desempenho", "❓ 6. Ajuda & Glossário"
 ])
 
-# VARIÁVEIS ESSENCIAIS 
 nome_sessao_atual = datetime.now().strftime("%d/%m/%Y")
 df_geral_status = carregar_dados_sqlite()
 sessoes_finalizadas = []
@@ -428,14 +383,12 @@ with aba_inserir:
     with st.container(border=True):
         tipo_sessao = st.selectbox("Destino (Tipo de Sessão)",
                                    ["Sessão Ordinária", "Sessão Ordinária Virtual", "Sessão Reservada", "Sessão Administrativa", "Urgente"])
-
         if tipo_sessao == "Urgente":
-            st.info("🚨 **Modo Urgente:** Marca processos existentes como urgentes (funciona para todos os tipos).")
+            st.info("🚨 **Modo Urgente:** Marca processos existentes como urgentes.")
             expedidores_ativos, revisores_ativos = [], []
         else:
             opcoes_expedicao, opcoes_revisao = EQUIPE_EXPEDICAO.copy(), EQUIPE_REVISAO.copy()
             col3, col4 = st.columns(2)
-            # Sem restrições ocultas, tudo na mão do usuário!
             with col3: expedidores_ativos = st.multiselect("👥 Quem fará a Expedição nesta sessão?", opcoes_expedicao, default=opcoes_expedicao)
             with col4: revisores_ativos = st.multiselect("👥 Quem fará a Revisão nesta sessão?", opcoes_revisao, default=opcoes_revisao)
 
@@ -449,7 +402,6 @@ with aba_inserir:
             with col_p: novo_processo = st.text_input("Número do Processo")
             if tipo_sessao != "Urgente":
                 with col_r: novo_relator = st.text_input("Nome do Relator")
-
             if st.form_submit_button("Verificar e Processar", type="primary"):
                 if tipo_sessao == "Urgente":
                     if novo_processo:
@@ -462,50 +414,29 @@ with aba_inserir:
                         st.success(msg) if ok else st.error(msg)
 
     elif modo_insercao == "Importar Planilha (Em lote)":
-        st.info("💡 **Dica:** Para importar vários processos de uma vez, baixe a planilha modelo, preencha com seus dados e faça o upload abaixo.")
-        
-        # --- GERADOR DA PLANILHA MODELO ---
-        df_modelo = pd.DataFrame({
-            "Processo": ["12345/2026", "67890/2026", "11223/2026"],
-            "Relator": ["Conselheiro A", "Conselheiro B", "Conselheiro C"]
-        })
+        st.info("💡 **Dica:** Preencha os dados no CSV modelo.")
+        df_modelo = pd.DataFrame({"Processo": ["12345/2026"], "Relator": ["Conselheiro A"]})
         csv_modelo = df_modelo.to_csv(index=False).encode('utf-8')
-        
-        st.download_button(
-            label="📥 Baixar Planilha Modelo (CSV)",
-            data=csv_modelo,
-            file_name="modelo_importacao.csv",
-            mime="text/csv",
-            type="secondary"
-        )
-        # ----------------------------------
+        st.download_button(label="📥 Baixar Planilha Modelo (CSV)", data=csv_modelo, file_name="modelo_importacao.csv", mime="text/csv", type="secondary")
 
         arquivo_upload = st.file_uploader("Arraste sua planilha preenchida (.csv ou .xlsx)", type=["csv", "xlsx"])
         if arquivo_upload is not None:
             df_upload = pd.read_csv(arquivo_upload) if arquivo_upload.name.endswith('.csv') else pd.read_excel(arquivo_upload)
-            
-            # Mostra uma prévia dos dados para o usuário conferir
             st.dataframe(df_upload.head(3))
-            
             if st.button("🚀 Iniciar Importação", type="primary"):
                 barra_progresso = st.progress(0)
                 sucessos = 0
                 for index, row in df_upload.iterrows():
                     processo_val = str(row['Processo']).strip() if pd.notna(row.get('Processo')) else ""
-                    
-                    if tipo_sessao == "Urgente": 
-                        ok, msg = marcar_urgente(processo_val)
+                    if tipo_sessao == "Urgente": ok, msg = marcar_urgente(processo_val)
                     else:
                         relator_val = str(row.get('Relator', '')).strip() if pd.notna(row.get('Relator')) else ""
                         ok, msg = salvar_novo_processo(processo_val, relator_val, tipo_sessao, nome_sessao_atual, expedidores_ativos, revisores_ativos)
-                    
                     if ok: sucessos += 1
                     barra_progresso.progress((index + 1) / len(df_upload))
-                
                 st.success(f"🎉 Operação Concluída! {sucessos} processos inseridos.")
 
 def color_urgentes(row): return ['color: #ff4b4b; font-weight: bold'] * len(row) if 'urgente_flag' in row and row['urgente_flag'] == 1 else [''] * len(row)
-
 # ------------------------------------------
 # ABA 2: PAINEL DAS SESSÕES ATIVAS
 # ------------------------------------------
@@ -888,6 +819,7 @@ with aba_historico:
                 st.download_button(label="📥 Baixar Relatório de Avisos (CSV)", data=csv_avisos, file_name="auditoria_mural_avisos.csv", mime='text/csv', type="secondary")
         else:
             st.info("📢 Nenhum comunicado foi publicado no mural de avisos até o momento.")
+
 # ==========================================
 # ABA 5: DADOS & DESEMPENHO (ANALYTICS)
 # ==========================================
@@ -1072,4 +1004,3 @@ with aba_ajuda:
         * **Expedição / Revisão:** O trabalho em dupla de fazer o documento e conferir. O robô do sistema é inteligente e bloqueia tentativas da mesma pessoa expedir e revisar o próprio documento.
         * **Despachado:** O processo chegou ao fim da linha dentro do setor. Tarefa 100% concluída.
         """)
-
