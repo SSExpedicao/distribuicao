@@ -33,8 +33,11 @@ def higienizar_dados(processo, relator=""):
     
 def init_db():
     try:
-        res = conn.client.table("equipe").select("id", count="exact").execute()
-        if res.count == 0:
+        # Tira o 'count="exact"' e busca apenas 1 nome para ver se a tabela está vazia
+        res = conn.client.table("equipe").select("nome").limit(1).execute()
+        
+        # Se a lista voltar vazia, ele insere a equipe inicial
+        if not res.data:
             iniciais = [
                 {"nome": "André", "expedicao": 1, "revisao": 1},
                 {"nome": "Elaine", "expedicao": 1, "revisao": 1},
@@ -46,16 +49,24 @@ def init_db():
                 {"nome": "Maurício", "expedicao": 1, "revisao": 1}
             ]
             conn.client.table("equipe").insert(iniciais).execute()
-    except: pass
+    except: 
+        pass
 
 def carregar_equipes():
     try:
-        eq_exp = [row['nome'] for row in conn.client.table("equipe").select("nome").eq("expedicao", 1).execute().data]
-        eq_rev = [row['nome'] for row in conn.client.table("equipe").select("nome").eq("revisao", 1).execute().data]
-        todos = [row['nome'] for row in conn.client.table("equipe").select("nome").execute().data]
+        # Separando as requisições para extrair o '.data' com segurança
+        res_exp = conn.client.table("equipe").select("nome").eq("expedicao", 1).execute()
+        eq_exp = [row['nome'] for row in res_exp.data]
+        
+        res_rev = conn.client.table("equipe").select("nome").eq("revisao", 1).execute()
+        eq_rev = [row['nome'] for row in res_rev.data]
+        
+        res_todos = conn.client.table("equipe").select("nome").execute()
+        todos = [row['nome'] for row in res_todos.data]
+        
         return eq_exp, eq_rev, todos
-    except: return [], [], []
-
+    except: 
+        return [], [], []
 def gerenciar_usuario(acao, nome_atual, novo_nome=None, expedicao=0, revisao=0):
     try:
         if acao == 'adicionar': conn.client.table("equipe").insert({"nome": nome_atual, "expedicao": expedicao, "revisao": revisao}).execute()
