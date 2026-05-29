@@ -33,7 +33,7 @@ def higienizar_dados(processo, relator=""):
     
 def init_db():
     try:
-        res = conn.table("equipe").select("id", count="exact").execute()
+        res = conn.client.table("equipe").select("id", count="exact").execute()
         if res.count == 0:
             iniciais = [
                 {"nome": "André", "expedicao": 1, "revisao": 1},
@@ -45,68 +45,68 @@ def init_db():
                 {"nome": "Mariana", "expedicao": 1, "revisao": 1},
                 {"nome": "Maurício", "expedicao": 1, "revisao": 1}
             ]
-            conn.table("equipe").insert(iniciais).execute()
+            conn.client.table("equipe").insert(iniciais).execute()
     except: pass
 
 def carregar_equipes():
     try:
-        eq_exp = [row['nome'] for row in conn.table("equipe").select("nome").eq("expedicao", 1).execute().data]
-        eq_rev = [row['nome'] for row in conn.table("equipe").select("nome").eq("revisao", 1).execute().data]
-        todos = [row['nome'] for row in conn.table("equipe").select("nome").execute().data]
+        eq_exp = [row['nome'] for row in conn.client.table("equipe").select("nome").eq("expedicao", 1).execute().data]
+        eq_rev = [row['nome'] for row in conn.client.table("equipe").select("nome").eq("revisao", 1).execute().data]
+        todos = [row['nome'] for row in conn.client.table("equipe").select("nome").execute().data]
         return eq_exp, eq_rev, todos
     except: return [], [], []
 
 def gerenciar_usuario(acao, nome_atual, novo_nome=None, expedicao=0, revisao=0):
     try:
-        if acao == 'adicionar': conn.table("equipe").insert({"nome": nome_atual, "expedicao": expedicao, "revisao": revisao}).execute()
-        elif acao == 'remover': conn.table("equipe").delete().eq("nome", nome_atual).execute()
-        elif acao == 'substituir': conn.table("equipe").update({"nome": novo_nome, "expedicao": expedicao, "revisao": revisao}).eq("nome", nome_atual).execute()
-        elif acao == 'editar': conn.table("equipe").update({"expedicao": expedicao, "revisao": revisao}).eq("nome", nome_atual).execute()
+        if acao == 'adicionar': conn.client.table("equipe").insert({"nome": nome_atual, "expedicao": expedicao, "revisao": revisao}).execute()
+        elif acao == 'remover': conn.client.table("equipe").delete().eq("nome", nome_atual).execute()
+        elif acao == 'substituir': conn.client.table("equipe").update({"nome": novo_nome, "expedicao": expedicao, "revisao": revisao}).eq("nome", nome_atual).execute()
+        elif acao == 'editar': conn.client.table("equipe").update({"expedicao": expedicao, "revisao": revisao}).eq("nome", nome_atual).execute()
         return True, "✅ Operação realizada com sucesso!"
     except Exception as e: return False, f"❌ Erro no banco de dados: {e}"
 
 def renomear_sessao(nome_antigo, novo_nome, tipo_sessao_alvo):
     try:
-        conn.table("processos").update({"nome_sessao": novo_nome}).eq("nome_sessao", nome_antigo).eq("tipo_sessao", tipo_sessao_alvo).execute()
+        conn.client.table("processos").update({"nome_sessao": novo_nome}).eq("nome_sessao", nome_antigo).eq("tipo_sessao", tipo_sessao_alvo).execute()
         return True, f"✅ Número atualizado para: {novo_nome}"
     except Exception as e: return False, f"❌ Erro ao renomear: {e}"
 
 def remover_processo(numero_processo, nome_sessao, motivo):
     agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     try:
-        resultado = conn.table("processos").select("id, relator").eq("numero_processo", numero_processo).eq("nome_sessao", nome_sessao).execute().data
+        resultado = conn.client.table("processos").select("id, relator").eq("numero_processo", numero_processo).eq("nome_sessao", nome_sessao).execute().data
         if not resultado: return False, f"❌ Processo '{numero_processo}' não encontrado na sessão do dia {nome_sessao}."
         id_proc, relator = resultado[0]['id'], resultado[0]['relator']
-        conn.table("processos_excluidos").insert({"numero_processo": numero_processo, "relator": relator, "data_exclusao": agora, "motivo": motivo}).execute()
-        conn.table("processos").delete().eq("id", id_proc).execute()
+        conn.client.table("processos_excluidos").insert({"numero_processo": numero_processo, "relator": relator, "data_exclusao": agora, "motivo": motivo}).execute()
+        conn.client.table("processos").delete().eq("id", id_proc).execute()
         return True, f"✅ Processo '{numero_processo}' removido e enviado para o histórico de exclusões!"
     except Exception as e: return False, f"❌ Erro: {e}"
 
 def apagar_sessao_especifica(tipo_sessao, nome_sessao, motivo):
     agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     try:
-        processos_sessao = conn.table("processos").select("numero_processo, relator").eq("tipo_sessao", tipo_sessao).eq("nome_sessao", nome_sessao).execute().data
+        processos_sessao = conn.client.table("processos").select("numero_processo, relator").eq("tipo_sessao", tipo_sessao).eq("nome_sessao", nome_sessao).execute().data
         for proc in processos_sessao:
-            conn.table("processos_excluidos").insert({"numero_processo": proc['numero_processo'], "relator": proc['relator'], "data_exclusao": agora, "motivo": motivo}).execute()
-        conn.table("processos").delete().eq("tipo_sessao", tipo_sessao).eq("nome_sessao", nome_sessao).execute()
+            conn.client.table("processos_excluidos").insert({"numero_processo": proc['numero_processo'], "relator": proc['relator'], "data_exclusao": agora, "motivo": motivo}).execute()
+        conn.client.table("processos").delete().eq("tipo_sessao", tipo_sessao).eq("nome_sessao", nome_sessao).execute()
     except: pass
 
 def carregar_excluidos():
-    try: return pd.DataFrame(conn.table("processos_excluidos").select("*").execute().data)
+    try: return pd.DataFrame(conn.client.table("processos_excluidos").select("*").execute().data)
     except: return pd.DataFrame()
     
 def processo_existe(numero_processo):
     try:
-        res = conn.table("processos").select("id", count="exact").eq("numero_processo", numero_processo).execute()
+        res = conn.client.table("processos").select("id", count="exact").eq("numero_processo", numero_processo).execute()
         return res.count > 0
     except: return False
 
 def marcar_urgente(numero_processo):
     numero_processo, _ = higienizar_dados(numero_processo)
     try:
-        res = conn.table("processos").select("id").eq("numero_processo", numero_processo).execute().data
+        res = conn.client.table("processos").select("id").eq("numero_processo", numero_processo).execute().data
         if not res: return False, f"❌ Processo {numero_processo} não encontrado. Insira-o na sua sessão normal primeiro."
-        conn.table("processos").update({"urgente": 1}).eq("numero_processo", numero_processo).execute()
+        conn.client.table("processos").update({"urgente": 1}).eq("numero_processo", numero_processo).execute()
         return True, f"🚨 Processo {numero_processo} destacado como URGENTE!"
     except Exception as e: return False, f"❌ Erro: {e}"
 
@@ -119,14 +119,14 @@ def atualizar_processo(id_processo, mudancas):
         if col_banco == 'expedido_ok': payload["data_expedido"] = agora if val == 1 else None
         elif col_banco == 'revisado_ok': payload["data_revisado"] = agora if val == 1 else None
         elif col_banco == 'despachado': payload["data_conclusao"] = agora if val == 1 else None
-    try: conn.table("processos").update(payload).eq("id", id_processo).execute()
+    try: conn.client.table("processos").update(payload).eq("id", id_processo).execute()
     except: pass
 
 def obter_expedidor(elegiveis, nome_sessao):
     if not elegiveis: return "Nenhum escalado"
     contagem = {p: 0 for p in elegiveis}
     try:
-        linhas = conn.table("processos").select("expedicao").not_.is_("expedicao", "null").eq("nome_sessao", nome_sessao).execute().data
+        linhas = conn.client.table("processos").select("expedicao").not_("expedicao", "is", "null").eq("nome_sessao", nome_sessao).execute().data
         for row in linhas:
             if row.get('expedicao') in contagem: contagem[row['expedicao']] += 1
     except: pass
@@ -135,9 +135,9 @@ def obter_expedidor(elegiveis, nome_sessao):
 def obter_revisor(expedidor, nome_sessao, revisores_ativos):
     if not revisores_ativos: return "Nenhum escalado"
     try:
-        linhas_sessao = conn.table("processos").select("expedicao, revisao").eq("nome_sessao", nome_sessao).execute().data
+        linhas_sessao = conn.client.table("processos").select("expedicao, revisao").eq("nome_sessao", nome_sessao).execute().data
         df_sessao = pd.DataFrame(linhas_sessao) if linhas_sessao else pd.DataFrame(columns=['expedicao', 'revisao'])
-        linhas_total = conn.table("processos").select("revisao").execute().data
+        linhas_total = conn.client.table("processos").select("revisao").execute().data
         df_total = pd.DataFrame(linhas_total) if linhas_total else pd.DataFrame(columns=['revisao'])
         
         candidatos = [r for r in revisores_ativos if r != expedidor]
@@ -167,7 +167,7 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
     responsavel_revisao = obter_revisor(responsavel_expedicao, nome_sessao, revisores)
     data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     try:
-        conn.table("processos").insert({
+        conn.client.table("processos").insert({
             "numero_processo": numero_processo, "relator": relator, "tipo_sessao": tipo_sessao, 
             "nome_sessao": nome_sessao, "expedicao": responsavel_expedicao, "revisao": responsavel_revisao, 
             "data_entrada": data_atual, "expedido_ok": 0, "revisado_ok": 0, "despachado": 0, "urgente": 0,
@@ -178,19 +178,19 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
 
 def carregar_dados_sqlite(tipo_sessao=None):
     try:
-        if tipo_sessao: dados = conn.table("processos").select("*").eq("tipo_sessao", tipo_sessao).execute().data
-        else: dados = conn.table("processos").select("*").execute().data
+        if tipo_sessao: dados = conn.client.table("processos").select("*").eq("tipo_sessao", tipo_sessao).execute().data
+        else: dados = conn.client.table("processos").select("*").execute().data
         return pd.DataFrame(dados)
     except: return pd.DataFrame()
 
 def restaurar_backup(df_backup):
     try:
-        conn.table("processos").delete().neq("numero_processo", "vazio").execute()
+        conn.client.table("processos").delete().neq("numero_processo", "vazio").execute()
         records = df_backup.to_dict(orient="records")
         for r in records:
             if 'id' in r: del r['id']
             if 'created_at' in r: del r['created_at']
-        conn.table("processos").insert(records).execute()
+        conn.client.table("processos").insert(records).execute()
         return True, "✅ Dados restaurados com sucesso!"
     except Exception as e: return False, f"❌ Erro ao tentar restaurar: {e}"
 
@@ -199,19 +199,19 @@ EQUIPE_EXPEDICAO, EQUIPE_REVISAO, TODOS_NOMES = carregar_equipes()
 
 def adicionar_aviso(usuario, numero_processo, mensagem):
     try:
-        res = conn.table("processos").select("despachado").eq("numero_processo", numero_processo).execute().data
+        res = conn.client.table("processos").select("despachado").eq("numero_processo", numero_processo).execute().data
         if not res: return False, f"❌ Processo '{numero_processo}' não encontrado no sistema."
         if res[0]['despachado'] == 1: return False, f"❌ O processo '{numero_processo}' já foi concluído."
         agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-        conn.table("avisos").insert({"usuario": usuario, "numero_processo": numero_processo, "mensagem": mensagem, "data_criacao": agora, "ativo": 1}).execute()
+        conn.client.table("avisos").insert({"usuario": usuario, "numero_processo": numero_processo, "mensagem": mensagem, "data_criacao": agora, "ativo": 1}).execute()
         return True, "✅ Aviso publicado no letreiro!"
     except Exception as e: return False, f"❌ Erro: {e}"
 
 def obter_avisos_pendentes():
     hoje = datetime.now().strftime("%d/%m/%Y")
     try:
-        df_av = pd.DataFrame(conn.table("avisos").select("*").eq("ativo", 1).execute().data)
-        df_proc = pd.DataFrame(conn.table("processos").select("numero_processo, nome_sessao, despachado").execute().data)
+        df_av = pd.DataFrame(conn.client.table("avisos").select("*").eq("ativo", 1).execute().data)
+        df_proc = pd.DataFrame(conn.client.table("processos").select("numero_processo, nome_sessao, despachado").execute().data)
         if df_av.empty: return pd.DataFrame()
         if df_proc.empty: df_proc = pd.DataFrame(columns=['numero_processo', 'nome_sessao', 'despachado'])
         df_avisos = pd.merge(df_av, df_proc, on='numero_processo', how='left')
@@ -226,14 +226,14 @@ def obter_avisos_pendentes():
     except: return pd.DataFrame()
 
 def desativar_aviso(id_aviso):
-    try: conn.table("avisos").update({"ativo": 0}).eq("id", int(id_aviso)).execute()
+    try: conn.client.table("avisos").update({"ativo": 0}).eq("id", int(id_aviso)).execute()
     except: pass
 
 def carregar_historico_avisos():
     hoje = datetime.now().strftime("%d/%m/%Y")
     try:
-        df_av = pd.DataFrame(conn.table("avisos").select("*").execute().data)
-        df_proc = pd.DataFrame(conn.table("processos").select("numero_processo, despachado").execute().data)
+        df_av = pd.DataFrame(conn.client.table("avisos").select("*").execute().data)
+        df_proc = pd.DataFrame(conn.client.table("processos").select("numero_processo, despachado").execute().data)
         if df_av.empty: return pd.DataFrame(columns=['numero_processo', 'usuario', 'mensagem', 'data_criacao', 'ativo', 'despachado', 'proc_existe', 'status'])
         df_proc['proc_existe'] = df_proc['numero_processo'] if not df_proc.empty else None
         df = pd.merge(df_av, df_proc, on='numero_processo', how='left')
@@ -542,7 +542,7 @@ with aba_sessoes:
         if not df_adm.empty:
             for data in df_adm[~df_adm['nome_sessao'].isin(sessoes_finalizadas)]['nome_sessao'].unique(): exibir_tabela_interativa(df_adm[df_adm['nome_sessao'] == data], "adm", data, "Sessão Administrativa")
                 
-   # ------------------------------------------
+# ------------------------------------------
 # ABA 3: CONTROLE DE CARGA E ÁREA ADMINISTRATIVA
 # ------------------------------------------
 with aba_controle:
@@ -754,7 +754,7 @@ with aba_controle:
             file_name="modelo_historico.csv", mime="text/csv", type="secondary"
         )
         
-       col_h1, col_h2 = st.columns
+        col_h1, col_h2 = st.columns(2)
         with col_h1:
             hist_tipo = st.selectbox("Tipo de Sessão (Histórico):", ["Sessão Ordinária", "Sessão Ordinária Virtual", "Sessão Reservada", "Sessão Administrativa"], key="hist_tipo")
             hist_sessao = st.text_input("Nome ou Número da Sessão (Ex: Sessão 125):", key="hist_sessao")
@@ -762,7 +762,7 @@ with aba_controle:
             hist_proc = st.text_input("Nº do Processo (Manual):", key="hist_proc")
             hist_rel = st.text_input("Relator (Manual):", key="hist_rel")
             
-        col_hx, col_hy = st.columns
+        col_hx, col_hy = st.columns(2)
         with col_hx: 
             hist_exp = st.text_input("Expedidor:", placeholder="Digite o nome...", key="hist_exp")
         with col_hy: 
@@ -787,7 +787,7 @@ with aba_controle:
                         
                         if p_limpo and not processo_existe(p_limpo):
                             try:
-                                conn.table("processos").insert({
+                                conn.client.table("processos").insert({
                                     "numero_processo": p_limpo, "relator": r_limpo, "tipo_sessao": hist_tipo, 
                                     "nome_sessao": hist_sessao, "expedicao": hist_exp, "revisao": hist_rev, 
                                     "data_entrada": agora, "data_expedido": agora, "data_revisado": agora, "data_conclusao": agora,
@@ -802,7 +802,7 @@ with aba_controle:
                     p_limpo, r_limpo = higienizar_dados(hist_proc, hist_rel)
                     if not processo_existe(p_limpo):
                         try:
-                            conn.table("processos").insert({
+                            conn.client.table("processos").insert({
                                 "numero_processo": p_limpo, "relator": r_limpo, "tipo_sessao": hist_tipo, 
                                 "nome_sessao": hist_sessao, "expedicao": hist_exp, "revisao": hist_rev, 
                                 "data_entrada": agora, "data_expedido": agora, "data_revisado": agora, "data_conclusao": agora,
@@ -1099,4 +1099,4 @@ with aba_ajuda:
         * **Processo Urgente:** Processos que furam a fila. Quando inseridos como urgentes, a linha deles fica **vermelha e em negrito** no Painel Ativo, chamando a atenção de todos.
         * **Expedição / Revisão:** O trabalho em dupla de fazer o documento e conferir. O robô do sistema é inteligente e bloqueia tentativas da mesma pessoa expedir e revisar o próprio documento.
         * **Despachado:** O processo chegou ao fim da linha dentro do setor. Tarefa 100% concluída.
-        """)             
+        """)
