@@ -54,7 +54,6 @@ def init_db():
 
 def carregar_equipes():
     try:
-        # Separando as requisições para extrair o '.data' com segurança
         res_exp = conn.client.table("equipe").select("nome").eq("expedicao", 1).execute()
         eq_exp = [row['nome'] for row in res_exp.data]
         
@@ -65,8 +64,11 @@ def carregar_equipes():
         todos = [row['nome'] for row in res_todos.data]
         
         return eq_exp, eq_rev, todos
-    except: 
+    except Exception as e: 
+        # AQUI ESTÁ A MÁGICA: O app vai te mostrar o erro exato na tela!
+        st.error(f"⚠️ Erro ao tentar ler a equipe no Supabase: {e}")
         return [], [], []
+        
 def gerenciar_usuario(acao, nome_atual, novo_nome=None, expedicao=0, revisao=0):
     try:
         if acao == 'adicionar': conn.client.table("equipe").insert({"nome": nome_atual, "expedicao": expedicao, "revisao": revisao}).execute()
