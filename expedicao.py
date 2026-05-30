@@ -52,22 +52,22 @@ def init_db():
     except: 
         pass
 
-def carregar_equipes():
+def carregar_equipe():
     try:
-        res_exp = conn.client.table("equipe").select("nome").eq("expedicao", 1).execute()
-        eq_exp = [row['nome'] for row in res_exp.data]
-        
-        res_rev = conn.client.table("equipe").select("nome").eq("revisao", 1).execute()
-        eq_rev = [row['nome'] for row in res_rev.data]
-        
-        res_todos = conn.client.table("equipe").select("nome").execute()
-        todos = [row['nome'] for row in res_todos.data]
-        
-        return eq_exp, eq_rev, todos
-    except Exception as e: 
-        # AQUI ESTÁ A MÁGICA: O app vai te mostrar o erro exato na tela!
-        st.error(f"⚠️ Erro ao tentar ler a equipe no Supabase: {e}")
-        return [], [], []
+        # Agora ele pede apenas a coluna "nome", que é a única que existe e importa!
+        resposta = conn.client.table("equipe").select("nome").order("nome").execute()
+        return [linha['nome'] for linha in resposta.data]
+    except Exception as e:
+        st.error(f"Erro ao tentar ler a equipe no Supabase: {e}")
+        return []
+
+def adicionar_membro_equipe(nome):
+    try:
+        # Insere apenas o nome, sem tentar mandar dados para as colunas antigas
+        conn.client.table("equipe").insert({"nome": nome}).execute()
+        return True, "✅ Colaborador adicionado com sucesso!"
+    except Exception as e:
+        return False, f"❌ Erro ao adicionar: {e}"
         
 def gerenciar_usuario(acao, nome_atual, novo_nome=None, expedicao=0, revisao=0):
     try:
@@ -135,42 +135,39 @@ def atualizar_processo(id_processo, mudancas):
     try: conn.client.table("processos").update(payload).eq("id", id_processo).execute()
     except: pass
 
-def obter_expedidor(elegiveis, nome_sessao):
-    if not elegiveis: return "Nenhum escalado"
-    contagem = {p: 0 for p in elegiveis}
+def obter_expedidor(opcoes, nome_sessao):
+    if len(opcoes) == 1: return opcoes[0]
     try:
-        linhas = conn.client.table("processos").select("expedicao").not_("expedicao", "is", "null").eq("nome_sessao", nome_sessao).execute().data
-        for row in linhas:
-            if row.get('expedicao') in contagem: contagem[row['expedicao']] += 1
-    except: pass
-    return min(contagem, key=contagem.get)
-
-def obter_revisor(expedidor, nome_sessao, revisores_ativos):
-    if not revisores_ativos: return "Nenhum escalado"
-    try:
-        linhas_sessao = conn.client.table("processos").select("expedicao, revisao").eq("nome_sessao", nome_sessao).execute().data
-        df_sessao = pd.DataFrame(linhas_sessao) if linhas_sessao else pd.DataFrame(columns=['expedicao', 'revisao'])
-        linhas_total = conn.client.table("processos").select("revisao").execute().data
-        df_total = pd.DataFrame(linhas_total) if linhas_total else pd.DataFrame(columns=['revisao'])
+        # O algoritmo olha para a mesa (processos) e vê a carga real de cada um hoje
+        res = conn.client.table("processos").select("expedicao").eq("nome_sessao", nome_sessao).execute()
+        contagem = {nome: 0 for nome in opcoes}
+        for row in res.data:
+            if row.get('expedicao') in contagem:
+                contagem[row['expedicao']] += 1
         
-        candidatos = [r for r in revisores_ativos if r != expedidor]
-        if not candidatos: return "Sem Revisor (Conflito)"
-        melhor_cand = None
-        menor_score = (float('inf'), float('inf'), float('inf'), float('inf'), float('inf'))
-        for cand in candidatos:
-            parcerias_sessao = len(df_sessao[df_sessao['revisao'] == cand]['expedicao'].unique()) if 'revisao' in df_sessao.columns else 0
-            is_reciprocal = 1 if not df_sessao.empty and len(df_sessao[(df_sessao['expedicao'] == cand) & (df_sessao['revisao'] == expedidor)]) > 0 else 0
-            carga_sessao = len(df_sessao[df_sessao['revisao'] == cand]) if 'revisao' in df_sessao.columns else 0
-            vezes_parceiro = 0
-            carga_total = len(df_total[df_total['revisao'] == cand]) if 'revisao' in df_total.columns else 0
-            score = (parcerias_sessao, is_reciprocal, carga_sessao, vezes_parceiro, carga_total)
-            if score < menor_score:
-                menor_score = score
-                melhor_cand = cand
-        return melhor_cand
+        # Entrega o processo para quem tem o menor número na contagem
+        return min(contagem, key=contagem.get)
     except:
-        candidatos = [r for r in revisores_ativos if r != expedidor]
-        return candidatos[0] if candidatos else "Nenhum escalado"
+        import random
+        return random.choice(opcoes)
+
+def obter_revisor(expedidor, nome_sessao, opcoes):
+    # O revisor não pode ser a mesma pessoa que expediu
+    opcoes_validas = [opt for opt in opcoes if opt != expedidor]
+    if not opcoes_validas: return expedidor # Contingência extrema
+    if len(opcoes_validas) == 1: return opcoes_validas[0]
+    
+    try:
+        res = conn.client.table("processos").select("revisao").eq("nome_sessao", nome_sessao).execute()
+        contagem = {nome: 0 for nome in opcoes_validas}
+        for row in res.data:
+            if row.get('revisao') in contagem:
+                contagem[row['revisao']] += 1
+                
+        return min(contagem, key=contagem.get)
+    except:
+        import random
+        return random.choice(opcoes_validas)
 
 def obter_colaboradores_ausentes_hoje():
     try:
