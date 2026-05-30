@@ -261,6 +261,25 @@ def carregar_historico_avisos():
         df['status'] = status_list
         return df
     except: return pd.DataFrame(columns=['numero_processo', 'usuario', 'mensagem', 'data_criacao', 'ativo', 'despachado', 'proc_existe', 'status'])
+
+def salvar_afastamento(usuario, data_inicio, data_fim, tipo):
+    try:
+        conn.client.table("afastamentos").insert({
+            "usuario": usuario,
+            "data_inicio": data_inicio,
+            "data_fim": data_fim,
+            "tipo": tipo
+        }).execute()
+        return True, "✅ Afastamento registrado com sucesso!"
+    except Exception as e:
+        return False, f"❌ Erro ao salvar no banco: {e}"
+
+def carregar_afastamentos():
+    try:
+        dados = conn.client.table("afastamentos").select("*").execute().data
+        return pd.DataFrame(dados)
+    except:
+        return pd.DataFrame()
     
 def gerar_relatorio_gerencial(mes, ano):
     df_proc = carregar_dados_sqlite()
@@ -363,13 +382,14 @@ if not df_avisos.empty:
     """, unsafe_allow_html=True)
 # ==========================================
 
-aba_inserir, aba_sessoes, aba_controle, aba_historico, aba_dados, aba_ajuda = st.tabs([
+aba_inserir, aba_sessoes, aba_controle, aba_historico, aba_dados, aba_ferias, aba_ajuda = st.tabs([
     "📥 1. Inserir Novos",
     "🗂️ 2. Painel Ativo",
     "📊 3. Controle O.K.",
     "🗄️ 4. Histórico",
     "📈 5. Dados & Desempenho",
-    "❓ 6. Ajuda & Glossário"
+    "🌴 6. Férias & Afastamentos",
+    "❓ 7. Ajuda & Glossário"
 ])
 
 # VARIÁVEIS ESSENCIAIS 
@@ -886,12 +906,12 @@ with aba_controle:
 # ABA 4: HISTÓRICO, EXCLUSÕES E AVISOS
 # ------------------------------------------
 with aba_historico:
-    sub_aba_concluidas, sub_aba_lixeira, sub_aba_hist_avisos = st.tabs([
+    sub_aba_concluidas, sub_aba_lixeira, sub_aba_hist_avisos, sub_aba_hist_ferias = st.tabs([
         "✅ Arquivo: Concluídas", 
         "🗑️ Auditoria: Processos Excluídos",
-        "📢 Auditoria: Histórico de Avisos"
+        "📢 Auditoria: Histórico de Avisos",
+        "📋 Auditoria: Férias e Ausências"
     ])
-
     # --- sub-aba 1: CONCLUÍDAS ---
     with sub_aba_concluidas:
         st.subheader("Sessões 100% Concluídas")
@@ -962,6 +982,38 @@ with aba_historico:
         else:
             st.info("📢 Nenhum comunicado foi publicado no mural de avisos até o momento.")
 
+      # --- sub-aba 4: AUDITORIA DE FÉRIAS E AUSÊNCIAS ---
+    with sub_aba_hist_ferias:
+        st.subheader("Histórico Geral de Afastamentos Encerrados")
+        st.write("Registro cronológico de ausências que já foram concluídas (o colaborador já retornou ao trabalho).")
+        
+        df_af_hist = carregar_afastamentos()
+        if not df_af_hist.empty:
+            hoje = datetime.now().date()
+            df_af_hist['dt_fim_compare'] = pd.to_datetime(df_af_hist['data_fim'], format="%d/%m/%Y").dt.date
+            
+            # Filtro Inteligente: A data de fim é menor que hoje? Se sim, o afastamento já passou!
+            df_passadas = df_af_hist[df_af_hist['dt_fim_compare'] < hoje].copy()
+            
+            if not df_passadas.empty:
+                df_passadas_display = df_passadas.rename(columns={
+                    'usuario': 'Colaborador',
+                    'tipo': 'Motivo Declarado',
+                    'data_inicio': 'Data Inicial',
+                    'data_fim': 'Data de Retorno'
+                })
+                
+                # Exibe do mais recente para o mais antigo (.iloc[::-1])
+                st.dataframe(df_passadas_display[['Colaborador', 'Motivo Declarado', 'Data Inicial', 'Data de Retorno']].iloc[::-1], hide_index=True, use_container_width=True)
+                
+                # Botão para baixar a planilha de auditoria
+                csv_ferias = df_passadas_display[['Colaborador', 'Motivo Declarado', 'Data Inicial', 'Data de Retorno']].to_csv(index=False).encode('utf-8')
+                st.download_button(label="📥 Baixar Relatório de Histórico de Ausências (CSV)", data=csv_ferias, file_name="auditoria_afastamentos_equipe.csv", mime='text/csv', type="secondary")
+            else:
+                st.info("Nenhum afastamento antigo arquivado no histórico até o momento.")
+        else:
+            st.info("Nenhum registro de afastamento encontrado no sistema.")
+        
 # ==========================================
 # ABA 5: DADOS & DESEMPENHO (ANALYTICS)
 # ==========================================
@@ -1075,7 +1127,68 @@ with aba_dados:
             st.info("Nenhum processo foi finalizado ainda para calcular o histórico.")
 
 # ------------------------------------------
-# ABA 6: AJUDA E GLOSSÁRIO
+# ABA 6: FÉRIAS E AFASTAMENTOS
+# ------------------------------------------
+with aba_ferias:
+    st.header("🌴 Painel de Férias e Afastamentos Operacionais")
+    st.write("Registre os períodos de ausência legítima da equipe para automatizar o bloqueio na distribuição de processos.")
+    
+    # Formulário de Inserção Manual
+    with st.container(border=True):
+        st.subheader("📝 Registrar Nova Ausência")
+        with st.form("form_afastamento", clear_on_submit=True):
+            col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+            with col_f1:
+                usr_afastado = st.selectbox("Colaborador:", TODOS_NOMES)
+            with col_f2:
+                d_inicio = st.date_input("Data de Início:", format="DD/MM/YYYY")
+            with col_f3:
+                d_fim = st.date_input("Data de Fim (Retorno):", format="DD/MM/YYYY")
+            with col_f4:
+                t_afastamento = st.selectbox("Tipo de Ausência:", ["Férias", "Recesso", "Atestado Médico"])
+                
+            if st.form_submit_button("🚀 Confirmar e Bloquear no Sistema", type="primary", use_container_width=True):
+                if d_inicio > d_fim:
+                    st.error("❌ Erro: A data de início não pode ser maior que a data de término.")
+                else:
+                    ini_str = d_inicio.strftime("%d/%m/%Y")
+                    fim_str = d_fim.strftime("%d/%m/%Y")
+                    ok, msg = salvar_afastamento(usr_afastado, ini_str, fim_str, t_afastamento)
+                    if ok:
+                        st.success(msg)
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+                        
+    st.markdown("---")
+    st.subheader("📋 Quadro de Ausências Ativas (Quem está fora hoje)")
+    df_af = carregar_afastamentos()
+    
+    if not df_af.empty:
+        hoje = datetime.now().date()
+        # Converte as strings temporariamente para formato de data para o Python calcular sozinho
+        df_af['dt_inicio_compare'] = pd.to_datetime(df_af['data_inicio'], format="%d/%m/%Y").dt.date
+        df_af['dt_fim_compare'] = pd.to_datetime(df_af['data_fim'], format="%d/%m/%Y").dt.date
+        
+        # Filtro Inteligente: O dia de hoje está entre o início e o fim da folga da pessoa?
+        df_ativas = df_af[(hoje >= df_af['dt_inicio_compare']) & (hoje <= df_af['dt_fim_compare'])].copy()
+        
+        if not df_ativas.empty:
+            df_ativas_display = df_ativas.rename(columns={
+                'usuario': 'Colaborador Ausente',
+                'tipo': 'Tipo / Motivo',
+                'data_inicio': 'Data de Saída',
+                'data_fim': 'Data de Retorno'
+            })
+            st.dataframe(df_ativas_display[['Colaborador Ausente', 'Tipo / Motivo', 'Data de Saída', 'Data de Retorno']], hide_index=True, use_container_width=True)
+        else:
+            st.success("✨ Excelente! Toda a equipe operacional está ativa e disponível hoje.")
+    else:
+        st.info("✨ Nenhum afastamento ativo registrado no momento.")
+
+# ------------------------------------------
+# ABA 7: AJUDA E GLOSSÁRIO
 # ------------------------------------------
 with aba_ajuda:
     st.header("📖 Manual do Usuário e Ajuda Detalhada - S.A.D.E.")
