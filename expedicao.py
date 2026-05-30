@@ -1116,7 +1116,7 @@ with aba_ajuda:
         Esta é a mesa de trabalho digital da equipe. 
         
         * **Trabalho em Equipe:** Todo mundo pode ficar com essa tela aberta ao mesmo tempo no próprio computador.
-        * **Marcando as Tarefas:** Conforme o documento for feito, marque a caixinha **"Expedido"**. O colega que revisar o documento marca **"Revisado"**.
+        * **Marcando as Tarefas:** Conforme o documento for feito, marque a caixinha **"Expedido"**. O colega que revisar o documento marque **"Revisado"**.
         * **Mudando Nomes:** Se o sistema escalou a pessoa "A" para fazer um processo, mas a pessoa "B" vai fazer no lugar, é só clicar no nome da pessoa "A" na tabela e trocar na hora.
         * **Finalizando:** Quando o processo estiver 100% pronto, assinado e entregue, marque a caixa **"Despachado"**. 
         
@@ -1143,6 +1143,35 @@ with aba_ajuda:
     with st.expander("📚 5. Glossário (O que significa cada termo?)"):
         st.markdown("""
         * **Processo Urgente:** Processos que furam a fila. Quando inseridos como urgentes, a linha deles fica **vermelha e em negrito** no Painel Ativo, chamando a atenção de todos.
-        * **Expedição / Revisão:** O trabalho em dupla de fazer o documento e conferir. O robô do sistema é inteligente e bloqueia tentativas da mesma pessoa expedir e revisar o próprio documento.
+        * **Expedição / Revisão:** O trabalho em disposição de fazer o documento e conferir. O sistema monitora a distribuição equilibrada e gerencia quem são os responsáveis de forma automatizada.
         * **Despachado:** O processo chegou ao fim da linha dentro do setor. Tarefa 100% concluída.
+        """)
+
+    # 👇 SEU NOVO ITEM MULTIDIMENSIONAL EXCLUSIVO AQUI 👇
+    with st.expander("🧠 6. Como o S.A.D.E funciona (Dados & Desempenho)"):
+        st.markdown("""
+        Toda a inteligência e os gráficos do sistema são calculados de forma automática, baseados exclusivamente no ritmo de trabalho real do setor. O sistema funciona registrando os horários em que cada etapa é concluída no painel.
+        
+        ---
+
+        #### 📡 Radar em Tempo Real (Painel Ativo)
+        Mapeia a situação exata das pautas que estão acontecendo no dia:
+        * **Volume de Trabalho:** Identifica quantos processos estão na mesa do setor no momento.
+        * **Gargalos Operacionais:** Separa os processos por status para mostrar exatamente quantos ainda precisam ser iniciados, quantos aguardam revisão dos colegas e quantos estão finalizados, esperando apenas o envio da chefia.
+        * **Gráfico de Barras:** Mostra a produtividade instantânea da equipe, somando quantas tarefas cada colaborador entregou ao longo do expediente atual.
+
+        ---
+
+        #### 🌎 Histórico e Médias de Tempo (Métricas Gerais)
+        Assim que a chefia conclui e envia um processo, ele entra para a estatística global do setor. O sistema avalia três métricas essenciais:
+        * **Tempo de Elaboração (Expedição):** Avalia quantas horas ou minutos a equipe leva para confeccionar a minuta inicial desde a hora em que o processo chegou.
+        * **Tempo de Conferência (Revisão):** Mede a velocidade com que o revisor analisa e valida o documento criado pelo colega.
+        * **Tempo de Ciclo Completo:** É a duração total da vida do documento no setor (da entrada ao envio final). Isso ajuda a comprovar a eficiência do setor para a Direção Geral.
+
+        ---
+
+        #### 📉 Evolução do Fechamento de Sessões (Gráfico de Tendência)
+        Permite enxergar se o setor está se tornando mais rápido com o passar do tempo:
+        * O sistema identifica o horário em que o **primeiro** processo de um lote foi colocado no sistema e o horário em que o **último** processo daquele mesmo lote foi finalizado.
+        * Calculando o intervalo entre o primeiro e o último passo, o gráfico gera uma linha de tendência ao longo das semanas. Se a linha estiver descendo, comprova visualmente que a equipe está otimizando o tempo de resposta!
         """)
