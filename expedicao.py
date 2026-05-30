@@ -172,12 +172,61 @@ def obter_revisor(expedidor, nome_sessao, revisores_ativos):
         candidatos = [r for r in revisores_ativos if r != expedidor]
         return candidatos[0] if candidatos else "Nenhum escalado"
 
+def obter_colaboradores_ausentes_hoje():
+    try:
+        hoje = datetime.now().date()
+        res = conn.client.table("afastamentos").select("usuario, data_inicio, data_fim").execute().data
+        ausentes = []
+        for row in res:
+            ini = datetime.strptime(row['data_inicio'], "%d/%m/%Y").date()
+            fim = datetime.strptime(row['data_fim'], "%d/%m/%Y").date()
+            # Se o dia de hoje estiver dentro do período, entra na lista de bloqueados
+            if ini <= hoje <= fim:
+                ausentes.append(row['usuario'])
+        return ausentes
+    except:
+        return []
+
 def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, expedidores, revisores):
     numero_processo, relator = higienizar_dados(numero_processo, relator)
-    if processo_existe(numero_processo): return False, "❌ Processo já existe no sistema."
-    if not expedidores or not revisores: return False, "❌ ERRO: Selecione ao menos um Expedidor e um Revisor."
-    responsavel_expedicao = obter_expedidor(expedidores, nome_sessao)
-    responsavel_revisao = obter_revisor(responsavel_expedicao, nome_sessao, revisores)
+    if processo_existe(numero_processo): 
+        return False, "❌ Processo já existe no sistema."
+    
+    # 1. Busca quem está afastado hoje (Férias, Recesso ou Atestado)
+    ausentes_hoje = obter_colaboradores_ausentes_hoje()
+    
+    # 2. Aplicação das Regras Especiais de Alocação por Tipo de Sessão
+    if tipo_sessao == "Sessão Reservada":
+        # Jessyca e Luana C não participam da Reservada
+        expedidores = [e for e in expedidores if e not in ["Jessyca", "Luana C"]]
+        revisores = [r for r in revisores if r not in ["Jessyca", "Luana C"]]
+        
+    elif tipo_sessao == "Sessão Administrativa":
+        # Padrão é a Jessyca. Se ela estiver ausente, a carga vai para André ou Elaine
+        if "Jessyca" not in ausentes_hoje:
+            expedidores = ["Jessyca"]
+            revisores = ["Jessyca"]
+        else:
+            # Contingência: Filtra André e Elaine que não estejam de férias
+            contingencia = [colab for colab in ["André", "Elaine"] if colab not in ausentes_hoje]
+            if contingencia:
+                expedidores = contingencia
+                revisores = contingencia
+            else:
+                return False, "❌ ERRO: Jessyca está afastada e a equipe de contingência (André/Elaine) também está indisponível."
+
+    # 3. Filtro de Férias/Afastamentos Geral (Retira os ausentes da roleta)
+    expedidores_ativos = [e for e in expedidores if e not in ausentes_hoje]
+    revisores_ativos = [r for r in revisores if r not in ausentes_hoje]
+    
+    # Validação de segurança caso o setor fique sem ninguém disponível
+    if not expedidores_ativos or not revisores_ativos: 
+        return False, "❌ ERRO: Todos os colaboradores selecionados para esta escala estão de férias ou afastados hoje."
+    
+    # 4. Sorteio Justo (Balanceamento de Carga) com a equipe que sobrou
+    responsavel_expedicao = obter_expedidor(expedidores_ativos, nome_sessao)
+    responsavel_revisao = obter_revisor(responsavel_expedicao, nome_sessao, revisores_ativos)
+    
     data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     try:
         conn.client.table("processos").insert({
@@ -187,7 +236,8 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
             "enviado_email": 0, "enviado_mensageria": 0, "recebido": 0
         }).execute()
         return True, f"✅ Distribuído! Expedição: **{responsavel_expedicao}** | Revisão: **{responsavel_revisao}**"
-    except Exception as e: return False, f"❌ Erro ao salvar: {e}"
+    except Exception as e: 
+        return False, f"❌ Erro ao salvar: {e}"
 
 def carregar_dados_sqlite(tipo_sessao=None):
     try:
