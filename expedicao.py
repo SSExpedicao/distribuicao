@@ -760,15 +760,20 @@ with aba_controle:
         st.write("Insira processos antigos já finalizados. Eles pularão o Painel Ativo e irão direto para o Arquivo.")
         
         # --- GERADOR DA PLANILHA MODELO PARA HISTÓRICO ---
-        df_modelo_hist = pd.DataFrame({"Processo": ["12345/2026", "67890/2026"], "Relator": ["Conselheiro A", "Conselheiro B"]})
-        st.download_button(
-            label="📥 Baixar Modelo para Histórico (CSV)",
-           df_modelo_hist = pd.DataFrame({
+        df_modelo_hist = pd.DataFrame({
             "Processo": ["12345/2026", "67890/2026"], 
             "Relator": ["Conselheiro A", "Conselheiro B"],
             "Expedidor": ["André", "Elaine"],
             "Revisor": ["Maurício", "Kátia"]
-           })
+        })
+        
+        st.download_button(
+            label="📥 Baixar Modelo para Histórico (CSV)",
+            data=df_modelo_hist.to_csv(index=False).encode('utf-8'),
+            file_name="modelo_historico.csv", 
+            mime="text/csv", 
+            type="secondary"
+        )
         
         col_h1, col_h2 = st.columns(2)
         with col_h1:
