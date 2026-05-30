@@ -768,6 +768,7 @@ with aba_controle:
             "Relator": ["Conselheiro A", "Conselheiro B"],
             "Expedidor": ["André", "Elaine"],
             "Revisor": ["Maurício", "Kátia"]
+           })
         
         col_h1, col_h2 = st.columns(2)
         with col_h1:
