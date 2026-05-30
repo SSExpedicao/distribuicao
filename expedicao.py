@@ -52,18 +52,22 @@ def init_db():
     except: 
         pass
 
-def carregar_equipe():
+def carregar_equipes():
     try:
-        # Agora ele pede apenas a coluna "nome", que é a única que existe e importa!
+        # Puxa os nomes atualizados do banco
         resposta = conn.client.table("equipe").select("nome").order("nome").execute()
-        return [linha['nome'] for linha in resposta.data]
+        todos = [linha['nome'] for linha in resposta.data]
+        
+        # O sistema pede 3 listas na linha 373. 
+        # Como unificamos a gestão, mandamos a mesma lista global para as três variáveis!
+        return todos, todos, todos
+        
     except Exception as e:
         st.error(f"Erro ao tentar ler a equipe no Supabase: {e}")
-        return []
+        return [], [], []
 
 def adicionar_membro_equipe(nome):
     try:
-        # Insere apenas o nome, sem tentar mandar dados para as colunas antigas
         conn.client.table("equipe").insert({"nome": nome}).execute()
         return True, "✅ Colaborador adicionado com sucesso!"
     except Exception as e:
