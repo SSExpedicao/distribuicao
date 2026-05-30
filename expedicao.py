@@ -763,9 +763,11 @@ with aba_controle:
         df_modelo_hist = pd.DataFrame({"Processo": ["12345/2026", "67890/2026"], "Relator": ["Conselheiro A", "Conselheiro B"]})
         st.download_button(
             label="📥 Baixar Modelo para Histórico (CSV)",
-            data=df_modelo_hist.to_csv(index=False).encode('utf-8'),
-            file_name="modelo_historico.csv", mime="text/csv", type="secondary"
-        )
+           df_modelo_hist = pd.DataFrame({
+            "Processo": ["12345/2026", "67890/2026"], 
+            "Relator": ["Conselheiro A", "Conselheiro B"],
+            "Expedidor": ["André", "Elaine"],
+            "Revisor": ["Maurício", "Kátia"]
         
         col_h1, col_h2 = st.columns(2)
         with col_h1:
@@ -798,17 +800,23 @@ with aba_controle:
                         r_val = str(row.get('Relator', '')).strip() if pd.notna(row.get('Relator')) else ""
                         p_limpo, r_limpo = higienizar_dados(p_val, r_val)
                         
+                        # NOVO: Tenta pegar da planilha. Se a coluna não existir, usa o que foi digitado na tela
+                        exp_val = str(row.get('Expedidor', hist_exp)).strip() if pd.notna(row.get('Expedidor')) else hist_exp
+                        rev_val = str(row.get('Revisor', hist_rev)).strip() if pd.notna(row.get('Revisor')) else hist_rev
+                        
                         if p_limpo and not processo_existe(p_limpo):
                             try:
                                 conn.client.table("processos").insert({
                                     "numero_processo": p_limpo, "relator": r_limpo, "tipo_sessao": hist_tipo, 
-                                    "nome_sessao": hist_sessao, "expedicao": hist_exp, "revisao": hist_rev, 
+                                    "nome_sessao": hist_sessao, 
+                                    "expedicao": exp_val, # Puxando a variável nova aqui
+                                    "revisao": rev_val,   # Puxando a variável nova aqui
                                     "data_entrada": agora, "data_expedido": agora, "data_revisado": agora, "data_conclusao": agora,
-                                    "expedido_ok": 1, "revisado_ok": 1, "despachado": 1, "urgente": 0, "enviado_email": 0, "enviado_mensageria": 0, "recebido": 0
+                                    "expedido_ok": 1, "revisado_ok": 1, "despachado": 1, "urgente": 0,
+                                    "enviado_email": 0, "enviado_mensageria": 0, "recebido": 0
                                 }).execute()
                                 sucessos += 1
                             except Exception as e: 
-                                # Agora o sistema vai cuspir o erro na tela se o Supabase chiar!
                                 st.error(f"❌ Erro ao tentar inserir o processo {p_limpo}: {e}")
                         barra.progress((index + 1) / len(df_up))
                         
