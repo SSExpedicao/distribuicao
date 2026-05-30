@@ -1068,113 +1068,161 @@ with aba_historico:
 # ABA 5: DADOS & DESEMPENHO (ANALYTICS)
 # ==========================================
 with aba_dados:
-    st.subheader("📈 Analytics e Radar Operacional")
+    st.header("📈 Dashboard Analítico e Distribuição Operacional")
+    
     df_dados = carregar_dados_sqlite()
     
     if df_dados.empty or 'data_expedido' not in df_dados.columns: 
-        st.info("📊 Comece a inserir e despachar processos no Painel Ativo para gerar estatísticas.")
+        st.info("📊 O banco de dados está vazio. Comece a inserir processos para gerar o dashboard.")
     else:
-        # 1. Tratamento das Datas
-        def parse_datas(df_in):
-            for c in ['data_entrada', 'data_expedido', 'data_revisado', 'data_conclusao']:
-                df_in[c + '_dt'] = pd.to_datetime(df_in[c], format="%d/%m/%Y %H:%M:%S", errors='coerce').fillna(pd.to_datetime(df_in[c], format="%d/%m/%Y %H:%M", errors='coerce'))
-            return df_in
-            
-        df_dados = parse_datas(df_dados)
+        # --- 1. PREPARAÇÃO E LIMPEZA DE DADOS ---
+        # Parse seguro de datas para todos os formatos (com hora ou só data)
+        for c in ['data_entrada', 'data_expedido', 'data_revisado', 'data_conclusao']:
+            df_dados[c + '_dt'] = pd.to_datetime(df_dados[c], format="%d/%m/%Y %H:%M:%S", errors='coerce').fillna(
+                                  pd.to_datetime(df_dados[c], format="%d/%m/%Y %H:%M", errors='coerce'))
         
-        df_dados['minutos_expedicao'] = (df_dados['data_expedido_dt'] - df_dados['data_entrada_dt']).dt.total_seconds() / 60
-        df_dados['minutos_revisao'] = (df_dados['data_revisado_dt'] - df_dados['data_expedido_dt']).dt.total_seconds() / 60
-        df_dados['minutos_total'] = (df_dados['data_conclusao_dt'] - df_dados['data_entrada_dt']).dt.total_seconds() / 60
+        df_concluidos = df_dados[df_dados['despachado'] == 1].copy()
+        
+        # Filtro de Ouro: Pega só processos onde a Entrada é diferente da Conclusão
+        # Isso ignora os processos antigos importados direto para o histórico (onde entrada = conclusao no mesmo segundo)
+        df_tempo_real = df_concluidos[df_concluidos['data_entrada'] != df_concluidos['data_conclusao']].copy()
+        
+        # Cálculos matemáticos de tempo (em minutos)
+        df_tempo_real['min_exp'] = (df_tempo_real['data_expedido_dt'] - df_tempo_real['data_entrada_dt']).dt.total_seconds() / 60
+        df_tempo_real['min_rev'] = (df_tempo_real['data_revisado_dt'] - df_tempo_real['data_expedido_dt']).dt.total_seconds() / 60
+        df_tempo_real['min_total'] = (df_tempo_real['data_conclusao_dt'] - df_tempo_real['data_entrada_dt']).dt.total_seconds() / 60
 
         def format_tempo(minutos):
             if pd.isna(minutos) or minutos < 0: return "N/A"
             return f"{int(minutos)} min" if int(minutos) < 60 else f"{int(minutos) // 60}h {int(minutos) % 60}m"
 
-        # ========================================================
-        # 📡 CAMADA 1: RADAR EM TEMPO REAL (PAINEL ATIVO)
-        # ========================================================
-        st.markdown("### 📡 Radar em Tempo Real (Sessões em Andamento)")
-        
-        # Filtra a base para pegar SÓ o que ainda está no Painel Ativo
-        df_ativos = df_dados[~df_dados['nome_sessao'].isin(sessoes_finalizadas)].copy()
-        
-        if not df_ativos.empty:
-            # Conta o status exato de cada processo agora
-            col_r1, col_r2, col_r3, col_r4 = st.columns(4)
-            col_r1.metric("📋 Total na Pauta", len(df_ativos))
-            col_r2.metric("⏳ Faltam Expedir", len(df_ativos[df_ativos['expedido_ok'] == 0]))
-            col_r3.metric("🔍 Faltam Revisar", len(df_ativos[(df_ativos['expedido_ok'] == 1) & (df_ativos['revisado_ok'] == 0)]))
-            col_r4.metric("✍️ Prontos p/ Despachar", len(df_ativos[(df_ativos['revisado_ok'] == 1) & (df_ativos['despachado'] == 0)]))
-            
-            st.markdown("#### 🏃‍♂️ Quem está produzindo agora? (Tarefas feitas na pauta ativa)")
-            
-            # Puxa quem já fez tarefas nas sessões que estão abertas
-            exp_ativos = df_ativos[df_ativos['expedido_ok'] == 1]['expedicao'].value_counts().reset_index()
-            exp_ativos.columns = ['Colaborador', 'Volume']
-            exp_ativos['Função'] = 'Expedição'
-
-            rev_ativos = df_ativos[df_ativos['revisado_ok'] == 1]['revisao'].value_counts().reset_index()
-            rev_ativos.columns = ['Colaborador', 'Volume']
-            rev_ativos['Função'] = 'Revisão'
-
-            df_prod_ativos = pd.concat([exp_ativos, rev_ativos])
-            
-            if not df_prod_ativos.empty:
-                # O Gráfico de barras agrupadas usando Plotly
-                fig_ativos = px.bar(
-                    df_prod_ativos, x='Colaborador', y='Volume', color='Função',
-                    barmode='group', text_auto=True, color_discrete_sequence=['#FF4B4B', '#FF8C8C']
-                )
-                fig_ativos.update_layout(xaxis_title="", yaxis_title="Tarefas Concluídas", margin=dict(l=0, r=0, t=30, b=0), plot_bgcolor="rgba(0,0,0,0)")
-                st.plotly_chart(fig_ativos, use_container_width=True)
-            else:
-                st.info("A equipe ainda não concluiu nenhuma etapa nas sessões ativas.")
-        else:
-            st.success("✨ Pauta limpa! Não há processos pendentes no momento.")
-
+        # --- 2. SELETOR DE VISÃO GERAL OU INDIVIDUAL ---
+        st.markdown("### Selecione o Perfil de Análise")
+        visao_selecionada = st.selectbox("Escolha a Visão:", ["Todo o Setor (Global)"] + TODOS_NOMES, label_visibility="collapsed")
         st.markdown("---")
 
-        # ========================================================
-        # 🌎 CAMADA 2: HISTÓRICO E TENDÊNCIAS (SESSÕES CONCLUÍDAS)
-        # ========================================================
-        st.markdown("### 🌎 Histórico: Médias e Evolução")
-        
-        df_concluidos = df_dados[df_dados['despachado'] == 1].copy()
-        
-        if not df_concluidos.empty:
-            col1, col2, col3, col4 = st.columns(4)
-            with col1: st.metric("Média Geral - Expedição", format_tempo(df_concluidos['minutos_expedicao'].mean()))
-            with col2: st.metric("Média Geral - Revisão", format_tempo(df_concluidos['minutos_revisao'].mean()))
-            with col3: st.metric("Média Geral - Ciclo", format_tempo(df_concluidos['minutos_total'].mean()))
-            with col4: st.metric("Total de Processos Finalizados", len(df_concluidos))
-
-            st.markdown("#### 📉 Evolução do Tempo de Fechamento de Sessão")
+        # ==========================================================
+        # VISÃO 1: GLOBAL DO SETOR
+        # ==========================================================
+        if visao_selecionada == "Todo o Setor (Global)":
             
-            # Agrupa as sessões finalizadas para criar a linha de tendência
-            sessoes_tempo = df_concluidos.groupby('nome_sessao').agg(
-                inicio=('data_entrada_dt', 'min'),
-                fim=('data_conclusao_dt', 'max')
-            ).reset_index()
+            # BLOCO 1: VISÃO MACRO E URGÊNCIAS
+            st.subheader("🌐 Visão Macro (Histórico Completo)")
+            col1, col2, col3, col4 = st.columns(4)
+            
+            total_despachados = len(df_concluidos)
+            total_sessoes = df_concluidos['nome_sessao'].nunique()
+            media_proc_sessao = round(total_despachados / total_sessoes) if total_sessoes > 0 else 0
+            total_urgentes = len(df_concluidos[df_concluidos['urgente'] == 1])
+            
+            col1.metric("📦 Total Despachados", total_despachados)
+            col2.metric("🏛️ Sessões Realizadas", total_sessoes)
+            col3.metric("⚖️ Média Proc./Sessão", media_proc_sessao)
+            col4.metric("🔥 Urgências Atendidas", total_urgentes)
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            
+            # BLOCO 2: CARGA DE TRABALHO
+            st.markdown("### 🤝 Volume de Participação Operacional (Carga de Trabalho)")
+            st.write("Análise da distribuição da volumetria entre a equipe, auxiliando na prevenção de gargalos e sobrecargas.")
+            col_g1, col_g2 = st.columns(2)
+            
+            with col_g1:
+                exp_counts = df_concluidos['expedicao'].value_counts().reset_index()
+                exp_counts.columns = ['Colaborador', 'Processos']
+                if not exp_counts.empty:
+                    fig_exp = px.bar(exp_counts, x='Processos', y='Colaborador', orientation='h', text_auto=True, color_discrete_sequence=['#4B90FF'])
+                    fig_exp.update_layout(yaxis={'categoryorder':'total ascending'}, xaxis_title="", yaxis_title="", margin=dict(l=0, r=0, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)")
+                    st.plotly_chart(fig_exp, use_container_width=True)
+                else: st.info("Sem dados de expedição.")
+                
+            with col_g2:
+                rev_counts = df_concluidos['revisao'].value_counts().reset_index()
+                rev_counts.columns = ['Colaborador', 'Processos']
+                if not rev_counts.empty:
+                    fig_rev = px.bar(rev_counts, x='Processos', y='Colaborador', orientation='h', text_auto=True, color_discrete_sequence=['#FF8C8C'])
+                    fig_rev.update_layout(yaxis={'categoryorder':'total ascending'}, xaxis_title="", yaxis_title="", margin=dict(l=0, r=0, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)")
+                    st.plotly_chart(fig_rev, use_container_width=True)
 
-            sessoes_tempo['Duração (min)'] = (sessoes_tempo['fim'] - sessoes_tempo['inicio']).dt.total_seconds() / 60
-            sessoes_tempo = sessoes_tempo.dropna(subset=['Duração (min)'])
+            st.markdown("---")
 
-            if not sessoes_tempo.empty:
-                sessoes_tempo['Data_Sort'] = pd.to_datetime(sessoes_tempo['nome_sessao'], format="%d/%m/%Y", errors='coerce')
-                sessoes_tempo = sessoes_tempo.sort_values('Data_Sort')
+            # BLOCO 3: CADÊNCIA DE TRABALHO (TEMPOS MÉDIOS)
+            st.markdown("### ⏱️ Cadência e Desempenho (Métricas Reais de Tempo)")
+            st.caption("*As médias de tempo abaixo consideram apenas os processos operados ativamente no painel, ignorando importações em lote do histórico.*")
+            
+            c_t1, c_t2, c_t3 = st.columns(3)
+            c_t1.metric("Média de Elaboração (Expedição)", format_tempo(df_tempo_real['min_exp'].mean()))
+            c_t2.metric("Média de Conferência (Revisão)", format_tempo(df_tempo_real['min_rev'].mean()))
+            c_t3.metric("Tempo de Ciclo (Entrada a Despacho)", format_tempo(df_tempo_real['min_total'].mean()))
 
-                fig_line = px.line(
-                    sessoes_tempo, x='nome_sessao', y='Duração (min)', markers=True,
-                    line_shape="spline", color_discrete_sequence=['#FF4B4B']
-                )
-                fig_line.update_traces(marker=dict(size=8, line=dict(width=2, color='DarkSlateGrey')))
-                fig_line.update_layout(xaxis_title="Data da Sessão", yaxis_title="Tempo Total (Minutos)", margin=dict(l=0, r=0, t=30, b=0), plot_bgcolor="rgba(0,0,0,0)")
+            st.markdown("---")
 
-                st.plotly_chart(fig_line, use_container_width=True)
+            # BLOCO 4: RADAR ATIVO (SESSÕES EM ANDAMENTO)
+            st.markdown("### 📡 Radar em Tempo Real (Painel Ativo)")
+            
+            sessoes_stats = df_dados.groupby('nome_sessao')['despachado'].agg(['count', 'sum']).reset_index()
+            ativas_list = sessoes_stats[sessoes_stats['count'] > sessoes_stats['sum']]['nome_sessao'].tolist()
+            df_ativos_reais = df_dados[df_dados['nome_sessao'].isin(ativas_list)].copy()
+
+            if not df_ativos_reais.empty:
+                col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+                col_r1.metric("📋 Total na Pauta Ativa", len(df_ativos_reais))
+                col_r2.metric("⏳ Aguardando Elaboração", len(df_ativos_reais[df_ativos_reais['expedido_ok'] == 0]))
+                col_r3.metric("🔍 Aguardando Conferência", len(df_ativos_reais[(df_ativos_reais['expedido_ok'] == 1) & (df_ativos_reais['revisado_ok'] == 0)]))
+                col_r4.metric("✍️ Prontos p/ Despacho (Chefia)", len(df_ativos_reais[(df_ativos_reais['revisado_ok'] == 1) & (df_ativos_reais['despachado'] == 0)]))
             else:
-                st.info("Feche uma sessão completa para gerar a linha de tendência.")
+                st.success("✨ Pauta limpa! Não há processos pendentes no radar ativo neste exato momento.")
+
+        # ==========================================================
+        # VISÃO 2: RAIO-X INDIVIDUAL
+        # ==========================================================
         else:
-            st.info("Nenhum processo foi finalizado ainda para calcular o histórico.")
+            st.subheader(f"🔎 Perfil Operacional: {visao_selecionada}")
+            
+            # Verificação de Férias e Afastamentos Ativos
+            try:
+                ausentes = obter_colaboradores_ausentes_hoje()
+            except:
+                ausentes = []
+                
+            if visao_selecionada in ausentes:
+                st.warning(f"📌 **Status no Dia de Hoje:** Afastamento Legítimo Ativo (Férias, Recesso ou Atestado). A carga de trabalho do colaborador encontra-se pausada no sistema de distribuição.", icon="🌴")
+            else:
+                st.info(f"📌 **Status no Dia de Hoje:** Ativo e Operacional.", icon="✅")
+                
+            df_user_exp = df_concluidos[df_concluidos['expedicao'] == visao_selecionada]
+            df_user_rev = df_concluidos[df_concluidos['revisao'] == visao_selecionada]
+            df_user_total = df_concluidos[(df_concluidos['expedicao'] == visao_selecionada) | (df_concluidos['revisao'] == visao_selecionada)]
+            
+            st.markdown("#### 📦 Resumo de Participação Histórica")
+            col_u1, col_u2, col_u3, col_u4 = st.columns(4)
+            col_u1.metric("Participações Totais", len(df_user_total))
+            col_u2.metric("Como Expedidor", len(df_user_exp))
+            col_u3.metric("Como Revisor", len(df_user_rev))
+            col_u4.metric("🔥 Urgências Salvas", len(df_user_total[df_user_total['urgente'] == 1]))
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            
+            st.markdown("#### ⏱️ Qualidade e Cadência (Tempos Médios de Resposta)")
+            df_user_tempo_exp = df_tempo_real[df_tempo_real['expedicao'] == visao_selecionada]
+            df_user_tempo_rev = df_tempo_real[df_tempo_real['revisao'] == visao_selecionada]
+            
+            cu1, cu2, cu3 = st.columns(3)
+            cu1.metric("Tempo Médio de Elaboração (Expedição)", format_tempo(df_user_tempo_exp['min_exp'].mean()))
+            cu2.metric("Tempo Médio de Conferência (Revisão)", format_tempo(df_user_tempo_rev['min_rev'].mean()))
+            
+            # Inteligência: Dupla mais frequente
+            if not df_user_total.empty:
+                parceiros = []
+                parceiros.extend(df_user_exp['revisao'].tolist())
+                parceiros.extend(df_user_rev['expedicao'].tolist())
+                if parceiros:
+                    dupla = pd.Series(parceiros).mode()[0]
+                    cu3.metric("🤝 Parceiro Operacional Mais Frequente", dupla)
+                else:
+                    cu3.metric("🤝 Parceiro Operacional", "N/A")
+            else:
+                cu3.metric("🤝 Parceiro Operacional", "N/A")
 
 # ------------------------------------------
 # ABA 6: FÉRIAS E AFASTAMENTOS
