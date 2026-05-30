@@ -804,10 +804,12 @@ with aba_controle:
                                     "numero_processo": p_limpo, "relator": r_limpo, "tipo_sessao": hist_tipo, 
                                     "nome_sessao": hist_sessao, "expedicao": hist_exp, "revisao": hist_rev, 
                                     "data_entrada": agora, "data_expedido": agora, "data_revisado": agora, "data_conclusao": agora,
-                                    "expedido_ok": 1, "revisado_ok": 1, "despachado": 1, "urgente": 0
+                                    "expedido_ok": 1, "revisado_ok": 1, "despachado": 1, "urgente": 0, "enviado_email": 0, "enviado_mensageria": 0, "recebido": 0
                                 }).execute()
                                 sucessos += 1
-                            except: pass
+                            except Exception as e: 
+                                # Agora o sistema vai cuspir o erro na tela se o Supabase chiar!
+                                st.error(f"❌ Erro ao tentar inserir o processo {p_limpo}: {e}")
                         barra.progress((index + 1) / len(df_up))
                         
                 # Se digitou manual (Um por vez)
