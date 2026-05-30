@@ -764,7 +764,9 @@ with aba_controle:
             "Processo": ["12345/2026", "67890/2026"], 
             "Relator": ["Conselheiro A", "Conselheiro B"],
             "Expedidor": ["André", "Elaine"],
-            "Revisor": ["Maurício", "Kátia"]
+            "Revisor": ["Maurício", "Kátia"],
+            "Data_Sessao": ["12/05/2026", "19/05/2026"],
+            "Tipo_Sessao": ["Sessão Ordinária", "Sessão Reservada"]
         })
         
         st.download_button(
@@ -801,22 +803,35 @@ with aba_controle:
                 if arquivo_hist is not None:
                     df_up = pd.read_csv(arquivo_hist) if arquivo_hist.name.endswith('.csv') else pd.read_excel(arquivo_hist)
                     barra = st.progress(0)
-                    for index, row in df_up.iterrows():
+                   for index, row in df_up.iterrows():
+                        # 1. Puxa Processo e Relator e já limpa os dados (tira o -e, arruma siglas)
                         p_val = str(row['Processo']).strip() if pd.notna(row.get('Processo')) else ""
                         r_val = str(row.get('Relator', '')).strip() if pd.notna(row.get('Relator')) else ""
                         p_limpo, r_limpo = higienizar_dados(p_val, r_val)
                         
-                        # NOVO: Tenta pegar da planilha. Se a coluna não existir, usa o que foi digitado na tela
+                        # 2. Puxa Expedidor e Revisor
                         exp_val = str(row.get('Expedidor', hist_exp)).strip() if pd.notna(row.get('Expedidor')) else hist_exp
                         rev_val = str(row.get('Revisor', hist_rev)).strip() if pd.notna(row.get('Revisor')) else hist_rev
                         
+                        # 3. Puxa a Data e o Tipo. Se a planilha não tiver, ele pega o que você digitou na tela.
+                        data_val = str(row.get('Data_Sessao', hist_sessao)).strip() if pd.notna(row.get('Data_Sessao')) else hist_sessao
+                        tipo_val = str(row.get('Tipo_Sessao', hist_tipo)).strip() if pd.notna(row.get('Tipo_Sessao')) else hist_tipo
+                        
+                        # Formatação de segurança: caso o Excel converta a data para algo como "2026-05-12 00:00:00"
+                        if " " in data_val and "-" in data_val:
+                            try:
+                                data_val = datetime.strptime(data_val.split()[0], "%Y-%m-%d").strftime("%d/%m/%Y")
+                            except: pass
+
                         if p_limpo and not processo_existe(p_limpo):
                             try:
                                 conn.client.table("processos").insert({
-                                    "numero_processo": p_limpo, "relator": r_limpo, "tipo_sessao": hist_tipo, 
-                                    "nome_sessao": hist_sessao, 
-                                    "expedicao": exp_val, # Puxando a variável nova aqui
-                                    "revisao": rev_val,   # Puxando a variável nova aqui
+                                    "numero_processo": p_limpo, 
+                                    "relator": r_limpo, 
+                                    "tipo_sessao": tipo_val,     # AQUI ENTRA O TIPO DA PLANILHA
+                                    "nome_sessao": data_val,     # AQUI ENTRA A DATA DA PLANILHA
+                                    "expedicao": exp_val, 
+                                    "revisao": rev_val,   
                                     "data_entrada": agora, "data_expedido": agora, "data_revisado": agora, "data_conclusao": agora,
                                     "expedido_ok": 1, "revisado_ok": 1, "despachado": 1, "urgente": 0,
                                     "enviado_email": 0, "enviado_mensageria": 0, "recebido": 0
