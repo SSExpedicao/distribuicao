@@ -187,6 +187,121 @@ def obter_colaboradores_ausentes_hoje():
     except:
         return []
 
+# --- MOTOR ATUALIZADO DO RELATÓRIO DE AUDITORIA OPERACIONAL ---
+def gerar_relatorio_gerencial(mes, ano):
+    try:
+        # 1. Carrega as bases frescas direto do banco de dados
+        df_dados = carregar_dados_sqlite()
+        df_afastamentos = carregar_afastamentos()
+        
+        if df_dados.empty:
+            return False, "❌ O banco de dados está vazio. Não há dados para compilar."
+            
+        # Parse de segurança para os formatos de data e hora do sistema
+        for c in ['data_entrada', 'data_expedido', 'data_revisado', 'data_conclusao']:
+            df_dados[c + '_dt'] = pd.to_datetime(df_dados[c], format="%d/%m/%Y %H:%M:%S", errors='coerce').fillna(
+                                  pd.to_datetime(df_dados[c], format="%d/%m/%Y %H:%M", errors='coerce'))
+        
+        # Cria colunas auxiliares de mês e ano baseadas na entrada do processo
+        df_dados['ano_filtro'] = df_dados['data_entrada_dt'].dt.year
+        df_dados['mes_filtro'] = df_dados['data_entrada_dt'].dt.month
+        
+        # 2. Aplica a filtragem inteligente de período (Respeitando a sua escolha na tela)
+        if mes == 0:
+            df_filtrado = df_dados[df_dados['ano_filtro'] == ano].copy()
+            periodo_str = f"ANUAL (ANO INTEIRO DE {ano})"
+        else:
+            df_filtrado = df_dados[(df_dados['ano_filtro'] == ano) & (df_dados['mes_filtro'] == mes)].copy()
+            nomes_meses = {1: "JANEIRO", 2: "FEVEREIRO", 3: "MARÇO", 4: "ABRIL", 5: "MAIO", 6: "JUNHO", 7: "JULHO", 8: "AGOSTO", 9: "SETEMBRO", 10: "OUTUBRO", 11: "NOVEMBRO", 12: "DEZEMBRO"}
+            periodo_str = f"{nomes_meses[mes]} DE {ano}"
+            
+        df_concluidos = df_filtrado[df_filtrado['despachado'] == 1].copy()
+        
+        # Filtro de Ouro: Separa os processos reais dos importados em lote do passado
+        df_tempo_real = df_concluidos[df_concluidos['data_entrada'] != df_concluidos['data_conclusao']].copy()
+        
+        agora_str = datetime.now().strftime("%d/%m/%Y às %H:%M:%S")
+        
+        linhas = []
+        linhas.append("====================================================")
+        linhas.append("        S.A.D.E. - RELATÓRIO GERENCIAL OPERACIONAL  ")
+        linhas.append(f"        PERÍODO: {periodo_str}                      ")
+        linhas.append(f"        EMISSÃO: {agora_str}                        ")
+        linhas.append("====================================================\n")
+        
+        # 1. Resumo Quantitativo Geral
+        linhas.append("1. RESUMO EXECUTIVO DE PRODUTIVIDADE")
+        linhas.append("----------------------------------------------------")
+        if not df_concluidos.empty:
+            total_p = len(df_concluidos)
+            total_s = df_concluidos['nome_sessao'].nunique()
+            total_u = len(df_concluidos[df_concluidos['urgente'] == 1])
+            linhas.append(f" -> Total de Processos Concluídos e Despachados: {total_p}")
+            linhas.append(f" -> Total de Sessões Consolidadas no Período: {total_s}")
+            linhas.append(f" -> Demandas Críticas (Urgências) Atendidas com Sucesso: {total_u}\n")
+        else:
+            linhas.append(" -> Nenhum processo finalizado encontrado neste período de tempo.\n")
+            
+        # 2. Distribuição da Carga de Trabalho (Volumetria Sem Competição)
+        linhas.append("2. DISTRIBUIÇÃO OPERACIONAL DA EQUIPE (VOLUMETRIA)")
+        linhas.append("----------------------------------------------------")
+        if not df_concluidos.empty:
+            linhas.append("[ETAPA DE ELABORAÇÃO / EXPEDIÇÃO]")
+            exp_v = df_concluidos['expedicao'].value_counts()
+            for nome, qtd in exp_v.items():
+                linhas.append(f"   - {nome}: {qtd} processo(s)")
+                
+            linhas.append("\n[ETAPA DE CONFERÊNCIA / REVISÃO]")
+            rev_v = df_concluidos['revisao'].value_counts()
+            for nome, qtd in rev_v.items():
+                linhas.append(f"   - {nome}: {qtd} processo(s)")
+            linhas.append("")
+        else:
+            linhas.append(" -> Sem registros de volumetria por equipe no período selecionado.\n")
+            
+        # 3. Eficiência de Tempos Médios (Métricas Reais de Velocidade)
+        linhas.append("3. EFICIÊNCIA DE TEMPOS E CADÊNCIA (MÉDIAS REAIS)")
+        linhas.append("----------------------------------------------------")
+        if not df_tempo_real.empty:
+            df_tempo_real['min_exp'] = (df_tempo_real['data_expedido_dt'] - df_tempo_real['data_entrada_dt']).dt.total_seconds() / 60
+            df_tempo_real['min_rev'] = (df_tempo_real['data_revisado_dt'] - df_tempo_real['data_expedido_dt']).dt.total_seconds() / 60
+            df_tempo_real['min_total'] = (df_tempo_real['data_conclusao_dt'] - df_tempo_real['data_entrada_dt']).dt.total_seconds() / 60
+            
+            def fmt(m):
+                if pd.isna(m) or m < 0: return "N/A"
+                return f"{int(m)} min" if m < 60 else f"{int(m)//60}h {int(m)%60}m"
+                
+            linhas.append(f" -> Tempo Médio de Elaboração (Expedição): {fmt(df_tempo_real['min_exp'].mean())}")
+            linhas.append(f" -> Tempo Médio de Conferência (Revisão): {fmt(df_tempo_real['min_rev'].mean())}")
+            linhas.append(f" -> Tempo de Ciclo Total (Entrada ao Despacho): {fmt(df_tempo_real['min_total'].mean())}\n")
+        else:
+            linhas.append(" -> Indicadores de tempo real indisponíveis para o intervalo selecionado.\n")
+            
+        # 4. Histórico de Afastamentos Ocorridos no Período Escolhido
+        linhas.append("4. CONTROLE DE DISPONIBILIDADE E AFASTAMENTOS")
+        linhas.append("----------------------------------------------------")
+        if not df_afastamentos.empty:
+            linhas.append("📌 AUSÊNCIAS REGISTRADAS NO PERÍODO:")
+            houve_ausencia = False
+            for _, row in df_afastamentos.iterrows():
+                dt_ini_af = pd.to_datetime(row['data_inicio'], format="%d/%m/%Y", errors='coerce')
+                # Checa se o afastamento começou dentro do ano selecionado E (mês selecionado ou ano inteiro)
+                if dt_ini_af.year == ano and (mes == 0 or dt_ini_af.month == mes):
+                    linhas.append(f"   - {row['usuario']} ({row['tipo']}): Afastamento de {row['data_inicio']} a {row['data_fim']}")
+                    houve_ausencia = True
+            if not houve_ausencia:
+                linhas.append("   - Nenhuma ausência ou licença registrada para a equipe neste período.")
+        else:
+            linhas.append(" -> Sem registros de afastamentos salvos na base de dados.")
+            
+        linhas.append("\n====================================================")
+        linhas.append("        FIM DO RELATÓRIO - AUDITORIA AUTOMÁTICA     ")
+        linhas.append("====================================================")
+        
+        return True, "\n".join(linhas)
+    except Exception as e:
+        return False, f"Erro interno ao compilar relatório: {e}"
+
 def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, expedidores, revisores):
     numero_processo, relator = higienizar_dados(numero_processo, relator)
     if processo_existe(numero_processo): 
