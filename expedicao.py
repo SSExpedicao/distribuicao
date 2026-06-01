@@ -629,9 +629,10 @@ with aba_inserir:
 
         arquivo_upload = st.file_uploader("Arraste sua planilha preenchida (.csv ou .xlsx)", type=["csv", "xlsx"])
         if arquivo_upload is not None:
-           df_upload = pd.read_csv(arquivo_upload, encoding='utf-8-sig') if arquivo_upload.name.endswith('.csv') else pd.read_excel(arquivo_upload)
-           # Mostra uma prévia dos dados para o usuário conferir
-           st.dataframe(df_upload.head(3))
+            df_upload = pd.read_csv(arquivo_upload, encoding='utf-8-sig') if arquivo_upload.name.endswith('.csv') else pd.read_excel(arquivo_upload)
+            
+            # Mostra uma prévia dos dados para o usuário conferir
+            st.dataframe(df_upload.head(3))
             
             if st.button("🚀 Iniciar Importação", type="primary"):
                 barra_progresso = st.progress(0)
@@ -649,7 +650,6 @@ with aba_inserir:
                     barra_progresso.progress((index + 1) / len(df_upload))
                 
                 st.success(f"🎉 Operação Concluída! {sucessos} processos inseridos.")
-
 def color_urgentes(row): return ['color: #ff4b4b; font-weight: bold'] * len(row) if 'urgente_flag' in row and row['urgente_flag'] == 1 else [''] * len(row)
 
 # ------------------------------------------
