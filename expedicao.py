@@ -1289,11 +1289,25 @@ with aba_dados:
             df_ativos_reais = df_dados[df_dados['nome_sessao'].isin(ativas_list)].copy()
 
             if not df_ativos_reais.empty:
-                col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+                # Mudamos para 5 colunas para caber o novo indicador
+                col_r1, col_r2, col_r3, col_r4, col_r5 = st.columns(5)
+                
+                # Conta processos urgentes que NÃO foram despachados ainda
+                urg_pendentes = len(df_ativos_reais[(df_ativos_reais['urgente'] == 1) & (df_ativos_reais['despachado'] == 0)])
+                
                 col_r1.metric("📋 Total na Pauta Ativa", len(df_ativos_reais))
                 col_r2.metric("⏳ Aguardando Elaboração", len(df_ativos_reais[df_ativos_reais['expedido_ok'] == 0]))
                 col_r3.metric("🔍 Aguardando Conferência", len(df_ativos_reais[(df_ativos_reais['expedido_ok'] == 1) & (df_ativos_reais['revisado_ok'] == 0)]))
-                col_r4.metric("✍️ Prontos p/ Despacho (Chefia)", len(df_ativos_reais[(df_ativos_reais['revisado_ok'] == 1) & (df_ativos_reais['despachado'] == 0)]))
+                col_r4.metric("✍️ Prontos p/ Despacho", len(df_ativos_reais[(df_ativos_reais['revisado_ok'] == 1) & (df_ativos_reais['despachado'] == 0)]))
+                
+                # Caixinha customizada em vermelho para dar destaque aos Urgentes
+                with col_r5:
+                    st.markdown(f"""
+                    <div style='background-color: #ff4b4b; padding: 15px; border-radius: 8px; text-align: center; color: white; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);'>
+                        <p style='margin: 0; font-size: 14px; font-weight: bold;'>🚨 Urgentes Restantes</p>
+                        <h2 style='margin: 0; padding-top: 5px; color: white; font-weight: bold;'>{urg_pendentes}</h2>
+                    </div>
+                    """, unsafe_allow_html=True)
             else:
                 st.success("✨ Pauta limpa! Não há processos pendentes no radar ativo neste exato momento.")
 
