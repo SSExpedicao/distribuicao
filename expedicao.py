@@ -365,13 +365,19 @@ def carregar_dados_sqlite(tipo_sessao=None):
 def restaurar_backup(df_backup):
     try:
         conn.client.table("processos").delete().neq("numero_processo", "vazio").execute()
+        
+        # SOLUÇÃO APLICADA AQUI: Converte os vazios (NaN) do Pandas para None, que é aceito pelo Supabase
+        df_backup = df_backup.astype(object).where(pd.notna(df_backup), None)
+        
         records = df_backup.to_dict(orient="records")
         for r in records:
             if 'id' in r: del r['id']
             if 'created_at' in r: del r['created_at']
+            
         conn.client.table("processos").insert(records).execute()
         return True, "✅ Dados restaurados com sucesso!"
-    except Exception as e: return False, f"❌ Erro ao tentar restaurar: {e}"
+    except Exception as e: 
+        return False, f"❌ Erro ao tentar restaurar: {e}"
 
 init_db()
 EQUIPE_EXPEDICAO, EQUIPE_REVISAO, TODOS_NOMES = carregar_equipes()
