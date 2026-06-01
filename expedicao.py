@@ -629,7 +629,7 @@ with aba_inserir:
 
         arquivo_upload = st.file_uploader("Arraste sua planilha preenchida (.csv ou .xlsx)", type=["csv", "xlsx"])
         if arquivo_upload is not None:
-            df_upload = pd.read_csv(arquivo_upload) if arquivo_upload.name.endswith('.csv') else pd.read_excel(arquivo_upload)
+           df_upload = pd.read_csv(arquivo_upload, encoding='utf-8-sig') if arquivo_upload.name.endswith('.csv') else pd.read_excel(arquivo_upload)
             
             # Mostra uma prévia dos dados para o usuário conferir
             st.dataframe(df_upload.head(3))
@@ -930,7 +930,7 @@ with aba_controle:
             if arquivo_backup is not None:
                 if st.button("⚠️ Restaurar Dados Agora", type="primary", use_container_width=True):
                     try:
-                        df_upload = pd.read_csv(arquivo_backup)
+                        df_upload = pd.read_csv(arquivo_backup, encoding='utf-8-sig')
                         ok, msg = restaurar_backup(df_upload)
                         if ok:
                             st.success(msg)
@@ -987,7 +987,7 @@ with aba_controle:
                 
                 # Se enviou planilha (Em lote)
                 if arquivo_hist is not None:
-                    df_up = pd.read_csv(arquivo_hist) if arquivo_hist.name.endswith('.csv') else pd.read_excel(arquivo_hist)
+                    df_up = pd.read_csv(arquivo_hist, encoding='utf-8-sig') if arquivo_hist.name.endswith('.csv') else pd.read_excel(arquivo_hist)
                     barra = st.progress(0)
                     
                     for index, row in df_up.iterrows():
