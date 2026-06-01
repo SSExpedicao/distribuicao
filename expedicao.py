@@ -1245,21 +1245,28 @@ with aba_dados:
             col_g1, col_g2 = st.columns(2)
             
             with col_g1:
+                st.markdown("#### 📦 Expedição") # Título adicionado
                 exp_counts = df_concluidos['expedicao'].value_counts().reset_index()
                 exp_counts.columns = ['Colaborador', 'Processos']
                 if not exp_counts.empty:
-                    fig_exp = px.bar(exp_counts, x='Processos', y='Colaborador', orientation='h', text_auto=True, color_discrete_sequence=['#4B90FF'])
-                    fig_exp.update_layout(yaxis={'categoryorder':'total ascending'}, xaxis_title="", yaxis_title="", margin=dict(l=0, r=0, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)")
+                    # Gráfico de Rosca com legendas automáticas
+                    fig_exp = px.pie(exp_counts, values='Processos', names='Colaborador', hole=0.5)
+                    fig_exp.update_traces(textposition='inside', textinfo='percent+value')
+                    fig_exp.update_layout(margin=dict(l=0, r=0, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)", legend_title="Colaborador")
                     st.plotly_chart(fig_exp, use_container_width=True)
                 else: st.info("Sem dados de expedição.")
                 
             with col_g2:
+                st.markdown("#### 🔍 Revisão") # Título adicionado
                 rev_counts = df_concluidos['revisao'].value_counts().reset_index()
                 rev_counts.columns = ['Colaborador', 'Processos']
                 if not rev_counts.empty:
-                    fig_rev = px.bar(rev_counts, x='Processos', y='Colaborador', orientation='h', text_auto=True, color_discrete_sequence=['#FF8C8C'])
-                    fig_rev.update_layout(yaxis={'categoryorder':'total ascending'}, xaxis_title="", yaxis_title="", margin=dict(l=0, r=0, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)")
+                    # Gráfico de Rosca com legendas automáticas
+                    fig_rev = px.pie(rev_counts, values='Processos', names='Colaborador', hole=0.5)
+                    fig_rev.update_traces(textposition='inside', textinfo='percent+value')
+                    fig_rev.update_layout(margin=dict(l=0, r=0, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)", legend_title="Colaborador")
                     st.plotly_chart(fig_rev, use_container_width=True)
+                else: st.info("Sem dados de revisão.")
 
             st.markdown("---")
 
