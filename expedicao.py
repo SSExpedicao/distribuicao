@@ -1010,6 +1010,8 @@ with aba_controle:
                             except: pass
 
                         if p_limpo and not processo_existe(p_limpo):
+                            # Cria o carimbo de tempo usando a data real da sessão + um horário padrão de fechamento
+                            data_historico = f"{data_val} 23:59:59"
                             try:
                                 conn.client.table("processos").insert({
                                     "numero_processo": p_limpo, 
@@ -1018,7 +1020,7 @@ with aba_controle:
                                     "nome_sessao": data_val,     
                                     "expedicao": exp_val, 
                                     "revisao": rev_val,   
-                                    "data_entrada": agora, "data_expedido": agora, "data_revisado": agora, "data_conclusao": agora,
+                                    "data_entrada": data_historico, "data_expedido": data_historico, "data_revisado": data_historico, "data_conclusao": data_historico,
                                     "expedido_ok": 1, "revisado_ok": 1, "despachado": 1, "urgente": 0,
                                     "enviado_email": 0, "enviado_mensageria": 0, "recebido": 0
                                 }).execute()
