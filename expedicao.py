@@ -558,15 +558,17 @@ if not df_avisos.empty:
         </marquee>
     """, unsafe_allow_html=True)
 # ==========================================
+# GESTÃO DE SESSÃO (CONTROLE DE SENHA DA CHEFIA)
+# ==========================================
+if 'gestor_autenticado' not in st.session_state:
+    st.session_state.gestor_autenticado = False
 
-aba_inserir, aba_sessoes, aba_controle, aba_historico, aba_dados, aba_ferias, aba_ajuda = st.tabs([
+aba_inserir, aba_sessoes, aba_historico, aba_gestao, aba_ajuda = st.tabs([
     "📥 1. Inserir Novos",
     "🗂️ 2. Painel Ativo",
-    "📊 3. Controle O.K.",
-    "🗄️ 4. Histórico",
-    "📈 5. Dados & Desempenho",
-    "🌴 6. Férias & Afastamentos",
-    "❓ 7. Ajuda & Glossário"
+    "🗄️ 3. Histórico",
+    "⚙️ 4. Gestão Administrativa (Restrito)",
+    "❓ 5. Ajuda & Glossário"
 ])
 
 # VARIÁVEIS ESSENCIAIS 
@@ -1170,120 +1172,48 @@ with aba_controle:
                     st.error(f"❌ Erro ao tentar resetar o banco: {e}")
 
 # ------------------------------------------
-# ABA 4: HISTÓRICO, EXCLUSÕES E AVISOS
+# ABA 4: GESTÃO ADMINISTRATIVA (COM SENHA)
 # ------------------------------------------
-with aba_historico:
-    sub_aba_concluidas, sub_aba_lixeira, sub_aba_hist_avisos, sub_aba_hist_ferias = st.tabs([
-        "✅ Arquivo: Concluídas", 
-        "🗑️ Auditoria: Processos Excluídos",
-        "📢 Auditoria: Histórico de Avisos",
-        "📋 Auditoria: Férias e Ausências"
-    ])
-   
-    # --- sub-aba 1: CONCLUÍDAS ---
-   # --- sub-aba 1: CONCLUÍDAS ---
-    # --- sub-aba 1: CONCLUÍDAS ---
-    with sub_aba_concluidas:
-        st.subheader("Sessões 100% Concluídas")
-        if sessoes_finalizadas:
-            df_historico = df_geral_status[df_geral_status['chave_sessao'].isin(sessoes_finalizadas)].copy()
-            df_historico_display = df_historico[['numero_processo', 'urgente', 'relator', 'expedicao', 'revisao', 'data_conclusao', 'tipo_sessao', 'nome_sessao']].copy()
+with aba_gestao:
+    if not st.session_state.gestor_autenticado:
+        st.warning("🔒 Área restrita para a Chefia. Insira a senha para acessar as ferramentas de gestão, dashboards e férias.")
+        col_senha1, col_senha2 = st.columns([1, 2])
+        with col_senha1:
+            senha_digitada = st.text_input("Senha de Acesso:", type="password")
+            if st.button("🔓 Desbloquear", type="primary", use_container_width=True):
+                if senha_digitada == "admin123": # <--- SUA SENHA FICA AQUI (Pode trocar!)
+                    st.session_state.gestor_autenticado = True
+                    st.rerun()
+                else:
+                    st.error("❌ Senha Incorreta!")
+                    
+    # SÓ MOSTRA O CONTEÚDO SE A SENHA ESTIVER CERTA
+    if st.session_state.gestor_autenticado:
+        col_titulo, col_btn = st.columns([4, 1])
+        col_titulo.subheader("⚙️ Painel de Gestão Administrativa")
+        if col_btn.button("🚪 Bloquear Tela", type="secondary", use_container_width=True):
+            st.session_state.gestor_autenticado = False
+            st.rerun()
             
-            df_historico_display = df_historico_display.rename(columns={'numero_processo': 'Processo', 'urgente': 'urgente_flag', 'relator': 'Conselheiro', 'expedicao': 'Expedidor', 'revisao': 'Revisor', 'data_conclusao': 'Data/Hora Conclusão', 'tipo_sessao': 'Tipo de Sessão', 'nome_sessao': 'Data da Sessão'})
-            
-            with st.expander("🔎 Filtros de Busca Avançada", expanded=True):
-                col_f1, col_f2, col_f3, col_f4 = st.columns(4)
-                with col_f1:
-                    datas_unicas = sorted(df_historico_display['Data da Sessão'].unique(), reverse=True)
-                    filtro_sessao = st.multiselect("📅 Data da Sessão", options=datas_unicas)
-                with col_f2:
-                    filtro_usuario = st.multiselect("👥 Colaborador (Exp/Rev)", options=TODOS_NOMES)
-                with col_f3:
-                    filtro_processo = st.text_input("📄 Nº do Processo", placeholder="Ex: 12345")
-                with col_f4:
-                    filtro_relator = st.text_input("⚖️ Relator", placeholder="Nome...")
-
-            df_filtrado_hist = df_historico_display.copy()
-            if filtro_sessao: df_filtrado_hist = df_filtrado_hist[df_filtrado_hist['Data da Sessão'].isin(filtro_sessao)]
-            if filtro_usuario: df_filtrado_hist = df_filtrado_hist[df_filtrado_hist['Expedidor'].isin(filtro_usuario) | df_filtrado_hist['Revisor'].isin(filtro_usuario)]
-            if filtro_processo: df_filtrado_hist = df_filtrado_hist[df_filtrado_hist['Processo'].astype(str).str.contains(filtro_processo, case=False, na=False)]
-            if filtro_relator: df_filtrado_hist = df_filtrado_hist[df_filtrado_hist['Conselheiro'].astype(str).str.contains(filtro_relator, case=False, na=False)]
-
-            st.markdown(f"**📊 Resultados encontrados:** `{len(df_filtrado_hist)}` processos.")
-            if not df_filtrado_hist.empty:
-                styled_hist = df_filtrado_hist.iloc[::-1].style.apply(color_urgentes, axis=1)
-                st.dataframe(styled_hist, hide_index=True, use_container_width=True, column_config={"urgente_flag": None})
-            else: st.warning("Nenhum processo encontrado com esses filtros.")
-        else: st.info("📭 O histórico está vazio. Nenhuma sessão foi 100% concluída ainda.")
-
-    # --- sub-aba 2: LIXEIRA ---
-    with sub_aba_lixeira:
-        st.subheader("Registro de Exclusões (Auditoria de Pauta)")
-        df_excluidos = carregar_excluidos()
-        if not df_excluidos.empty:
-            df_excluidos_display = df_excluidos.rename(columns={'numero_processo': 'Processo', 'relator': 'Relator', 'data_exclusao': 'Data/Hora da Exclusão', 'motivo': 'Motivo Declarado'})
-            st.dataframe(df_excluidos_display[['Processo', 'Relator', 'Motivo Declarado', 'Data/Hora da Exclusão']].iloc[::-1], hide_index=True, use_container_width=True)
-            csv_lixo = df_excluidos_display.to_csv(index=False).encode('utf-8')
-            st.download_button(label="📥 Baixar Relatório de Exclusões (CSV)", data=csv_lixo, file_name="auditoria_exclusoes.csv", mime='text/csv', type="secondary")
-        else:
-            st.success("✨ A lixeira está vazia. Nenhum processo foi apagado do sistema.")
-
-    # --- sub-aba 3: HISTÓRICO DE AVISOS (A NOVA PLANILHA!) ---
-    with sub_aba_hist_avisos:
-        st.subheader("Histórico Completo de Avisos Publicados")
-        df_hist_av = carregar_historico_avisos()
+        st.markdown("---")
+        # Cria as novas sub-abas restritas
+        sub_controle, sub_dados, sub_ferias = st.tabs([
+            "📊 4.1. Controle de Banco de Dados", 
+            "📈 4.2. Analytics e Desempenho", 
+            "🌴 4.3. Afastamentos da Equipe"
+        ])
         
-        if not df_hist_av.empty:
-            df_hist_av_display = df_hist_av.rename(columns={
-                'numero_processo': 'Processo',
-                'usuario': 'Destinatário do Alerta',
-                'mensagem': 'Comunicado / Ordem',
-                'data_criacao': 'Data/Hora de Publicação',
-                'status': 'Situação Atual'
-            })
+        with sub_controle:
+            st.write("Coloque o código do Controle O.K aqui")
+            # 👉 COLE AQUI TODO O CONTEÚDO QUE FICAVA DENTRO DO ANTIGO 'with aba_controle:'
             
-            # Reorganiza as colunas para ficar visualmente perfeito
-            if 'Processo' in df_hist_av_display.columns:
-                colunas_ordem = ['Processo', 'Destinatário do Alerta', 'Comunicado / Ordem', 'Data/Hora de Publicação', 'Situação Atual']
-                st.dataframe(df_hist_av_display[colunas_ordem].iloc[::-1], hide_index=True, use_container_width=True)
-                
-                # Botão para baixar a planilha de auditoria de avisos
-                csv_avisos = df_hist_av_display[colunas_ordem].to_csv(index=False).encode('utf-8')
-                st.download_button(label="📥 Baixar Relatório de Avisos (CSV)", data=csv_avisos, file_name="auditoria_mural_avisos.csv", mime='text/csv', type="secondary")
-        else:
-            st.info("📢 Nenhum comunicado foi publicado no mural de avisos até o momento.")
-
-      # --- sub-aba 4: AUDITORIA DE FÉRIAS E AUSÊNCIAS ---
-    with sub_aba_hist_ferias:
-        st.subheader("Histórico Geral de Afastamentos Encerrados")
-        st.write("Registro cronológico de ausências que já foram concluídas (o colaborador já retornou ao trabalho).")
-        
-        df_af_hist = carregar_afastamentos()
-        if not df_af_hist.empty:
-            hoje = datetime.now().date()
-            df_af_hist['dt_fim_compare'] = pd.to_datetime(df_af_hist['data_fim'], format="%d/%m/%Y").dt.date
+        with sub_dados:
+            st.write("Coloque o código de Dados aqui")
+            # 👉 COLE AQUI TODO O CONTEÚDO QUE FICAVA DENTRO DO ANTIGO 'with aba_dados:'
             
-            # Filtro Inteligente: A data de fim é menor que hoje? Se sim, o afastamento já passou!
-            df_passadas = df_af_hist[df_af_hist['dt_fim_compare'] < hoje].copy()
-            
-            if not df_passadas.empty:
-                df_passadas_display = df_passadas.rename(columns={
-                    'usuario': 'Colaborador',
-                    'tipo': 'Motivo Declarado',
-                    'data_inicio': 'Data Inicial',
-                    'data_fim': 'Data de Retorno'
-                })
-                
-                # Exibe do mais recente para o mais antigo (.iloc[::-1])
-                st.dataframe(df_passadas_display[['Colaborador', 'Motivo Declarado', 'Data Inicial', 'Data de Retorno']].iloc[::-1], hide_index=True, use_container_width=True)
-                
-                # Botão para baixar a planilha de auditoria
-                csv_ferias = df_passadas_display[['Colaborador', 'Motivo Declarado', 'Data Inicial', 'Data de Retorno']].to_csv(index=False).encode('utf-8')
-                st.download_button(label="📥 Baixar Relatório de Histórico de Ausências (CSV)", data=csv_ferias, file_name="auditoria_afastamentos_equipe.csv", mime='text/csv', type="secondary")
-            else:
-                st.info("Nenhum afastamento antigo arquivado no histórico até o momento.")
-        else:
-            st.info("Nenhum registro de afastamento encontrado no sistema.")
+        with sub_ferias:
+            st.write("Coloque o código de Férias aqui")
+            # 👉 COLE AQUI TODO O CONTEÚDO QUE FICAVA DENTRO DO ANTIGO 'with aba_ferias:'
         
 # ==========================================
 # ABA 5: DADOS & DESEMPENHO (ANALYTICS)
