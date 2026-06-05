@@ -1096,12 +1096,17 @@ with aba_historico:
     ])
    
     # --- sub-aba 1: CONCLUÍDAS ---
+   # --- sub-aba 1: CONCLUÍDAS ---
     with sub_aba_concluidas:
         st.subheader("Sessões 100% Concluídas")
         if sessoes_finalizadas:
-            # Usa a nova 'chave_sessao' para filtrar e enviar pro histórico corretamente
+            # 1. Filtra usando a nossa nova chave
             df_historico = df_geral_status[df_geral_status['chave_sessao'].isin(sessoes_finalizadas)].copy()
             df_historico_display = df_historico[['numero_processo', 'urgente', 'relator', 'expedicao', 'revisao', 'data_conclusao', 'tipo_sessao', 'nome_sessao']].copy()
+            
+            # 2. A LINHA QUE SUMIU VOLTOU AQUI (Renomeia as colunas pro visual):
+            df_historico_display = df_historico_display.rename(columns={'numero_processo': 'Processo', 'urgente': 'urgente_flag', 'relator': 'Conselheiro', 'expedicao': 'Expedidor', 'revisao': 'Revisor', 'data_conclusao': 'Data/Hora Conclusão', 'tipo_sessao': 'Tipo de Sessão', 'nome_sessao': 'Data da Sessão'})
+            
             with st.expander("🔎 Filtros de Busca Avançada", expanded=True):
                 col_f1, col_f2, col_f3, col_f4 = st.columns(4)
                 with col_f1:
