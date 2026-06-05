@@ -570,17 +570,28 @@ df_geral_status = carregar_dados_sqlite()
 sessoes_finalizadas = []
 
 if not df_geral_status.empty and 'despachado' in df_geral_status.columns:
-    # 1. Cria a chave única limpando qualquer espaço invisível
+    status_sessoes = {} # Dicionário à prova de falhas para contar pendências
+    
+    for _, row in df_geral_status.iterrows():
+        tipo = str(row.get('tipo_sessao', '')).strip()
+        nome = str(row.get('nome_sessao', '')).strip()
+        if not tipo or not nome: continue # Ignora lixo do banco
+        
+        chave = f"{tipo} | {nome}"
+        val = str(row.get('despachado', 0)).strip().lower()
+        is_done = True if val in ['1', '1.0', 'true', 't'] else False
+        
+        if chave not in status_sessoes:
+            status_sessoes[chave] = 0
+            
+        if not is_done: # Se não está despachado, soma 1 pendência
+            status_sessoes[chave] += 1
+            
+    # SÓ vai pro histórico quem tem ZERO pendências cravado
+    sessoes_finalizadas = [chave for chave, pend in status_sessoes.items() if pend == 0]
+    
+    # Prepara a chave pro histórico usar depois
     df_geral_status['chave_sessao'] = df_geral_status['tipo_sessao'].astype(str).str.strip() + " | " + df_geral_status['nome_sessao'].astype(str).str.strip()
-    
-    # 2. Flag infalível: Se não for 1 (Despachado), é tratado como Pendência (1)
-    df_geral_status['pendente_flag'] = df_geral_status['despachado'].apply(lambda x: 0 if str(x).strip().lower() in ['1', '1.0', 'true', 't'] else 1)
-    
-    # 3. Calcula o total de PENDÊNCIAS por sessão
-    sessoes_stats = df_geral_status.groupby('chave_sessao')['pendente_flag'].sum().reset_index()
-    
-    # 4. Se a sessão tem ZERO pendências, ela entra na lista oficial de finalizadas
-    sessoes_finalizadas = sessoes_stats[sessoes_stats['pendente_flag'] == 0]['chave_sessao'].tolist()
     
 # ------------------------------------------
 # ABA 1: INSERÇÃO E DISTRIBUIÇÃO
@@ -738,36 +749,35 @@ with aba_sessoes:
     with sub_aba_ord:
         df_ord = carregar_dados_sqlite("Sessão Ordinária")
         if not df_ord.empty:
-            df_ord['chave_sessao'] = df_ord['tipo_sessao'].astype(str).str.strip() + " | " + df_ord['nome_sessao'].astype(str).str.strip()
-            # Oculta à força as sessões que estão no histórico
-            df_ativo_ord = df_ord[~df_ord['chave_sessao'].isin(sessoes_finalizadas)]
-            for data in df_ativo_ord['nome_sessao'].unique(): 
-                exibir_tabela_interativa(df_ativo_ord[df_ativo_ord['nome_sessao'] == data], "ord", data, "Sessão Ordinária")
+            for data in df_ord['nome_sessao'].unique():
+                chave = f"Sessão Ordinária | {str(data).strip()}"
+                if chave not in sessoes_finalizadas:
+                    exibir_tabela_interativa(df_ord[df_ord['nome_sessao'] == data], "ord", data, "Sessão Ordinária")
 
     with sub_aba_ordv:
         df_ordv = carregar_dados_sqlite("Sessão Ordinária Virtual")
         if not df_ordv.empty:
-            df_ordv['chave_sessao'] = df_ordv['tipo_sessao'].astype(str).str.strip() + " | " + df_ordv['nome_sessao'].astype(str).str.strip()
-            df_ativo_ordv = df_ordv[~df_ordv['chave_sessao'].isin(sessoes_finalizadas)]
-            for data in df_ativo_ordv['nome_sessao'].unique(): 
-                exibir_tabela_interativa(df_ativo_ordv[df_ativo_ordv['nome_sessao'] == data], "ordv", data, "Sessão Ordinária Virtual")
+            for data in df_ordv['nome_sessao'].unique():
+                chave = f"Sessão Ordinária Virtual | {str(data).strip()}"
+                if chave not in sessoes_finalizadas:
+                    exibir_tabela_interativa(df_ordv[df_ordv['nome_sessao'] == data], "ordv", data, "Sessão Ordinária Virtual")
 
     with sub_aba_res:
         df_res = carregar_dados_sqlite("Sessão Reservada")
         if not df_res.empty:
-            df_res['chave_sessao'] = df_res['tipo_sessao'].astype(str).str.strip() + " | " + df_res['nome_sessao'].astype(str).str.strip()
-            df_ativo_res = df_res[~df_res['chave_sessao'].isin(sessoes_finalizadas)]
-            for data in df_ativo_res['nome_sessao'].unique(): 
-                exibir_tabela_interativa(df_ativo_res[df_ativo_res['nome_sessao'] == data], "res", data, "Sessão Reservada")
+            for data in df_res['nome_sessao'].unique():
+                chave = f"Sessão Reservada | {str(data).strip()}"
+                if chave not in sessoes_finalizadas:
+                    exibir_tabela_interativa(df_res[df_res['nome_sessao'] == data], "res", data, "Sessão Reservada")
 
     with sub_aba_adm:
         df_adm = carregar_dados_sqlite("Sessão Administrativa")
         if not df_adm.empty:
-            df_adm['chave_sessao'] = df_adm['tipo_sessao'].astype(str).str.strip() + " | " + df_adm['nome_sessao'].astype(str).str.strip()
-            df_ativo_adm = df_adm[~df_adm['chave_sessao'].isin(sessoes_finalizadas)]
-            for data in df_ativo_adm['nome_sessao'].unique(): 
-                exibir_tabela_interativa(df_ativo_adm[df_ativo_adm['nome_sessao'] == data], "adm", data, "Sessão Administrativa")
-                
+            for data in df_adm['nome_sessao'].unique():
+                chave = f"Sessão Administrativa | {str(data).strip()}"
+                if chave not in sessoes_finalizadas:
+                    exibir_tabela_interativa(df_adm[df_adm['nome_sessao'] == data], "adm", data, "Sessão Administrativa")
+
 # ------------------------------------------
 # ABA 3: CONTROLE DE CARGA E ÁREA ADMINISTRATIVA
 # ------------------------------------------
@@ -1110,14 +1120,13 @@ with aba_historico:
    
     # --- sub-aba 1: CONCLUÍDAS ---
    # --- sub-aba 1: CONCLUÍDAS ---
+    # --- sub-aba 1: CONCLUÍDAS ---
     with sub_aba_concluidas:
         st.subheader("Sessões 100% Concluídas")
         if sessoes_finalizadas:
-            # 1. Filtra usando a nossa nova chave
             df_historico = df_geral_status[df_geral_status['chave_sessao'].isin(sessoes_finalizadas)].copy()
             df_historico_display = df_historico[['numero_processo', 'urgente', 'relator', 'expedicao', 'revisao', 'data_conclusao', 'tipo_sessao', 'nome_sessao']].copy()
             
-            # 2. A LINHA QUE SUMIU VOLTOU AQUI (Renomeia as colunas pro visual):
             df_historico_display = df_historico_display.rename(columns={'numero_processo': 'Processo', 'urgente': 'urgente_flag', 'relator': 'Conselheiro', 'expedicao': 'Expedidor', 'revisao': 'Revisor', 'data_conclusao': 'Data/Hora Conclusão', 'tipo_sessao': 'Tipo de Sessão', 'nome_sessao': 'Data da Sessão'})
             
             with st.expander("🔎 Filtros de Busca Avançada", expanded=True):
