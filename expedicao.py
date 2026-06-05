@@ -1022,40 +1022,79 @@ with aba_gestao:
 # ABA 5: AJUDA E GLOSSÁRIO
 # ------------------------------------------
 with aba_ajuda:
-    st.header("📖 Manual do Usuário e Ajuda Detalhada - S.A.D.E.")
-    st.write("Bem-vindo(a) ao guia passo a passo do Sistema de Automação de Distribuição e Expedição.")
+    st.header("📖 Manual do Usuário S.A.D.E.")
+    st.markdown("""
+    **Seja muito bem-vindo(a)!** Este manual foi escrito especialmente para ajudar você no dia a dia. Pense no S.A.D.E. (Sistema de Automação de Distribuição e Expedição) como um grande **balcão virtual**. Em vez de termos pilhas de pastas e papéis em cima das mesas físicas, o sistema organiza quem faz o quê no computador, garantindo que ninguém fique sobrecarregado e nenhum prazo seja perdido.
     
-    with st.expander("📥 1. Como usar a Aba 1 (Inserir Novos) e Importar Planilhas"):
+    Clique nos títulos abaixo (nas setinhas) para ler a explicação passo a passo de cada etapa do seu trabalho:
+    """)
+    
+    with st.expander("📥 ABA 1: Como dar entrada em novos processos (Inserir)"):
         st.markdown("""
-        **Opção A: Digitar um por vez (Inserção Manual)**
-        1. Escolha o Destino (Ex: Sessão Ordinária).
-        2. Selecione quem da equipe vai trabalhar.
-        3. Digite o número do processo e Relator, depois "Verificar e Processar".
+        Aqui é a **Recepção** do setor. É onde você avisa ao sistema que chegou trabalho novo. Você tem duas formas de fazer isso:
         
-        **Opção B: Importar Planilha**
-        * Baixe a planilha modelo.
-        * Preencha sem mudar as colunas (Processo e Relator).
-        * Faça o upload e inicie a importação.
+        **Opção 1: Digitar um por vez (Inserção Manual)**
+        *(Ideal para quando chegam poucos processos no dia)*
+        1. **Destino:** Escolha para qual "caixa" esse processo vai (Ex: Sessão Ordinária, Reservada, etc.). Se for um processo absurdamente urgente, escolha a opção "Urgente" na lista.
+        2. **Equipe:** O sistema já marca automaticamente o nome de todo mundo que está trabalhando hoje. Se alguém não for participar dessa remessa específica, basta clicar no 'x' ao lado do nome da pessoa para tirá-la do sorteio.
+        3. **Dados:** Digite o número do processo e o nome do Relator nas caixinhas em branco.
+        4. **Concluir:** Clique no botão azul **"Verificar e Processar"**. O sistema vai fazer um sorteio justo e entregar esse processo imediatamente para a "Mesa de Trabalho" da equipe.
+        
+        ---
+        
+        **Opção 2: Importar Planilha (Para colocar vários de uma vez)**
+        *(Ideal para aquele dia de pico, em que chegam 20, 30 processos juntos)*
+        1. Clique no botão cinza **"Baixar Planilha Modelo"**. Isso vai salvar um arquivo no seu computador.
+        2. Abra esse arquivo no seu Excel. Você vai ver duas palavras lá em cima: `Processo` e `Relator`.
+        3. **Regra de Ouro:** Não mude essas palavras e não crie colunas novas. Apenas apague os números de exemplo e copie/cole a sua lista de processos ali embaixo.
+        4. Salve a planilha e feche o Excel.
+        5. Volte para o S.A.D.E., clique na área tracejada e escolha o arquivo que você acabou de salvar.
+        6. Clique no botão azul **"Iniciar Importação"**. O sistema vai ler a planilha e distribuir tudo sozinho em segundos!
         """)
 
-    with st.expander("🗂️ 2. Como usar a Aba 2 (Painel Ativo)"):
+    with st.expander("🗂️ ABA 2: Como trabalhar nos processos (A Mesa de Trabalho)"):
         st.markdown("""
-        * Marque "Expedido" e "Revisado" conforme o trabalho avança.
-        * Marque "Despachado" para finalizar e mandar pro histórico.
-        * **Lembre-se:** Clique no botão azul "Salvar Alterações desta Sessão" sempre que marcar as caixinhas!
+        Esta é a sua **Mesa de Trabalho Diária** (Painel Ativo). Todo o setor visualiza esta mesma tela simultaneamente. Cada linha que aparece na tabela é um processo que aguarda uma ação da equipe.
+        
+        **O que significam as caixinhas para marcar?**
+        * 🔲 **Expedido:** Você deve marcar esta caixinha assim que terminar de redigir/montar o documento inicial.
+        * 🔲 **Revisado:** O colega responsável por conferir o seu trabalho deve marcar esta caixinha quando terminar de ler e concordar que a minuta está correta.
+        * 🔲 **Despachado:** Marque esta caixinha **APENAS** quando o processo estiver 100% pronto, assinado e finalizado no sistema oficial. 
+        
+        **⚠️ O BOTÃO MAIS IMPORTANTE DO SISTEMA:**
+        Sempre que você marcar ou desmarcar qualquer uma dessas caixinhas, você **precisa** descer até o fim da tabela e clicar no botão azul **"💾 Salvar Alterações desta Sessão"**. 
+        *Se você não clicar neste botão de salvar, o sistema não vai guardar o seu serviço e a caixinha vai desmarcar sozinha!*
+        
+        **O que acontece depois que eu marco "Despachado" e salvo?**
+        O processo é considerado finalizado com sucesso. Para manter a tela limpa e organizada, ele **desaparece** da Mesa de Trabalho e é enviado magicamente para a gaveta do "Histórico".
         """)
 
-    with st.expander("⚙️ 3. Como usar a Aba 4 (Gestão Administrativa)"):
+    with st.expander("🗄️ ABA 3: Onde vão parar os processos prontos? (Histórico)"):
         st.markdown("""
-        Aba protegida por senha para a Chefia organizar a casa:
-        * **Mural de Avisos:** Crie alertas que aparecem no letreiro para a equipe.
-        * **Modo Limpeza:** Delete processos errados por data ou zere o banco de dados.
-        * **Férias:** Registre ausências para o sistema parar de mandar trabalho para quem está de folga.
-        * **Dashboard:** Acompanhe a produtividade e gargalos em tempo real.
+        Esta tela funciona como o **Arquivo Morto** e a **Memória** do setor. O que você encontra aqui?
+        
+        * **✅ Arquivo: Concluídas:** Lembra dos processos que você despachou na Aba 2? Quando **todos** os processos de uma mesma sessão/data forem finalizados pela equipe, o lote inteiro vem para cá. Você pode usar os campos de busca para rastrear aquele processo antigo feito meses atrás.
+        * **🗑️ Auditoria: Processos Excluídos:** Se a chefia precisar apagar um processo do sistema por algum erro grave, ele não evapora. Ele fica registrado nesta lixeira de segurança, mostrando o número e o motivo da exclusão para controle interno.
         """)
 
-    with st.expander("📚 4. Glossário"):
+    with st.expander("⚙️ ABA 4: O que é a Gestão Administrativa?"):
         st.markdown("""
-        * **Processo Urgente:** Ficam em destaque vermelho. Furam a fila.
-        * **Despachado:** Documento 100% concluído e fora do setor.
+        Esta aba é exclusiva para o funcionamento interno do setor e atua como a **Sala da Chefia**. Por conter dados sensíveis, ela é protegida por senha (🔒). 
+        
+        **Apenas gestores autorizados entram aqui para:**
+        * Apagar processos que foram cadastrados por engano.
+        * Enviar os "Alertas Vermelhos" (Letreiro) para comunicar urgências à equipe.
+        * Cadastrar quem entrou de Férias ou apresentou Atestado Médico (assim o sistema "sabe" que aquela pessoa não está trabalhando e para de enviar processos para o nome dela).
+        * Visualizar gráficos automáticos de produtividade para apresentar à diretoria.
+        """)
+
+    with st.expander("📚 DICIONÁRIO DO SISTEMA (Termos Explicados)"):
+        st.markdown("""
+        Ouviu alguma palavra no sistema e ficou em dúvida? A resposta está aqui:
+        
+        * **Expedidor:** É a pessoa que "inicia" o trabalho. Quem lê o processo original, redige a minuta ou monta a primeira versão do documento.
+        * **Revisor:** É a pessoa que age como um controle de qualidade. Ela recebe o que o Expedidor fez, confere se há erros de digitação ou leis aplicadas incorretamente, e só então libera o documento.
+        * **Processo Urgente:** São os processos que "furam a fila". Quando a recepção cadastra um processo como urgente, a linha dele na sua tela fica com a letra mais grossa (negrito) e na cor **vermelha**. Ao ver o vermelho, pare o que está fazendo e dê prioridade máxima.
+        * **Letreiro (Mural de Avisos):** É aquela faixa vermelha que fica correndo da direita para a esquerda no topo da sua tela, igual em noticiário de TV. É usado pela chefia para recados rápidos (Ex: *"Processo X aguardando anexo"*). Quando a equipe despachar o processo citado, o aviso some sozinho do letreiro!
+        * **Sessão:** No nosso sistema, "Sessão" é a palavra que usamos para organizar os "Lotes" ou "Pastas" do dia. Agrupamos os processos em sessões para manter o trabalho organizado por datas ou reuniões.
         """)
