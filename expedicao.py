@@ -570,18 +570,18 @@ df_geral_status = carregar_dados_sqlite()
 sessoes_finalizadas = []
 
 if not df_geral_status.empty and 'despachado' in df_geral_status.columns:
-    # 1. Limpa qualquer espaço invisível (trailing spaces) que possa quebrar a leitura
+    # 1. Cria a chave única limpando qualquer espaço invisível
     df_geral_status['chave_sessao'] = df_geral_status['tipo_sessao'].astype(str).str.strip() + " | " + df_geral_status['nome_sessao'].astype(str).str.strip()
     
-    # 2. Força a conversão do checkbox para número puro (1 ou 0), não importa como venha do banco
-    df_geral_status['status_num'] = df_geral_status['despachado'].apply(lambda x: 1 if str(x).strip().lower() in ['1', '1.0', 'true', 't'] else 0)
+    # 2. Flag infalível: Se não for 1 (Despachado), é tratado como Pendência (1)
+    df_geral_status['pendente_flag'] = df_geral_status['despachado'].apply(lambda x: 0 if str(x).strip().lower() in ['1', '1.0', 'true', 't'] else 1)
     
-    # 3. Calcula o tamanho REAL da pauta (size) e soma as conclusões
-    sessoes_stats = df_geral_status.groupby('chave_sessao')['status_num'].agg(total='size', concluidos='sum').reset_index()
+    # 3. Calcula o total de PENDÊNCIAS por sessão
+    sessoes_stats = df_geral_status.groupby('chave_sessao')['pendente_flag'].sum().reset_index()
     
-    # 4. Libera pro histórico apenas quem tem o total batendo 100% com os concluídos
-    sessoes_finalizadas = sessoes_stats[sessoes_stats['total'] == sessoes_stats['concluidos']]['chave_sessao'].tolist()
-
+    # 4. Se a sessão tem ZERO pendências, ela entra na lista oficial de finalizadas
+    sessoes_finalizadas = sessoes_stats[sessoes_stats['pendente_flag'] == 0]['chave_sessao'].tolist()
+    
 # ------------------------------------------
 # ABA 1: INSERÇÃO E DISTRIBUIÇÃO
 # ------------------------------------------
@@ -739,30 +739,35 @@ with aba_sessoes:
         df_ord = carregar_dados_sqlite("Sessão Ordinária")
         if not df_ord.empty:
             df_ord['chave_sessao'] = df_ord['tipo_sessao'].astype(str).str.strip() + " | " + df_ord['nome_sessao'].astype(str).str.strip()
-            for data in df_ord[~df_ord['chave_sessao'].isin(sessoes_finalizadas)]['nome_sessao'].unique(): 
-                exibir_tabela_interativa(df_ord[df_ord['nome_sessao'] == data], "ord", data, "Sessão Ordinária")
+            # Oculta à força as sessões que estão no histórico
+            df_ativo_ord = df_ord[~df_ord['chave_sessao'].isin(sessoes_finalizadas)]
+            for data in df_ativo_ord['nome_sessao'].unique(): 
+                exibir_tabela_interativa(df_ativo_ord[df_ativo_ord['nome_sessao'] == data], "ord", data, "Sessão Ordinária")
 
     with sub_aba_ordv:
         df_ordv = carregar_dados_sqlite("Sessão Ordinária Virtual")
         if not df_ordv.empty:
             df_ordv['chave_sessao'] = df_ordv['tipo_sessao'].astype(str).str.strip() + " | " + df_ordv['nome_sessao'].astype(str).str.strip()
-            for data in df_ordv[~df_ordv['chave_sessao'].isin(sessoes_finalizadas)]['nome_sessao'].unique(): 
-                exibir_tabela_interativa(df_ordv[df_ordv['nome_sessao'] == data], "ordv", data, "Sessão Ordinária Virtual")
+            df_ativo_ordv = df_ordv[~df_ordv['chave_sessao'].isin(sessoes_finalizadas)]
+            for data in df_ativo_ordv['nome_sessao'].unique(): 
+                exibir_tabela_interativa(df_ativo_ordv[df_ativo_ordv['nome_sessao'] == data], "ordv", data, "Sessão Ordinária Virtual")
 
     with sub_aba_res:
         df_res = carregar_dados_sqlite("Sessão Reservada")
         if not df_res.empty:
             df_res['chave_sessao'] = df_res['tipo_sessao'].astype(str).str.strip() + " | " + df_res['nome_sessao'].astype(str).str.strip()
-            for data in df_res[~df_res['chave_sessao'].isin(sessoes_finalizadas)]['nome_sessao'].unique(): 
-                exibir_tabela_interativa(df_res[df_res['nome_sessao'] == data], "res", data, "Sessão Reservada")
+            df_ativo_res = df_res[~df_res['chave_sessao'].isin(sessoes_finalizadas)]
+            for data in df_ativo_res['nome_sessao'].unique(): 
+                exibir_tabela_interativa(df_ativo_res[df_ativo_res['nome_sessao'] == data], "res", data, "Sessão Reservada")
 
     with sub_aba_adm:
         df_adm = carregar_dados_sqlite("Sessão Administrativa")
         if not df_adm.empty:
             df_adm['chave_sessao'] = df_adm['tipo_sessao'].astype(str).str.strip() + " | " + df_adm['nome_sessao'].astype(str).str.strip()
-            for data in df_adm[~df_adm['chave_sessao'].isin(sessoes_finalizadas)]['nome_sessao'].unique(): 
-                exibir_tabela_interativa(df_adm[df_adm['nome_sessao'] == data], "adm", data, "Sessão Administrativa")
-
+            df_ativo_adm = df_adm[~df_adm['chave_sessao'].isin(sessoes_finalizadas)]
+            for data in df_ativo_adm['nome_sessao'].unique(): 
+                exibir_tabela_interativa(df_ativo_adm[df_ativo_adm['nome_sessao'] == data], "adm", data, "Sessão Administrativa")
+                
 # ------------------------------------------
 # ABA 3: CONTROLE DE CARGA E ÁREA ADMINISTRATIVA
 # ------------------------------------------
