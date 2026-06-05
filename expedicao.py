@@ -1111,28 +1111,63 @@ with aba_controle:
                 st.success(f"Sessão de {data_apagar} enviada para a lixeira com sucesso!")
                 time.sleep(1.5)
                 st.rerun()
+        
         st.markdown("---")
-        st.subheader("☢️ MODO NUCLEAR: Reset Total do Banco de Dados")
-        st.warning("⚠️ Atenção: Isso apagará TODOS os processos (ativos e histórico). A equipe e os afastamentos serão mantidos.")
+        st.subheader("🧹 MODO LIMPEZA: Apagar Banco de Dados")
+        st.write("Escolha se deseja apagar apenas os processos de um período específico ou resetar todo o sistema.")
         
-        confirmacao = st.checkbox("Tenho certeza absoluta. Quero zerar a base de dados.", key="check_nuclear")
+        tipo_limpeza = st.radio("Selecione a ação:", ["Limpar por Período", "Modo Nuclear (Zerar Tudo)"], horizontal=True)
         
-        if st.button("🔥 APAGAR TUDO E COMEÇAR DO ZERO", type="primary", disabled=not confirmacao, use_container_width=True):
-            try:
-                # Apaga todos os processos ativos e concluídos
-                conn.client.table("processos").delete().neq("numero_processo", "vazio").execute()
-                
-                # Apaga a lixeira / auditoria de excluídos
-                conn.client.table("processos_excluidos").delete().neq("numero_processo", "vazio").execute()
-                
-                # Apaga todos os comunicados do letreiro
-                conn.client.table("avisos").delete().neq("numero_processo", "vazio").execute()
-                
-                st.success("💥 BUM! Banco de dados completamente zerado. Vida nova!")
-                time.sleep(2.5)
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ Erro ao tentar resetar o banco: {e}")
+        if tipo_limpeza == "Limpar por Período":
+            col_d1, col_d2 = st.columns(2)
+            with col_d1: dt_inicio = st.date_input("De (Data Inicial)", format="DD/MM/YYYY")
+            with col_d2: dt_fim = st.date_input("Até (Data Final)", format="DD/MM/YYYY")
+            
+            confirmacao_periodo = st.checkbox("Tenho certeza. Quero apagar os processos desse período.", key="check_periodo")
+            
+            if st.button("🗑️ Apagar Período", type="primary", disabled=not confirmacao_periodo, use_container_width=True):
+                try:
+                    # Busca tudo e usa o Python para comparar as datas de forma perfeita
+                    todos_processos = conn.client.table("processos").select("id, data_entrada").execute().data
+                    ids_para_apagar = []
+                    
+                    for p in todos_processos:
+                        try:
+                            # Isola a data ignorando a hora e converte para objeto matemático
+                            data_str = str(p['data_entrada']).split()[0]
+                            data_obj = datetime.strptime(data_str, "%d/%m/%Y").date()
+                            
+                            # Se a data de entrada bater no filtro, entra na lista de abate
+                            if dt_inicio <= data_obj <= dt_fim:
+                                ids_para_apagar.append(p['id'])
+                        except: pass
+                        
+                    if ids_para_apagar:
+                        # Deleta os IDs encontrados cirurgicamente
+                        for id_proc in ids_para_apagar:
+                            conn.client.table("processos").delete().eq("id", id_proc).execute()
+                        st.success(f"🧹 Limpeza concluída! {len(ids_para_apagar)} processos foram apagados do período selecionado.")
+                        time.sleep(2)
+                        st.rerun()
+                    else:
+                        st.warning("⚠️ Nenhum processo encontrado nesse período de datas.")
+                except Exception as e:
+                    st.error(f"❌ Erro ao limpar período: {e}")
+                    
+        elif tipo_limpeza == "Modo Nuclear (Zerar Tudo)":
+            st.warning("⚠️ Atenção: Isso apagará TODOS os processos (ativos e histórico). A equipe e os afastamentos serão mantidos.")
+            confirmacao_nuclear = st.checkbox("Tenho certeza absoluta. Quero zerar a base de dados.", key="check_nuclear_novo")
+            
+            if st.button("🔥 APAGAR TUDO E COMEÇAR DO ZERO", type="primary", disabled=not confirmacao_nuclear, use_container_width=True):
+                try:
+                    conn.client.table("processos").delete().neq("numero_processo", "vazio").execute()
+                    conn.client.table("processos_excluidos").delete().neq("numero_processo", "vazio").execute()
+                    conn.client.table("avisos").delete().neq("numero_processo", "vazio").execute()
+                    st.success("💥 BUM! Banco de dados completamente zerado. Vida nova!")
+                    time.sleep(2.5)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Erro ao tentar resetar o banco: {e}")
 
 # ------------------------------------------
 # ABA 4: HISTÓRICO, EXCLUSÕES E AVISOS
