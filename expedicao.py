@@ -349,15 +349,27 @@ def carregar_dados_sqlite(tipo_sessao=None):
 
 def restaurar_backup(df_backup):
     try:
+        # 1. Apaga tudo antes de restaurar
         conn.client.table("processos").delete().neq("numero_processo", "vazio").execute()
+        
+        # 2. Converte campos vazios (NaN) para None para o Supabase aceitar
         df_backup = df_backup.astype(object).where(pd.notna(df_backup), None)
+        
         records = df_backup.to_dict(orient="records")
+        
+        # 3. Limpeza Blindada: Remove campos que são calculados ou do Supabase
+        # O sistema só deve enviar para o Supabase as colunas que realmente existem na tabela
         for r in records:
-            if 'id' in r: del r['id']
-            if 'created_at' in r: del r['created_at']
+            colunas_para_remover = ['id', 'created_at', 'chave_sessao', 'data_entrada_dt', 'data_expedido_dt', 'data_revisado_dt', 'data_conclusao_dt', 'status_num', 'pendente_flag']
+            for col in colunas_para_remover:
+                if col in r:
+                    del r[col]
+            
+        # 4. Envia para o banco
         conn.client.table("processos").insert(records).execute()
         return True, "✅ Dados restaurados com sucesso!"
-    except Exception as e: return False, f"❌ Erro ao tentar restaurar: {e}"
+    except Exception as e: 
+        return False, f"❌ Erro ao tentar restaurar: {e}"
 
 def adicionar_aviso(usuario, numero_processo, mensagem):
     try:
