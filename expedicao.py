@@ -1111,7 +1111,7 @@ with aba_controle:
                 st.success(f"Sessão de {data_apagar} enviada para a lixeira com sucesso!")
                 time.sleep(1.5)
                 st.rerun()
-    st.markdown("---")
+        st.markdown("---")
         st.subheader("☢️ MODO NUCLEAR: Reset Total do Banco de Dados")
         st.warning("⚠️ Atenção: Isso apagará TODOS os processos (ativos e histórico). A equipe e os afastamentos serão mantidos.")
         
