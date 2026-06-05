@@ -1111,6 +1111,28 @@ with aba_controle:
                 st.success(f"Sessão de {data_apagar} enviada para a lixeira com sucesso!")
                 time.sleep(1.5)
                 st.rerun()
+    st.markdown("---")
+        st.subheader("☢️ MODO NUCLEAR: Reset Total do Banco de Dados")
+        st.warning("⚠️ Atenção: Isso apagará TODOS os processos (ativos e histórico). A equipe e os afastamentos serão mantidos.")
+        
+        confirmacao = st.checkbox("Tenho certeza absoluta. Quero zerar a base de dados.", key="check_nuclear")
+        
+        if st.button("🔥 APAGAR TUDO E COMEÇAR DO ZERO", type="primary", disabled=not confirmacao, use_container_width=True):
+            try:
+                # Apaga todos os processos ativos e concluídos
+                conn.client.table("processos").delete().neq("numero_processo", "vazio").execute()
+                
+                # Apaga a lixeira / auditoria de excluídos
+                conn.client.table("processos_excluidos").delete().neq("numero_processo", "vazio").execute()
+                
+                # Apaga todos os comunicados do letreiro
+                conn.client.table("avisos").delete().neq("numero_processo", "vazio").execute()
+                
+                st.success("💥 BUM! Banco de dados completamente zerado. Vida nova!")
+                time.sleep(2.5)
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Erro ao tentar resetar o banco: {e}")
 
 # ------------------------------------------
 # ABA 4: HISTÓRICO, EXCLUSÕES E AVISOS
