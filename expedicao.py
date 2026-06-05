@@ -305,40 +305,44 @@ def gerar_relatorio_gerencial(mes, ano):
     except Exception as e:
         return False, f"Erro interno ao compilar relatório: {e}"
 
-def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, expedidores, revisores):
+def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, expedidores_selecionados, revisores_selecionados):
     numero_processo, relator = higienizar_dados(numero_processo, relator)
-    if processo_existe(numero_processo): return False, "❌ Processo já existe no sistema."
-    ausentes_hoje = obter_colaboradores_ausentes_hoje()
-    if tipo_sessao == "Sessão Reservada":
-        expedidores = [e for e in expedidores if e not in ["Jessyca", "Luana C"]]
-        revisores = [r for r in revisores if r not in ["Jessyca", "Luana C"]]
-    elif tipo_sessao == "Sessão Administrativa":
-        if "Jessyca" not in ausentes_hoje:
-            expedidores = ["Jessyca"]
-            revisores = ["Jessyca"]
-        else:
-            contingencia = [colab for colab in ["André", "Elaine"] if colab not in ausentes_hoje]
-            if contingencia:
-                expedidores = contingencia
-                revisores = contingencia
-            else: return False, "❌ ERRO: Jessyca está afastada e a equipe de contingência também está indisponível."
-
-    expedidores_ativos = [e for e in expedidores if e not in ausentes_hoje]
-    revisores_ativos = [r for r in revisores if r not in ausentes_hoje]
-    if not expedidores_ativos or not revisores_ativos: return False, "❌ ERRO: Todos os colaboradores selecionados para esta escala estão afastados."
+    if processo_existe(numero_processo): return False, "❌ Processo já existe."
     
-    responsavel_expedicao = obter_expedidor(expedidores_ativos, nome_sessao)
-    responsavel_revisao = obter_revisor(responsavel_expedicao, nome_sessao, revisores_ativos)
+    # 1. Puxa a carga global APENAS para os membros que foram SELECIONADOS
+    # Usamos os expedidores_selecionados para filtrar o histórico
+    res_global = conn.client.table("processos").select("expedicao, revisao").in_("expedicao", expedidores_selecionados).execute().data
+    
+    # 2. Conta quanto cada um dos SELECIONADOS tem no total (Histórico Geral)
+    contagem_exp = {nome: 0 for nome in expedidores_selecionados}
+    for row in res_global:
+        exp = row.get('expedicao')
+        if exp in contagem_exp: contagem_exp[exp] += 1
+    
+    # Escolhe o expedidor com MENOS processos entre os SELECIONADOS
+    responsavel_expedicao = min(contagem_exp, key=contagem_exp.get)
+    
+    # 3. Agora para o Revisor: 
+    # Deve estar na lista de SELECIONADOS e ser diferente do expedidor escolhido
+    candidatos_revisores = [nome for nome in revisores_selecionados if nome != responsavel_expedicao]
+    
+    res_rev_global = conn.client.table("processos").select("revisao").in_("revisao", candidatos_revisores).execute().data
+    contagem_rev = {nome: 0 for nome in candidatos_revisores}
+    for row in res_rev_global:
+        rev = row.get('revisao')
+        if rev in contagem_rev: contagem_rev[rev] += 1
+    
+    responsavel_revisao = min(contagem_rev, key=contagem_rev.get)
+    
+    # Inserção
     data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-    try:
-        conn.client.table("processos").insert({
-            "numero_processo": numero_processo, "relator": relator, "tipo_sessao": tipo_sessao, 
-            "nome_sessao": nome_sessao, "expedicao": responsavel_expedicao, "revisao": responsavel_revisao, 
-            "data_entrada": data_atual, "expedido_ok": 0, "revisado_ok": 0, "despachado": 0, "urgente": 0,
-            "enviado_email": 0, "enviado_mensageria": 0, "recebido": 0
-        }).execute()
-        return True, f"✅ Distribuído! Expedição: **{responsavel_expedicao}** | Revisão: **{responsavel_revisao}**"
-    except Exception as e: return False, f"❌ Erro ao salvar: {e}"
+    conn.client.table("processos").insert({
+        "numero_processo": numero_processo, "relator": relator, "tipo_sessao": tipo_sessao, 
+        "nome_sessao": nome_sessao, "expedicao": responsavel_expedicao, "revisao": responsavel_revisao, 
+        "data_entrada": data_atual, "expedido_ok": 0, "revisado_ok": 0, "despachado": 0, "urgente": 0
+    }).execute()
+    
+    return True, f"✅ Distribuído! Exp: {responsavel_expedicao} | Rev: {responsavel_revisao}"
 
 def carregar_dados_sqlite(tipo_sessao=None):
     try:
