@@ -922,7 +922,21 @@ with aba_gestao:
                         sucessos = 0
                         
                         if arquivo_hist is not None:
-                            df_up = pd.read_csv(arquivo_hist, encoding='utf-8-sig') if arquivo_hist.name.endswith('.csv') else pd.read_excel(arquivo_hist)
+                            if arquivo_hist.name.endswith('.csv'):
+                                try:
+                                    # Tenta ler no padrão universal da internet (UTF-8)
+                                    df_up = pd.read_csv(arquivo_hist, encoding='utf-8-sig')
+                                except UnicodeDecodeError:
+                                    # Se quebrar (salvo pelo Excel no Windows), volta a fita e lê como Latin-1
+                                    arquivo_hist.seek(0)
+                                    df_up = pd.read_csv(arquivo_hist, encoding='latin-1', sep=';')
+                                    # Prevenção: Se a tabela ficar com 1 coluna só, é porque o separador era vírgula
+                                    if len(df_up.columns) == 1:
+                                        arquivo_hist.seek(0)
+                                        df_up = pd.read_csv(arquivo_hist, encoding='latin-1', sep=',')
+                            else:
+                                # Se for XLSX, lê normal
+                                df_up = pd.read_excel(arquivo_hist)
                             barra = st.progress(0)
                             
                             for index, row in df_up.iterrows():
