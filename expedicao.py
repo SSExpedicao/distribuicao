@@ -103,8 +103,13 @@ def apagar_sessao_especifica(tipo_sessao, nome_sessao, motivo):
     agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     try:
         processos_sessao = conn.client.table("processos").select("numero_processo, relator").eq("tipo_sessao", tipo_sessao).eq("nome_sessao", nome_sessao).execute().data
-        for proc in processos_sessao:
-            conn.client.table("processos_excluidos").insert({"numero_processo": proc['numero_processo'], "relator": proc['relator'], "data_exclusao": agora, "motivo": motivo}).execute()
+        
+        # 🛡️ O PULO DO GATO: Se foi erro de inclusão ou teste, a gente NÃO manda pro histórico
+        if motivo not in ["Incluído errado", "Teste"]:
+            for proc in processos_sessao:
+                conn.client.table("processos_excluidos").insert({"numero_processo": proc['numero_processo'], "relator": proc['relator'], "data_exclusao": agora, "motivo": motivo}).execute()
+                
+        # Apaga os dados da pauta ativa de qualquer forma
         conn.client.table("processos").delete().eq("tipo_sessao", tipo_sessao).eq("nome_sessao", nome_sessao).execute()
     except: pass
 
