@@ -135,27 +135,75 @@ def atualizar_processo(id_processo, mudancas):
 def obter_expedidor(opcoes, nome_sessao):
     if len(opcoes) == 1: return opcoes[0]
     try:
-        res = conn.client.table("processos").select("expedicao").eq("nome_sessao", nome_sessao).execute()
+        # REGRA 1: MEMÓRIA DE CARGA GLOBAL
+        # O algoritmo olha para a mesa global para ver quem trabalhou mais no total
+        res = conn.client.table("processos").select("expedicao").execute().data
         contagem = {nome: 0 for nome in opcoes}
-        for row in res.data:
-            if row.get('expedicao') in contagem:
-                contagem[row['expedicao']] += 1
-        return min(contagem, key=contagem.get)
+        for row in res:
+            exp = row.get('expedicao')
+            if exp in contagem:
+                contagem[exp] += 1
+        
+        # Acha a menor carga de trabalho entre os presentes
+        menor_carga = min(contagem.values())
+        # Filtra todos os que estão empatados com a menor carga para não favorecer ordem alfabética
+        empatados = [nome for nome, carga in contagem.items() if carga == menor_carga]
+        
+        import random
+        return random.choice(empatados)
     except:
         import random
         return random.choice(opcoes)
 
 def obter_revisor(expedidor, nome_sessao, opcoes):
+    # Regra Básica: Ninguém pode revisar o próprio processo
     opcoes_validas = [opt for opt in opcoes if opt != expedidor]
-    if not opcoes_validas: return expedidor 
-    if len(opcoes_validas) == 1: return opcoes_validas[0]
+    if not opcoes_validas: return expedidor # Contingência (Sessão só com a Jessyca, por exemplo)
+    if len(opcoes_validas) == 1: return opcoes_validas[0] # Contingência (Só sobrou 1 pessoa)
+    
     try:
-        res = conn.client.table("processos").select("revisao").eq("nome_sessao", nome_sessao).execute()
-        contagem = {nome: 0 for nome in opcoes_validas}
-        for row in res.data:
-            if row.get('revisao') in contagem:
-                contagem[row['revisao']] += 1
-        return min(contagem, key=contagem.get)
+        res_sessao = conn.client.table("processos").select("expedicao, revisao").eq("nome_sessao", nome_sessao).execute().data
+        
+        # 1. CONSISTÊNCIA DE FLUXO (Se eu já mandei pra alguém hoje, continuo mandando pra ele)
+        for row in res_sessao:
+            e = row.get('expedicao')
+            r = row.get('revisao')
+            if e == expedidor and r in opcoes_validas:
+                return r
+                
+        # 2. REGRA ANTI-CASAL (Se chegou aqui, é o 1º processo do expedidor na sessão)
+        # Vamos descobrir quem já está mandando processo para o nosso Expedidor
+        mandam_para_mim = set()
+        for row in res_sessao:
+            e = row.get('expedicao')
+            r = row.get('revisao')
+            if r == expedidor and e:
+                mandam_para_mim.add(e)
+        
+        # Tira os "casais" das opções válidas para forçar o cruzamento
+        opcoes_anti_casal = [opt for opt in opcoes_validas if opt not in mandam_para_mim]
+        
+        # Se por acaso todo mundo estiver bloqueado (ex: só tem 2 pessoas trabalhando hoje),
+        # o sistema derruba a regra anti-casal para não travar a pauta.
+        candidatos = opcoes_anti_casal if opcoes_anti_casal else opcoes_validas
+        
+        if len(candidatos) == 1: return candidatos[0]
+        
+        # 3. RODÍZIO HISTÓRICO GLOBAL (Quem me ajudou menos na vida inteira?)
+        res_hist = conn.client.table("processos").select("revisao").eq("expedicao", expedidor).execute().data
+        historico_parcerias = {nome: 0 for nome in candidatos}
+        
+        for row in res_hist:
+            r_hist = row.get('revisao')
+            if r_hist in historico_parcerias:
+                historico_parcerias[r_hist] += 1
+                
+        menor_parceria = min(historico_parcerias.values())
+        empatados_parceria = [nome for nome, qtd in historico_parcerias.items() if qtd == menor_parceria]
+        
+        import random
+        return random.choice(empatados_parceria)
+        
     except:
         import random
         return random.choice(opcoes_validas)
