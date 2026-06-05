@@ -830,7 +830,112 @@ with aba_gestao:
                                 else: st.error(msg)
                             except Exception as e: st.error(f"Erro ao ler o arquivo: {e}")
                 st.markdown("---")
+                
+                st.subheader("🕰️ Migração de Processos Direto para o Histórico")
+                st.write("Insira processos antigos já finalizados. Eles pularão o Painel Ativo e irão direto para o Arquivo.")
+                
+                df_modelo_hist = pd.DataFrame({
+                    "Processo": ["12345/2026", "67890/2026"], 
+                    "Relator": ["Conselheiro A", "Conselheiro B"],
+                    "Expedidor": ["André", "Elaine"],
+                    "Revisor": ["Maurício", "Kátia"],
+                    "Data_Sessao": ["12/05/2026", "19/05/2026"],
+                    "Tipo_Sessao": ["Sessão Ordinária", "Sessão Reservada"]
+                })
+                
+                st.download_button(
+                    label="📥 Baixar Modelo para Histórico (CSV)",
+                    data=df_modelo_hist.to_csv(index=False).encode('utf-8'),
+                    file_name="modelo_historico.csv", 
+                    mime="text/csv", 
+                    type="secondary"
+                )
+                
+                col_h1, col_h2 = st.columns(2)
+                with col_h1:
+                    hist_tipo = st.selectbox("Tipo de Sessão (Histórico):", ["Sessão Ordinária", "Sessão Ordinária Virtual", "Sessão Reservada", "Sessão Administrativa"], key="hist_tipo")
+                    hist_sessao = st.text_input("Nome ou Número da Sessão (Ex: Sessão 125):", key="hist_sessao")
+                with col_h2:
+                    hist_proc = st.text_input("Nº do Processo (Manual):", key="hist_proc")
+                    hist_rel = st.text_input("Relator (Manual):", key="hist_rel")
+                    
+                col_hx, col_hy = st.columns(2)
+                with col_hx: 
+                    hist_exp = st.text_input("Expedidor:", placeholder="Digite o nome...", key="hist_exp")
+                with col_hy: 
+                    hist_rev = st.text_input("Revisor:", placeholder="Digite o nome...", key="hist_rev")
 
+                arquivo_hist = st.file_uploader("Planilha de Recuperação (CSV/XLSX):", type=["csv", "xlsx"], key="hist_up")
+                if st.button("💾 Enviar Direto para o Histórico", type="primary", use_container_width=True):
+                    if not hist_sessao:
+                        st.warning("⚠️ Você precisa digitar o Nome da Sessão primeiro.")
+                    else:
+                        agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                        sucessos = 0
+                        
+                        if arquivo_hist is not None:
+                            df_up = pd.read_csv(arquivo_hist, encoding='utf-8-sig') if arquivo_hist.name.endswith('.csv') else pd.read_excel(arquivo_hist)
+                            barra = st.progress(0)
+                            
+                            for index, row in df_up.iterrows():
+                                p_val = str(row['Processo']).strip() if pd.notna(row.get('Processo')) else ""
+                                r_val = str(row.get('Relator', '')).strip() if pd.notna(row.get('Relator')) else ""
+                                p_limpo, r_limpo = higienizar_dados(p_val, r_val)
+                                
+                                exp_val = str(row.get('Expedidor', hist_exp)).strip() if pd.notna(row.get('Expedidor')) else hist_exp
+                                rev_val = str(row.get('Revisor', hist_rev)).strip() if pd.notna(row.get('Revisor')) else hist_rev
+                                
+                                data_val = str(row.get('Data_Sessao', hist_sessao)).strip() if pd.notna(row.get('Data_Sessao')) else hist_sessao
+                                tipo_val = str(row.get('Tipo_Sessao', hist_tipo)).strip() if pd.notna(row.get('Tipo_Sessao')) else hist_tipo
+                                
+                                if " " in data_val and "-" in data_val:
+                                    try:
+                                        data_val = datetime.strptime(data_val.split()[0], "%Y-%m-%d").strftime("%d/%m/%Y")
+                                    except: pass
+
+                                if p_limpo and not processo_existe(p_limpo):
+                                    data_historico = f"{data_val} 23:59:59"
+                                    try:
+                                        conn.client.table("processos").insert({
+                                            "numero_processo": p_limpo, 
+                                            "relator": r_limpo, 
+                                            "tipo_sessao": tipo_val,     
+                                            "nome_sessao": data_val,     
+                                            "expedicao": exp_val, 
+                                            "revisao": rev_val,   
+                                            "data_entrada": data_historico, "data_expedido": data_historico, "data_revisado": data_historico, "data_conclusao": data_historico,
+                                            "expedido_ok": 1, "revisado_ok": 1, "despachado": 1, "urgente": 0,
+                                            "enviado_email": 0, "enviado_mensageria": 0, "recebido": 0
+                                        }).execute()
+                                        sucessos += 1
+                                    except Exception as e: 
+                                        st.error(f"❌ Erro ao tentar inserir o processo {p_limpo}: {e}")
+                                        
+                                barra.progress((index + 1) / len(df_up))
+                                
+                        elif hist_proc:
+                            p_limpo, r_limpo = higienizar_dados(hist_proc, hist_rel)
+                            if not processo_existe(p_limpo):
+                                try:
+                                    conn.client.table("processos").insert({
+                                        "numero_processo": p_limpo, "relator": r_limpo, "tipo_sessao": hist_tipo, 
+                                        "nome_sessao": hist_sessao, "expedicao": hist_exp, "revisao": hist_rev, 
+                                        "data_entrada": agora, "data_expedido": agora, "data_revisado": agora, "data_conclusao": agora,
+                                        "expedido_ok": 1, "revisado_ok": 1, "despachado": 1, "urgente": 0,
+                                        "enviado_email": 0, "enviado_mensageria": 0, "recebido": 0
+                                    }).execute()
+                                    sucessos += 1
+                                except: pass
+                            else: st.error("❌ Este processo já existe no sistema.")
+                        
+                        if sucessos > 0:
+                            st.success(f"🎉 {sucessos} processos recuperados e enviados direto para o Histórico da pauta '{hist_sessao}'!")
+                            time.sleep(2)
+                            st.rerun()
+                        else:
+                            st.warning("⚠️ Nenhum processo novo foi inserido.")
+
+                               
                 st.subheader("🧹 MODO LIMPEZA: Apagar Banco de Dados")
                 st.write("Escolha se deseja apagar apenas os processos de um período específico ou resetar todo o sistema.")
                 tipo_limpeza = st.radio("Selecione a ação:", ["Limpar por Período", "Modo Nuclear (Zerar Tudo)"], horizontal=True)
