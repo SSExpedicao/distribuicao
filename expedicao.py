@@ -1102,39 +1102,54 @@ with aba_oficios:
             except: pass
 
 # ------------------------------------------
-# ABA 2.7: RELATÓRIO DE EXPEDIÇÃO INDIVIDUAL (CORRIGIDO)
+# ABA 2.7: RELATÓRIO DE EXPEDIÇÃO INDIVIDUAL (COM FILTRO DE SESSÃO)
 # ------------------------------------------
 with aba_oficios_relatorio:
     st.header("📄 Relatório de Expedição Individual")
     
-    col_r1, col_r2 = st.columns([1, 2])
+    # Dividimos o topo igualmente para os dois filtros
+    col_r1, col_r2 = st.columns(2)
     with col_r1:
-        colab_rel = st.selectbox("Selecione o Colaborador:", TODOS_NOMES, key="rel_colab")
+        colab_rel = st.selectbox("Selecione o Colaborador (Expedidor):", TODOS_NOMES, key="rel_colab")
         
     if colab_rel:
-        # 1. Busca estritamente os processos ATIVOS (despachado=0) onde o usuário é o EXPEDIDOR
+        # 1. Busca os processos ATIVOS onde o usuário é o EXPEDIDOR e puxa o NOME DA SESSÃO junto
         try:
-            dados_processos = conn.client.table("processos").select("numero_processo, precisa_correcao").eq("expedicao", colab_rel).eq("despachado", 0).execute().data
+            dados_processos = conn.client.table("processos").select("numero_processo, precisa_correcao, nome_sessao").eq("expedicao", colab_rel).eq("despachado", 0).execute().data
             df_proc_ativos = pd.DataFrame(dados_processos)
         except:
             df_proc_ativos = pd.DataFrame()
             
         if not df_proc_ativos.empty:
+            # Puxa apenas as sessões onde o colaborador tem pendências reais agora
+            sessoes_ativas_colab = df_proc_ativos['nome_sessao'].unique().tolist()
+            
+            # Filtro Inteligente de Sessão
+            with col_r2:
+                sessao_selecionada = st.selectbox("Filtre por Sessão:", ["Todas as Sessões"] + sessoes_ativas_colab, key="rel_sessao")
+                
+            # Aplica o filtro na tabela antes de gerar a visualização
+            if sessao_selecionada != "Todas as Sessões":
+                df_proc_ativos = df_proc_ativos[df_proc_ativos['nome_sessao'] == sessao_selecionada]
+                
             lista_processos = df_proc_ativos['numero_processo'].unique().tolist()
             
-            # 2. Busca os ofícios/memorandos que pertencem a ESSES processos ativos
+            # 2. Busca os ofícios/memorandos apenas dos processos filtrados
             try:
                 dados_oficios = conn.client.table("oficios").select("*").in_("numero_processo", lista_processos).execute().data
                 df_oficios_ativos = pd.DataFrame(dados_oficios)
             except:
                 df_oficios_ativos = pd.DataFrame()
             
-            st.subheader(f"📋 Checklist de Trabalho: {colab_rel}")
-            st.write("Abaixo estão seus processos ativos como Expedidor. Use para conferir e passar a limpo no Tribunal:")
+            st.subheader(f"📋 Checklist de Trabalho")
+            if sessao_selecionada == "Todas as Sessões":
+                st.write(f"Exibindo **todas as pendências globais** de {colab_rel}.")
+            else:
+                st.write(f"Exibindo apenas processos da **{sessao_selecionada}**.")
+            st.markdown("---")
             
-            # Varre a lista de processos do colaborador
+            # Varre a lista de processos filtrados do colaborador
             for proc in lista_processos:
-                # Descobre o status do processo (para ver se é isento)
                 status_proc = df_proc_ativos[df_proc_ativos['numero_processo'] == proc]['precisa_correcao'].values[0]
                 
                 with st.expander(f"📦 Processo: {proc}"):
@@ -1144,7 +1159,6 @@ with aba_oficios_relatorio:
                     elif not df_oficios_ativos.empty and proc in df_oficios_ativos['numero_processo'].values:
                         oficios_proc = df_oficios_ativos[df_oficios_ativos['numero_processo'] == proc]
                         
-                        # Separa por categoria para organizar a mente do operador
                         df_ofic = oficios_proc[oficios_proc['categoria'] != "Memorando (Envio Interno)"]
                         df_memo = oficios_proc[oficios_proc['categoria'] == "Memorando (Envio Interno)"]
                         
@@ -1160,9 +1174,11 @@ with aba_oficios_relatorio:
                                 status_envio = "✅ Despachado no SADE" if row.get('oficio_despachado') == 1 else "⏳ Pendente de Envio"
                                 st.write(f"- Nº {row['numero_oficio']} | Destino: {row['destinatario']} -> *{status_envio}*")
                     else:
-                        st.info("⏳ Nenhum documento cadastrado para este processo ainda. Cadastre na Aba 2.5.")
+                        st.warning("⏳ Nenhum documento cadastrado para este processo ainda. Cadastre na Aba 2.5.")
         else:
-            st.info(f"✨ Excelente! {colab_rel} não possui nenhum processo ativo como Expedidor no momento.")
+            with col_r2:
+                st.selectbox("Filtre por Sessão:", ["Nenhuma pendência"], disabled=True)
+            st.info(f"✨ Excelente! **{colab_rel}** não possui processos ativos aguardando despacho.")
 
 # ------------------------------------------
 # ABA 3: HISTÓRICO, EXCLUSÕES E AVISOS
