@@ -142,8 +142,11 @@ def apagar_sessao_especifica(tipo_sessao, nome_sessao, motivo):
     except: pass
 
 def carregar_excluidos():
-    try: return pd.DataFrame(conn.client.table("processos_excluidos").select("*").execute().data)
-    except: return pd.DataFrame()
+    try: 
+        dados = buscar_todos_paginado("processos_excluidos")
+        return pd.DataFrame(dados)
+    except: 
+        return pd.DataFrame()
     
 def processo_existe(numero_processo, nome_sessao):
     try:
@@ -455,12 +458,50 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
     
     return True, f"✅ Distribuído! Exp: {responsavel_expedicao} | Rev: {responsavel_revisao}"
 
+def buscar_todos_paginado(nome_tabela, coluna_eq=None, valor_eq=None):
+    """
+    Faz requisições em lotes (páginas) para burlar o limite padrão de 1000 linhas do Supabase.
+    Garante que o histórico seja ilimitado.
+    """
+    todos_dados = []
+    inicio = 0
+    tamanho_lote = 1000
+
+    while True:
+        query = conn.client.table(nome_tabela).select("*")
+        
+        # Aplica o filtro se ele existir (ex: puxar só "Sessão Ordinária")
+        if coluna_eq and valor_eq:
+            query = query.eq(coluna_eq, valor_eq)
+
+        # .range(inicio, fim) é o que faz a mágica da paginação no Supabase
+        resposta = query.range(inicio, inicio + tamanho_lote - 1).execute()
+
+        # Se não vier nada, quebra o loop
+        if not resposta.data:
+            break
+
+        todos_dados.extend(resposta.data)
+
+        # Se veio um lote menor que 1000, significa que era a última página
+        if len(resposta.data) < tamanho_lote:
+            break
+
+        inicio += tamanho_lote
+
+    return todos_dados
+
 def carregar_dados_sqlite(tipo_sessao=None):
     try:
-        if tipo_sessao: dados = conn.client.table("processos").select("*").eq("tipo_sessao", tipo_sessao).execute().data
-        else: dados = conn.client.table("processos").select("*").execute().data
+        if tipo_sessao:
+            # Puxa tudo paginado filtrando pelo tipo de sessão
+            dados = buscar_todos_paginado("processos", "tipo_sessao", tipo_sessao)
+        else:
+            # Puxa o banco inteiro paginado
+            dados = buscar_todos_paginado("processos")
         return pd.DataFrame(dados)
-    except: return pd.DataFrame()
+    except: 
+        return pd.DataFrame()
 
 def restaurar_backup(df_backup):
     try:
