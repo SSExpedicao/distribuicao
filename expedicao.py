@@ -654,10 +654,11 @@ if not df_avisos.empty:
 if 'gestor_autenticado' not in st.session_state:
     st.session_state.gestor_autenticado = False
 
-aba_inserir, aba_sessoes, aba_oficios, aba_historico, aba_gestao, aba_ajuda = st.tabs([
+aba_inserir, aba_sessoes, aba_oficios, aba_oficios_relatorio, aba_historico, aba_gestao, aba_ajuda = st.tabs([
     "📥 1. Inserir Novos",
     "🗂️ 2. Painel Ativo",
     "✉️ 2.5. Controle de Ofícios",
+    "📄 2.7. Relatório de Expedição", # <-- Nova Aba adicionada
     "🗄️ 3. Histórico",
     "⚙️ 4. Gestão Administrativa (Restrito)",
     "❓ 5. Ajuda & Glossário"
@@ -1115,6 +1116,39 @@ with aba_oficios:
                 else:
                     st.warning("Nenhum ofício cadastrado para este processo ainda.")
             except: pass
+
+# ------------------------------------------
+# ABA 2.7: RELATÓRIO DE EXPEDIÇÃO INDIVIDUAL
+# ------------------------------------------
+with aba_oficios_relatorio: # Lembre-se de adicionar 'aba_oficios_relatorio' na sua lista de st.tabs lá em cima
+    st.header("📄 Relatório de Expedição Individual")
+    
+    col_r1, col_r2 = st.columns([1, 2])
+    with col_r1:
+        colab_rel = st.selectbox("Selecione o Colaborador:", TODOS_NOMES, key="rel_colab")
+        if st.button("📋 Gerar Relatório de Produção"):
+            # Busca todos os ofícios expedidos pelo colaborador
+            df_prod = pd.DataFrame(conn.client.table("oficios").select("*").eq("quem_expediu", colab_rel).eq("oficio_despachado", 1).execute().data)
+            
+            if not df_prod.empty:
+                st.subheader(f"Produção de: {colab_rel}")
+                
+                # Agrupa por processo
+                for proc in df_prod['numero_processo'].unique():
+                    with st.expander(f"Processo: {proc}"):
+                        oficios_proc = df_prod[df_prod['numero_processo'] == proc]
+                        
+                        # Exibe ofícios
+                        st.markdown("**✉️ Ofícios expedidos:**")
+                        for _, row in oficios_proc[oficios_proc['categoria'] != "Memorando (Envio Interno)"].iterrows():
+                            st.write(f"- {row['numero_oficio']} | Destino: {row['destinatario']} ({row['categoria']})")
+                        
+                        # Exibe memorandos
+                        st.markdown("**📝 Memorandos expedidos:**")
+                        for _, row in oficios_proc[oficios_proc['categoria'] == "Memorando (Envio Interno)"].iterrows():
+                            st.write(f"- {row['numero_oficio']} | Destino: {row['destinatario']}")
+            else:
+                st.info("Nenhum ofício/memorando registrado para este colaborador.")
 
 # ------------------------------------------
 # ABA 3: HISTÓRICO, EXCLUSÕES E AVISOS
