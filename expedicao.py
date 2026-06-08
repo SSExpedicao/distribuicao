@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datetime import datetime, date, timedelta
+import datetime
 import io
 import time
 import unicodedata
@@ -24,17 +24,17 @@ conn = st.connection("supabase", type=SupabaseConnection)
 def gerar_avisos_letreiro_automaticos():
     avisos_sistema = []
     
-    # Usando diretamente os nomes importados no topo do arquivo
-    hoje = date.today() 
+    # Agora usamos o módulo 'datetime' importado inteiramente
+    hoje = datetime.date.today()
     hoje_str = hoje.strftime('%Y-%m-%d')
     
     # 1. Busca Trocas de Escala Ativas
     try:
         trocas = conn.client.table("trocas_escala").gte("data_nova", hoje_str).execute().data
         for t in trocas:
-            # Usando a classe datetime importada
-            d_orig = datetime.strptime(t['data_original'], '%Y-%m-%d').strftime('%d/%m')
-            d_nova = datetime.strptime(t['data_nova'], '%Y-%m-%d').strftime('%d/%m')
+            # Usando datetime.datetime (módulo . classe)
+            d_orig = datetime.datetime.strptime(t['data_original'], '%Y-%m-%d').strftime('%d/%m')
+            d_nova = datetime.datetime.strptime(t['data_nova'], '%Y-%m-%d').strftime('%d/%m')
             avisos_sistema.append(f"🔄 ESCALA: {t['usuario']} alterou seu dia presencial de {d_orig} para {d_nova}.")
     except:
         pass
@@ -43,12 +43,12 @@ def gerar_avisos_letreiro_automaticos():
     try:
         afastamentos = conn.client.table("afastamentos").execute().data
         for a in afastamentos:
-            dt_ini = datetime.strptime(a['data_inicio'], '%Y-%m-%d').date()
-            dt_fim = datetime.strptime(a['data_fim'], '%Y-%m-%d').date()
+            dt_ini = datetime.datetime.strptime(a['data_inicio'], '%Y-%m-%d').date()
+            dt_fim = datetime.datetime.strptime(a['data_fim'], '%Y-%m-%d').date()
             
             # Regra para Atestado Médico
             if a['tipo'] == "Atestado Médico" and dt_ini <= hoje <= dt_fim:
-                retorno = (dt_fim + timedelta(days=1)).strftime('%d/%m')
+                retorno = (dt_fim + datetime.timedelta(days=1)).strftime('%d/%m')
                 avisos_sistema.append(f"🩺 ATESTADO: {a['usuario']} afastado por motivos médicos. Retorno previsto: {retorno}.")
                 
             # Regra para Férias
