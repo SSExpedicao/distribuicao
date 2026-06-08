@@ -1127,9 +1127,7 @@ with aba_gestao:
             
             # (O restante do código que já existia no sub_controle continua normal daqui para baixo)
             if not df_geral_status.empty:
-                data_selecionada = st.selectbox("📅 Data da Sessão (OKs):", sorted(df_geral_status['nome_sessao'].unique(), reverse=True))
-            if not df_geral_status.empty:
-                data_selecionada = st.selectbox("📅 Data da Sessão (OKs):", sorted(df_geral_status['nome_sessao'].unique(), reverse=True))
+                data_selecionada = st.selectbox("📅 Data da Sessão (OKs):", sorted(df_geral_status['nome_sessao'].unique(), reverse=True), key="chave_data_oks_gestao")
                 df_filtrado = df_geral_status[df_geral_status['nome_sessao'] == data_selecionada]
                 col_exp, col_rev = st.columns(2)
                 with col_exp: st.dataframe(df_filtrado['expedicao'].value_counts().reset_index(), hide_index=True)
