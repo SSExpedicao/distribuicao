@@ -749,19 +749,33 @@ with aba_historico:
             df_historico_display = df_historico_display.rename(columns={'numero_processo': 'Processo', 'urgente': 'urgente_flag', 'relator': 'Conselheiro', 'expedicao': 'Expedidor', 'revisao': 'Revisor', 'data_conclusao': 'Data/Hora Conclusão', 'tipo_sessao': 'Tipo de Sessão', 'nome_sessao': 'Data da Sessão'})
             
             with st.expander("🔎 Filtros de Busca Avançada", expanded=True):
-                col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+                # Mudamos para 5 colunas para caber o novo filtro
+                col_f1, col_t1, col_f2, col_f3, col_f4 = st.columns(5)
+                
                 with col_f1:
                     datas_unicas = sorted(df_historico_display['Data da Sessão'].unique(), reverse=True)
                     filtro_sessao = st.multiselect("📅 Data da Sessão", options=datas_unicas)
+                
+                # --- NOVO FILTRO DE TIPO DE SESSÃO AQUI ---
+                with col_t1:
+                    tipos_unicos = sorted(df_historico_display['Tipo de Sessão'].dropna().unique())
+                    filtro_tipo = st.multiselect("📌 Tipo de Sessão", options=tipos_unicos)
+                # ------------------------------------------
+                
                 with col_f2:
-                    filtro_usuario = st.multiselect("👥 Colaborador (Exp/Rev)", options=TODOS_NOMES)
+                    filtro_usuario = st.multiselect("👥 Colaborador", options=TODOS_NOMES)
                 with col_f3:
                     filtro_processo = st.text_input("📄 Nº do Processo", placeholder="Ex: 12345")
                 with col_f4:
                     filtro_relator = st.text_input("⚖️ Relator", placeholder="Nome...")
 
+            # Atualizando a lógica de cruzamento para incluir o novo filtro
             df_filtrado_hist = df_historico_display.copy()
             if filtro_sessao: df_filtrado_hist = df_filtrado_hist[df_filtrado_hist['Data da Sessão'].isin(filtro_sessao)]
+            
+            # --- ATIVANDO A BUSCA DO NOVO FILTRO ---
+            if filtro_tipo: df_filtrado_hist = df_filtrado_hist[df_filtrado_hist['Tipo de Sessão'].isin(filtro_tipo)]
+            
             if filtro_usuario: df_filtrado_hist = df_filtrado_hist[df_filtrado_hist['Expedidor'].isin(filtro_usuario) | df_filtrado_hist['Revisor'].isin(filtro_usuario)]
             if filtro_processo: df_filtrado_hist = df_filtrado_hist[df_filtrado_hist['Processo'].astype(str).str.contains(filtro_processo, case=False, na=False)]
             if filtro_relator: df_filtrado_hist = df_filtrado_hist[df_filtrado_hist['Conselheiro'].astype(str).str.contains(filtro_relator, case=False, na=False)]
