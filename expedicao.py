@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import datetime
+import datetime # Importa o módulo oficial do Python
 import io
 import time
 import unicodedata
@@ -24,7 +24,7 @@ conn = st.connection("supabase", type=SupabaseConnection)
 def gerar_avisos_letreiro_automaticos():
     avisos_sistema = []
     
-    # Usando o módulo 'datetime' importado corretamente
+    # Agora estamos usando o módulo oficial 'datetime'
     hoje = datetime.date.today()
     hoje_str = hoje.strftime('%Y-%m-%d')
     
@@ -57,6 +57,7 @@ def gerar_avisos_letreiro_automaticos():
         pass
         
     return avisos_sistema
+
 
 # ==========================================
 # 4. CONSTRUÇÃO DA TELA (O Letreiro)
