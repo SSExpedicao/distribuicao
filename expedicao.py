@@ -551,6 +551,18 @@ def liberar_processo_chefia(numero_processo, justificativa, usuario="Chefia"):
         return True, f"✅ Processo {numero_processo} forçado para o histórico com sucesso!"
     except Exception as e:
         return False, f"❌ Erro interno: {e}"
+def tem_oficio_cadastrado(numero_processo):
+    try:
+        res = conn.client.table("oficios").select("id", count="exact").eq("numero_processo", numero_processo).execute()
+        return res.count > 0
+    except: return False
+
+def verificar_oficios_pendentes(numero_processo):
+    try:
+        # Busca ofícios ligados a este processo que AINDA NÃO foram despachados (0)
+        res = conn.client.table("oficios").select("id", count="exact").eq("numero_processo", numero_processo).eq("oficio_despachado", 0).execute()
+        return res.count > 0 # Retorna True se tiver alguma pendência
+    except: return False
         
 # ==========================================
 # 3. FRONTEND: RENDERIZAÇÃO DA INTERFACE UI
@@ -578,9 +590,10 @@ if not df_avisos.empty:
 if 'gestor_autenticado' not in st.session_state:
     st.session_state.gestor_autenticado = False
 
-aba_inserir, aba_sessoes, aba_historico, aba_gestao, aba_ajuda = st.tabs([
+aba_inserir, aba_sessoes, aba_oficios, aba_historico, aba_gestao, aba_ajuda = st.tabs([
     "📥 1. Inserir Novos",
     "🗂️ 2. Painel Ativo",
+    "✉️ 2.5. Controle de Ofícios",
     "🗄️ 3. Histórico",
     "⚙️ 4. Gestão Administrativa (Restrito)",
     "❓ 5. Ajuda & Glossário"
@@ -709,53 +722,106 @@ with aba_sessoes:
 
     def exibir_tabela_interativa(df_filtrado, key_prefix, data_sessao, tipo_sessao_tb):
         titulo_placeholder = st.empty()
-        cols_base = ['id', 'urgente', 'numero_processo', 'relator', 'expedicao', 'expedido_ok', 'revisao', 'revisado_ok']
-        if tipo_sessao_tb == "Sessão Reservada": cols_base.extend(['enviado_email', 'enviado_mensageria', 'recebido'])
-        cols_base.append('despachado')
+        
+        # Garante que as colunas de quarentena existam para não dar erro
+        if 'precisa_correcao' not in df_filtrado.columns: df_filtrado['precisa_correcao'] = 0
+        if 'motivo_correcao' not in df_filtrado.columns: df_filtrado['motivo_correcao'] = ""
+        
+        # DIVISÃO DA TELA: Normais vs Quarentena
+        df_normais = df_filtrado[df_filtrado['precisa_correcao'] == 0].copy()
+        df_quarentena = df_filtrado[df_filtrado['precisa_correcao'] == 1].copy()
 
-        df_exibicao = df_filtrado[cols_base].copy()
-        bool_cols = ['expedido_ok', 'revisado_ok', 'despachado']
-        if tipo_sessao_tb == "Sessão Reservada": bool_cols.extend(['enviado_email', 'enviado_mensageria', 'recebido'])
-        df_exibicao[bool_cols] = df_exibicao[bool_cols].astype(bool)
+        # ------------------- 1. TABELA PRINCIPAL -------------------
+        if not df_normais.empty:
+            cols_base = ['id', 'urgente', 'numero_processo', 'relator', 'expedicao', 'expedido_ok', 'revisao', 'revisado_ok']
+            if tipo_sessao_tb == "Sessão Reservada": cols_base.extend(['enviado_email', 'enviado_mensageria', 'recebido'])
+            cols_base.append('despachado')
 
-        rename_dict = {'numero_processo': 'Processo', 'urgente': 'urgente_flag', 'relator': 'Relator', 'expedicao': 'Expedição', 'expedido_ok': 'Expedido', 'revisao': 'Revisão', 'revisado_ok': 'Revisado', 'despachado': 'Despachado'}
-        if tipo_sessao_tb == "Sessão Reservada": rename_dict.update({'enviado_email': 'E-mail', 'enviado_mensageria': 'Mensageria', 'recebido': 'Recebido'})
+            df_exibicao = df_normais[cols_base].copy()
+            bool_cols = ['expedido_ok', 'revisado_ok', 'despachado']
+            if tipo_sessao_tb == "Sessão Reservada": bool_cols.extend(['enviado_email', 'enviado_mensageria', 'recebido'])
+            df_exibicao[bool_cols] = df_exibicao[bool_cols].astype(bool)
 
-        df_exibicao = df_exibicao.rename(columns=rename_dict)
-        styled_df = df_exibicao.style.apply(color_urgentes, axis=1)
+            rename_dict = {'numero_processo': 'Processo', 'urgente': 'urgente_flag', 'relator': 'Relator', 'expedicao': 'Expedição', 'expedido_ok': 'Expedido', 'revisao': 'Revisão', 'revisado_ok': 'Revisado', 'despachado': 'Despachado'}
+            if tipo_sessao_tb == "Sessão Reservada": rename_dict.update({'enviado_email': 'E-mail', 'enviado_mensageria': 'Mensageria', 'recebido': 'Recebido'})
 
-        cfg_colunas = {"id": None, "urgente_flag": None, "Processo": st.column_config.TextColumn(disabled=True), "Relator": st.column_config.TextColumn(disabled=True), "Expedição": st.column_config.SelectboxColumn("Expedição", options=TODOS_NOMES, required=True), "Revisão": st.column_config.SelectboxColumn("Revisão", options=TODOS_NOMES, required=True)}
-        if tipo_sessao_tb == "Sessão Reservada": cfg_colunas.update({"E-mail": st.column_config.CheckboxColumn("E-mail"), "Mensageria": st.column_config.CheckboxColumn("Mensageria"), "Recebido": st.column_config.CheckboxColumn("Recebido")})
+            df_exibicao = df_exibicao.rename(columns=rename_dict)
+            styled_df = df_exibicao.style.apply(color_urgentes, axis=1)
 
-        pendentes = len(df_exibicao[df_exibicao['Despachado'] == False])
-        if pendentes > 0: titulo_placeholder.markdown(f"##### 📅 {data_sessao} | ⏳ {pendentes} Pendentes", unsafe_allow_html=True)
-        else: titulo_placeholder.markdown(f"##### 📅 {data_sessao} | ✅ Concluído!", unsafe_allow_html=True)
+            cfg_colunas = {"id": None, "urgente_flag": None, "Processo": st.column_config.TextColumn(disabled=True), "Relator": st.column_config.TextColumn(disabled=True), "Expedição": st.column_config.SelectboxColumn("Expedição", options=TODOS_NOMES, required=True), "Revisão": st.column_config.SelectboxColumn("Revisão", options=TODOS_NOMES, required=True)}
+            if tipo_sessao_tb == "Sessão Reservada": cfg_colunas.update({"E-mail": st.column_config.CheckboxColumn("E-mail"), "Mensageria": st.column_config.CheckboxColumn("Mensageria"), "Recebido": st.column_config.CheckboxColumn("Recebido")})
 
-        with st.form(key=f"form_{key_prefix}_{data_sessao}"):
-            edited_df = st.data_editor(styled_df, column_config=cfg_colunas, hide_index=True, use_container_width=True, key=f"{key_prefix}_{data_sessao}")
-            submit_button = st.form_submit_button("💾 Salvar Alterações desta Sessão", type="primary")
+            pendentes = len(df_exibicao[df_exibicao['Despachado'] == False])
+            if pendentes > 0: titulo_placeholder.markdown(f"##### 📅 {data_sessao} | ⏳ {pendentes} Pendentes", unsafe_allow_html=True)
+            else: titulo_placeholder.markdown(f"##### 📅 {data_sessao} | ✅ Concluído!", unsafe_allow_html=True)
 
-            if submit_button:
-                alteracoes_feitas = 0
-                mapa_banco = {'Expedição': 'expedicao', 'Revisão': 'revisao', 'Expedido': 'expedido_ok', 'Revisado': 'revisado_ok', 'Despachado': 'despachado', 'E-mail': 'enviado_email', 'Mensageria': 'enviado_mensageria', 'Recebido': 'recebido'}
-                for i in range(len(edited_df)):
-                    linha_nova = edited_df.iloc[i].to_dict()
-                    linha_antiga = df_exibicao.iloc[i].to_dict()
-                    if linha_nova != linha_antiga:
-                        mudancas = {}
-                        for col_tela, col_banco in mapa_banco.items():
-                            if col_tela in linha_nova and linha_nova[col_tela] != linha_antiga.get(col_tela):
-                                val = linha_nova[col_tela]
-                                if col_tela in ['Expedido', 'Revisado', 'Despachado', 'E-mail', 'Mensageria', 'Recebido']: mudancas[col_banco] = 1 if val else 0
-                                else: mudancas[col_banco] = val
-                        if mudancas:
-                            atualizar_processo(int(linha_nova['id']), mudancas)
-                            alteracoes_feitas += 1
-                if alteracoes_feitas > 0:
-                    st.toast(f"✅ {alteracoes_feitas} processo(s) atualizado(s) no banco!")
-                    time.sleep(1) 
-                    st.rerun() 
-                else: st.toast("⚠️ Nenhuma alteração detectada.")
+            with st.form(key=f"form_{key_prefix}_{data_sessao}"):
+                edited_df = st.data_editor(styled_df, column_config=cfg_colunas, hide_index=True, use_container_width=True, key=f"{key_prefix}_{data_sessao}")
+                submit_button = st.form_submit_button("💾 Salvar Alterações desta Sessão", type="primary")
+
+                if submit_button:
+                    alteracoes_feitas = 0
+                    bloqueio_ativo = False
+                    mapa_banco = {'Expedição': 'expedicao', 'Revisão': 'revisao', 'Expedido': 'expedido_ok', 'Revisado': 'revisado_ok', 'Despachado': 'despachado', 'E-mail': 'enviado_email', 'Mensageria': 'enviado_mensageria', 'Recebido': 'recebido'}
+                    
+                    for i in range(len(edited_df)):
+                        linha_nova = edited_df.iloc[i].to_dict()
+                        linha_antiga = df_exibicao.iloc[i].to_dict()
+                        if linha_nova != linha_antiga:
+                            
+                            # --- A TRAVA MESTRE DE SEGURANÇA ---
+                            if linha_nova.get('Despachado') == True and linha_antiga.get('Despachado') == False:
+                                if tipo_sessao_tb in ["Sessão Ordinária", "Sessão Ordinária Virtual"]:
+                                    if not tem_oficio_cadastrado(linha_nova['Processo']):
+                                        st.error(f"🚨 ERRO: O processo {linha_nova['Processo']} não possui nenhum ofício cadastrado!")
+                                        bloqueio_ativo = True
+                                        continue
+                                    if verificar_oficios_pendentes(linha_nova['Processo']):
+                                        st.error(f"🚨 ERRO: O processo {linha_nova['Processo']} possui ofícios pendentes. Despache os ofícios na Aba 2.5 primeiro!")
+                                        bloqueio_ativo = True
+                                        continue
+                            # -----------------------------------
+                            
+                            mudancas = {}
+                            for col_tela, col_banco in mapa_banco.items():
+                                if col_tela in linha_nova and linha_nova[col_tela] != linha_antiga.get(col_tela):
+                                    val = linha_nova[col_tela]
+                                    if col_tela in ['Expedido', 'Revisado', 'Despachado', 'E-mail', 'Mensageria', 'Recebido']: mudancas[col_banco] = 1 if val else 0
+                                    else: mudancas[col_banco] = val
+                            if mudancas:
+                                atualizar_processo(int(linha_nova['id']), mudancas)
+                                alteracoes_feitas += 1
+                                
+                    if alteracoes_feitas > 0 and not bloqueio_ativo:
+                        st.toast(f"✅ {alteracoes_feitas} processo(s) atualizado(s) no banco!")
+                        time.sleep(1) 
+                        st.rerun()
+                    elif bloqueio_ativo:
+                        st.warning("⚠️ Algumas alterações foram desfeitas pela Trava de Segurança.")
+                        
+        # ------------------- 2. TABELA DE QUARENTENA E DEVOLUÇÃO -------------------
+        st.markdown("<br>", unsafe_allow_html=True)
+        if not df_quarentena.empty:
+            st.error("🚨 PROCESSOS EM QUARENTENA (Aguardando Correção na Aba de Ofícios)")
+            df_q_exib = df_quarentena[['numero_processo', 'relator', 'motivo_correcao', 'expedicao']].rename(columns={'numero_processo':'Processo', 'relator':'Relator', 'motivo_correcao':'Motivo do Erro', 'expedicao':'Expedidor (Responsável)'})
+            st.dataframe(df_q_exib, hide_index=True, use_container_width=True)
+            
+        # Botão do Revisor
+        with st.expander("❌ Ocorreu um erro? Devolver processo para Correção (Enviar para Quarentena)"):
+            col_q1, col_q2, col_q3 = st.columns([2, 4, 2])
+            with col_q1: p_quar = st.selectbox("Selecione o Processo:", df_filtrado['numero_processo'].tolist(), key=f"q_proc_{data_sessao}")
+            with col_q2: m_quar = st.text_input("Qual o Erro? (Ex: Falta Ofício Sec. de Turismo):", key=f"q_mot_{data_sessao}")
+            with col_q3: 
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("Devolver Processo", type="primary", use_container_width=True, key=f"q_btn_{data_sessao}"):
+                    if m_quar:
+                        conn.client.table("processos").update({"precisa_correcao": 1, "motivo_correcao": m_quar}).eq("numero_processo", p_quar).eq("despachado", 0).execute()
+                        st.success("✅ Processo enviado para a Quarentena!")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.warning("⚠️ Escreva o motivo do erro para o Expedidor saber o que arrumar.")
+        st.markdown("---")
 
     with sub_aba_ord:
         df_ord = carregar_dados_sqlite("Sessão Ordinária")
@@ -788,6 +854,117 @@ with aba_sessoes:
                 chave = f"Sessão Administrativa | {str(data).strip()}"
                 if chave not in sessoes_finalizadas:
                     exibir_tabela_interativa(df_adm[df_adm['nome_sessao'] == data], "adm", data, "Sessão Administrativa")
+
+# ------------------------------------------
+# ABA 2.5: CONTROLE DE OFÍCIOS E QUARENTENA
+# ------------------------------------------
+with aba_oficios:
+    st.header("✉️ Controle e Expedição de Ofícios")
+    
+    # Filtra apenas os processos ativos de sessões ordinárias/virtuais
+    df_ativos_ord = df_geral_status[(df_geral_status['despachado'] == 0) & (df_geral_status['tipo_sessao'].isin(['Sessão Ordinária', 'Sessão Ordinária Virtual']))].copy()
+    
+    if df_ativos_ord.empty:
+        st.success("✨ Pauta limpa! Nenhum processo aguardando ofícios no momento.")
+    else:
+        # 1. Seleção do Processo
+        proc_selecionado = st.selectbox("Selecione o Processo para Expedir Ofícios:", df_ativos_ord['numero_processo'].tolist())
+        
+        # Alerta de Quarentena e Botão de Liberação
+        proc_data = df_ativos_ord[df_ativos_ord['numero_processo'] == proc_selecionado].iloc[0]
+        if proc_data.get('precisa_correcao') == 1:
+            st.error(f"🚨 PROCESSO EM QUARENTENA | Motivo apontado pelo Revisor: **{proc_data.get('motivo_correcao')}**")
+            if st.button("✅ Correção Realizada (Retirar da Quarentena)", type="primary"):
+                conn.client.table("processos").update({"precisa_correcao": 0, "motivo_correcao": ""}).eq("numero_processo", proc_selecionado).execute()
+                st.success("Processo corrigido e liberado para a mesa principal!")
+                time.sleep(1.5)
+                st.rerun()
+        
+        st.markdown("---")
+        
+        # 2. Formulário Interativo de Cadastro (Autocomplete)
+        st.subheader("➕ Cadastrar Novo Ofício")
+        col_o1, col_o2 = st.columns(2)
+        with col_o1: cat_oficio = st.selectbox("Categoria do Destinatário:", ["Jurisdicionado", "Não Jurisdicionado"])
+        with col_o2: 
+            if cat_oficio == "Não Jurisdicionado":
+                tipo_nao_jur = st.selectbox("Especificação:", ["Representante", "Direto para Empresa"])
+            else:
+                tipo_nao_jur = ""
+                st.write("") # Espaçamento
+                
+        # O Cérebro do Autocomplete
+        lista_dest = obter_lista_destinatarios(cat_oficio)
+        opcoes_dest = ["-- Selecionar Existente --"] + lista_dest + ["➕ Cadastrar Novo Destinatário..."]
+        dest_selecionado = st.selectbox("Nome do Destinatário (Busca Automática):", opcoes_dest)
+        
+        dest_final = dest_selecionado
+        if dest_selecionado == "➕ Cadastrar Novo Destinatário...":
+            dest_final = st.text_input("Digite o nome oficial (O sistema vai aprender este nome para a próxima):")
+            
+        col_o3, col_o4 = st.columns(2)
+        with col_o3: num_oficio = st.text_input("Nº do Ofício (Ex: 125/2026):")
+        with col_o4: quem_expede = st.selectbox("Quem está expedindo?", TODOS_NOMES)
+        
+        # Aplicação da Regra Automática (Inversa)
+        if cat_oficio == "Jurisdicionado":
+            fluxo_doc = "Original no Protocolo | Clone no Processo"
+        else:
+            fluxo_doc = "Original no Processo | Clone no Protocolo"
+            
+        st.info(f"💡 **Regra de Vias Aplicada:** {fluxo_doc}")
+        
+        if st.button("💾 Adicionar Ofício", type="primary", use_container_width=True):
+            if dest_final and dest_final != "-- Selecionar Existente --" and num_oficio:
+                ok, m = adicionar_oficio(proc_selecionado, num_oficio, cat_oficio, tipo_nao_jur, dest_final, 1, fluxo_doc, quem_expede)
+                if ok: 
+                    st.success(m)
+                    time.sleep(1)
+                    st.rerun()
+                else: st.error(m)
+            else:
+                st.warning("⚠️ Preencha o Destinatário e o Número do Ofício.")
+                
+        st.markdown("---")
+        
+        # 3. Painel de Baixa dos Ofícios (Checkbox)
+        st.subheader("📋 Ofícios Gerados para este Processo")
+        try:
+            df_oficios = pd.DataFrame(conn.client.table("oficios").select("id, numero_oficio, destinatario, fluxo_documento, oficio_despachado").eq("numero_processo", proc_selecionado).execute().data)
+            if not df_oficios.empty:
+                df_oficios['oficio_despachado'] = df_oficios['oficio_despachado'].astype(bool)
+                
+                ed_oficios = st.data_editor(
+                    df_oficios,
+                    column_config={
+                        "id": None, 
+                        "numero_oficio": st.column_config.TextColumn("Nº Ofício", disabled=True),
+                        "destinatario": st.column_config.TextColumn("Destinatário", disabled=True),
+                        "fluxo_documento": st.column_config.TextColumn("Regra da Via", disabled=True),
+                        "oficio_despachado": st.column_config.CheckboxColumn("Ofício Despachado?")
+                    },
+                    hide_index=True, use_container_width=True, key="ed_ofic"
+                )
+                
+                if st.button("💾 Atualizar Status dos Ofícios", type="primary"):
+                    alterados = 0
+                    for i in range(len(ed_oficios)):
+                        id_ofic = int(ed_oficios.iloc[i]['id'])
+                        novo_status = 1 if ed_oficios.iloc[i]['oficio_despachado'] else 0
+                        status_antigo = 1 if df_oficios.iloc[i]['oficio_despachado'] else 0
+                        
+                        if novo_status != status_antigo:
+                            conn.client.table("oficios").update({"oficio_despachado": novo_status}).eq("id", id_ofic).execute()
+                            alterados += 1
+                    
+                    if alterados > 0:
+                        st.success(f"✅ {alterados} ofício(s) atualizado(s)!")
+                        time.sleep(1)
+                        st.rerun()
+                    else: st.warning("Nenhuma alteração feita.")
+            else:
+                st.warning("Nenhum ofício cadastrado para este processo ainda.")
+        except: pass
 
 # ------------------------------------------
 # ABA 3: HISTÓRICO, EXCLUSÕES E AVISOS
