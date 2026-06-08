@@ -12,22 +12,57 @@ from st_supabase_connection import SupabaseConnection
 # 1. FRONTEND: CONFIGURAÇÃO INICIAL DA PÁGINA
 # ==========================================
 st.set_page_config(page_title="Sistema de Sessões", layout="wide")
-# No topo do seu app, abaixo do título principal do S.A.D.E.
+def gerar_avisos_letreiro_automaticos():
+    avisos_sistema = []
+    hoje = datetime.date.today()
+    hoje_str = hoje.strftime('%Y-%m-%d')
+    amanha_str = (hoje + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+    
+    # 1. Busca Trocas de Escala Ativas
+    try:
+        trocas = conn.client.table("trocas_escala").gte("data_nova", hoje_str).execute().data
+        for t in trocas:
+            d_orig = datetime.datetime.strptime(t['data_original'], '%Y-%m-%d').strftime('%d/%m')
+            d_nova = datetime.datetime.strptime(t['data_nova'], '%Y-%m-%d').strftime('%d/%m')
+            avisos_sistema.append(f"🔄 ESCALA: {t['usuario']} alterou seu dia presencial de {d_orig} para {d_nova}.")
+    except:
+        pass
+
+    # 2. Busca Afastamentos (Férias e Atestados)
+    try:
+        afastamentos = conn.client.table("afastamentos").execute().data
+        for a in afastamentos:
+            dt_ini = datetime.datetime.strptime(a['data_inicio'], '%Y-%m-%d').date()
+            dt_fim = datetime.datetime.strptime(a['data_fim'], '%Y-%m-%d').date()
+            
+            # Regra para Atestado Médico
+            if a['tipo'] == "Atestado Médico" and dt_ini <= hoje <= dt_fim:
+                retorno = (dt_fim + datetime.timedelta(days=1)).strftime('%d/%m')
+                avisos_sistema.append(f"🩺 ATESTADO: {a['usuario']} afastado por motivos médicos. Retorno previsto: {retorno}.")
+                
+            # Regra para Férias
+            elif a['tipo'] == "Férias" and hoje == dt_fim:
+                avisos_sistema.append(f"🏖️ FÉRIAS: O colaborador {a['usuario']} regressará amanhã ao serviço!")
+    except:
+        pass
+        
+    return avisos_sistema
+
+
+# 2. DEPOIS O PYTHON CONSTROI A TELA E CHAMA A FUNÇÃO (Sua Linha 19)
 st.title("🏛️ Sistema S.A.D.E.")
 
-# Coleta os avisos automáticos de escala + seus avisos normais do banco
 avisos_frequencia = gerar_avisos_letreiro_automaticos()
 
-# Exemplo de exibição em formato de caixa de alertas destacados no topo
 if avisos_frequencia:
     with st.container():
         for aviso in avisos_frequencia:
             if "🩺" in aviso:
-                st.info(aviso) # Azul para atestados
+                st.info(aviso)
             elif "🔄" in aviso:
-                st.warning(aviso) # Amarelo para trocas de escala
+                st.warning(aviso)
             else:
-                st.success(aviso) # Verde para regressos de férias
+                st.success(aviso)
                 
 # ==========================================
 # 2. BACKEND: CONEXÃO COM A NUVEM SUPABASE
