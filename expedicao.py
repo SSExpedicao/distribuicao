@@ -1476,48 +1476,43 @@ with aba_gestao:
                         st.warning("⚠️ Você precisa digitar o Nome da Sessão primeiro.")
                     else:
                         agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                        sucessos = 0
                         
                         if arquivo_hist is not None:
-                            if arquivo_hist.name.endswith('.csv'):
-                                try:
-                                    # Tenta ler no padrão universal da internet (UTF-8)
-                                    df_up = pd.read_csv(arquivo_hist, encoding='utf-8-sig')
-                                except UnicodeDecodeError:
-                                    # Se quebrar (salvo pelo Excel no Windows), volta a fita e lê como Latin-1
-                                    arquivo_hist.seek(0)
-                                    df_up = pd.read_csv(arquivo_hist, encoding='latin-1', sep=';')
-                                    # Prevenção: Se a tabela ficar com 1 coluna só, é porque o separador era vírgula
-                                    if len(df_up.columns) == 1:
+                            try:
+                                if arquivo_hist.name.endswith('.csv'):
+                                    try: df_up = pd.read_csv(arquivo_hist, encoding='utf-8-sig')
+                                    except UnicodeDecodeError:
                                         arquivo_hist.seek(0)
-                                        df_up = pd.read_csv(arquivo_hist, encoding='latin-1', sep=',')
-                            else:
-                                # Se for XLSX, lê normal
-                                df_up = pd.read_excel(arquivo_hist)
-                            # ... (código anterior do loop) ...
-                            barra = st.progress(0)
-                            
-                            for index, row in df_up.iterrows():
-                                p_val = str(row['Processo']).strip() if pd.notna(row.get('Processo')) else ""
-                                r_val = str(row.get('Relator', '')).strip() if pd.notna(row.get('Relator')) else ""
-                                p_limpo, r_limpo = higienizar_dados(p_val, r_val)
-                                exp_bruto = str(row.get('Expedidor', hist_exp)).strip() if pd.notna(row.get('Expedidor')) else hist_exp
-                                rev_bruto = str(row.get('Revisor', hist_rev)).strip() if pd.notna(row.get('Revisor')) else hist_rev
-                                exp_val = higienizar_colaborador(exp_bruto, TODOS_NOMES)
-                                rev_val = higienizar_colaborador(rev_bruto, TODOS_NOMES)
-                                data_val = str(row.get('Data_Sessao', hist_sessao)).strip() if pd.notna(row.get('Data_Sessao')) else hist_sessao
-                                tipo_val = str(row.get('Tipo_Sessao', hist_tipo)).strip() if pd.notna(row.get('Tipo_Sessao')) else hist_tipo
+                                        df_up = pd.read_csv(arquivo_hist, encoding='latin-1', sep=';')
+                                        if len(df_up.columns) == 1:
+                                            arquivo_hist.seek(0)
+                                            df_up = pd.read_csv(arquivo_hist, encoding='latin-1', sep=',')
+                                else:
+                                    df_up = pd.read_excel(arquivo_hist)
+                                
+                                barra = st.progress(0)
+                                lote_insercao = [] # 📦 CRIAMOS A CAIXA PARA O BULK INSERT
+                                
+                                for index, row in df_up.iterrows():
+                                    p_val = str(row['Processo']).strip() if pd.notna(row.get('Processo')) else ""
+                                    r_val = str(row.get('Relator', '')).strip() if pd.notna(row.get('Relator')) else ""
+                                    p_limpo, r_limpo = higienizar_dados(p_val, r_val)
+                                    exp_bruto = str(row.get('Expedidor', hist_exp)).strip() if pd.notna(row.get('Expedidor')) else hist_exp
+                                    rev_bruto = str(row.get('Revisor', hist_rev)).strip() if pd.notna(row.get('Revisor')) else hist_rev
+                                    exp_val = higienizar_colaborador(exp_bruto, TODOS_NOMES)
+                                    rev_val = higienizar_colaborador(rev_bruto, TODOS_NOMES)
+                                    data_val = str(row.get('Data_Sessao', hist_sessao)).strip() if pd.notna(row.get('Data_Sessao')) else hist_sessao
+                                    tipo_val = str(row.get('Tipo_Sessao', hist_tipo)).strip() if pd.notna(row.get('Tipo_Sessao')) else hist_tipo
 
-                                if " " in data_val and "-" in data_val:
-                                    try:
-                                        data_val = datetime.strptime(data_val.split()[0], "%Y-%m-%d").strftime("%d/%m/%Y")
-                                    except: pass
+                                    if " " in data_val and "-" in data_val:
+                                        try: data_val = datetime.strptime(data_val.split()[0], "%Y-%m-%d").strftime("%d/%m/%Y")
+                                        except: pass
 
-                                # Substitua a linha do erro por esta (adicionamos , data_val):
-                                if p_limpo and not processo_existe(p_limpo, data_val):
-                                    data_historico = f"{data_val} 23:59:59"
-                                    try:
-                                        conn.client.table("processos").insert({
+                                    if p_limpo and not processo_existe(p_limpo, data_val):
+                                        data_historico = f"{data_val} 23:59:59"
+                                        
+                                        # Em vez de bater no banco, guardamos na caixa:
+                                        lote_insercao.append({
                                             "numero_processo": p_limpo, 
                                             "relator": r_limpo, 
                                             "tipo_sessao": tipo_val,     
@@ -1526,17 +1521,28 @@ with aba_gestao:
                                             "revisao": rev_val,   
                                             "data_entrada": data_historico, "data_expedido": data_historico, "data_revisado": data_historico, "data_conclusao": data_historico,
                                             "expedido_ok": 1, "revisado_ok": 1, "despachado": 1, "urgente": 0,
-                                            "enviado_email": 0, "enviado_mensageria": 0, "recebido": 0
-                                        }).execute()
-                                        sucessos += 1
-                                    except Exception as e: 
-                                        st.error(f"❌ Erro ao tentar inserir o processo {p_limpo}: {e}")
-                                        
-                                barra.progress((index + 1) / len(df_up))
+                                            "enviado_email": 0, "enviado_mensageria": 0, "recebido": 0,
+                                            "precisa_correcao": 0, "motivo_correcao": "" # BLINDAGEM: Garante que não vá pro Painel Ativo
+                                        })
+                                    barra.progress((index + 1) / len(df_up))
+                                
+                                # ENVIAMOS A CAIXA FECHADA PARA A NUVEM
+                                if lote_insercao:
+                                    # Dividimos em blocos de 100 para o Supabase não engasgar
+                                    for i in range(0, len(lote_insercao), 100):
+                                        conn.client.table("processos").insert(lote_insercao[i:i+100]).execute()
+                                    
+                                    st.success(f"🎉 {len(lote_insercao)} processos recuperados e enviados direto para o Histórico!")
+                                    time.sleep(2)
+                                    st.rerun()
+                                else:
+                                    st.warning("⚠️ Nenhum processo novo foi inserido (ou já existiam).")
+
+                            except Exception as e:
+                                st.error(f"❌ Erro crítico ao processar a planilha: {e}")
                                 
                         elif hist_proc:
                             p_limpo, r_limpo = higienizar_dados(hist_proc, hist_rel)
-                            # CORREÇÃO AQUI (passando o hist_sessao):
                             if not processo_existe(p_limpo, hist_sessao):
                                 try:
                                     conn.client.table("processos").insert({
@@ -1544,10 +1550,14 @@ with aba_gestao:
                                         "nome_sessao": hist_sessao, "expedicao": hist_exp, "revisao": hist_rev, 
                                         "data_entrada": agora, "data_expedido": agora, "data_revisado": agora, "data_conclusao": agora,
                                         "expedido_ok": 1, "revisado_ok": 1, "despachado": 1, "urgente": 0,
-                                        "enviado_email": 0, "enviado_mensageria": 0, "recebido": 0
+                                        "enviado_email": 0, "enviado_mensageria": 0, "recebido": 0,
+                                        "precisa_correcao": 0, "motivo_correcao": "" # BLINDAGEM AQUI TAMBÉM
                                     }).execute()
-                                    sucessos += 1
-                                except: pass
+                                    st.success(f"🎉 Processo {p_limpo} enviado para o Histórico!")
+                                    time.sleep(2)
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Erro: {e}")
                             else: st.error("❌ Este processo já existe no sistema.")
                         
                         if sucessos > 0:
