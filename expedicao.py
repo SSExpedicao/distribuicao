@@ -1692,82 +1692,111 @@ with aba_gestao:
             else: st.info("✨ Nenhum afastamento ativo registrado no momento.")
 
 # ------------------------------------------
-# ABA 5: AJUDA E GLOSSÁRIO
+# ABA 5: AJUDA E GLOSSÁRIO (MEGA MANUAL)
 # ------------------------------------------
 with aba_ajuda:
-    st.header("📖 Manual do Usuário S.A.D.E.")
+    st.header("📖 Mega Manual do Usuário e Glossário S.A.D.E.")
     st.markdown("""
-    **Seja muito bem-vindo(a)!** Este manual foi escrito especialmente para ajudar você no dia a dia. Pense no S.A.D.E. (Sistema de Automação de Distribuição e Expedição) como um grande **balcão virtual**. Em vez de termos pilhas de pastas e papéis em cima das mesas físicas, o sistema organiza quem faz o quê no computador, garantindo que ninguém fique sobrecarregado e nenhum prazo seja perdido.
+    **Seja muito bem-vindo(a) ao S.A.D.E.!** *(Sistema de Automação de Distribuição e Expedição)*
+
+    Pense neste sistema como um grande **balcão virtual inteligente**. Em vez de termos pilhas de pastas físicas se perdendo nas mesas, o sistema organiza automaticamente quem faz o quê, rastreia prazos, evita erros de comunicação e garante que nada seja esquecido.
     
-    Clique nos títulos abaixo (nas setinhas) para ler a explicação passo a passo de cada etapa do seu trabalho:
+    Clique nos títulos abaixo para abrir e ler a explicação detalhada de cada etapa do seu trabalho. Se bater a dúvida no dia a dia, a resposta está aqui!
     """)
     
-    with st.expander("📥 ABA 1: Como dar entrada em novos processos (Inserir)"):
+    with st.expander("📥 ABA 1: Como dar entrada em novos processos (Inserir Novos)"):
         st.markdown("""
-        Aqui é a **Recepção** do setor. É onde você avisa ao sistema que chegou trabalho novo. Você tem duas formas de fazer isso:
-        
-        **Opção 1: Digitar um por vez (Inserção Manual)**
-        *(Ideal para quando chegam poucos processos no dia)*
-        1. **Destino:** Escolha para qual "caixa" esse processo vai (Ex: Sessão Ordinária, Reservada, etc.). Se for um processo absurdamente urgente, escolha a opção "Urgente" na lista.
-        2. **Equipe:** O sistema já marca automaticamente o nome de todo mundo que está trabalhando hoje. Se alguém não for participar dessa remessa específica, basta clicar no 'x' ao lado do nome da pessoa para tirá-la do sorteio.
-        3. **Dados:** Digite o número do processo e o nome do Relator nas caixinhas em branco.
-        4. **Concluir:** Clique no botão azul **"Verificar e Processar"**. O sistema vai fazer um sorteio justo e entregar esse processo imediatamente para a "Mesa de Trabalho" da equipe.
-        
-        ---
-        
-        **Opção 2: Importar Planilha (Para colocar vários de uma vez)**
-        *(Ideal para aquele dia de pico, em que chegam 20, 30 processos juntos)*
-        1. Clique no botão cinza **"Baixar Planilha Modelo"**. Isso vai salvar um arquivo no seu computador.
-        2. Abra esse arquivo no seu Excel. Você vai ver duas palavras lá em cima: `Processo` e `Relator`.
-        3. **Regra de Ouro:** Não mude essas palavras e não crie colunas novas. Apenas apague os números de exemplo e copie/cole a sua lista de processos ali embaixo.
-        4. Salve a planilha e feche o Excel.
-        5. Volte para o S.A.D.E., clique na área tracejada e escolha o arquivo que você acabou de salvar.
-        6. Clique no botão azul **"Iniciar Importação"**. O sistema vai ler a planilha e distribuir tudo sozinho em segundos!
+        ### O que é esta aba?
+        É a **Recepção** do setor. Aqui você avisa ao sistema que chegou trabalho novo e para onde ele deve ir.
+
+        ### Passo 1: Configurar a Sessão (O Destino)
+        * **Destino (Tipo de Sessão):** Escolha a "caixa" correta (Ex: Ordinária, Reservada, etc.). 
+        * **🚨 Modo Urgente:** Escolha esta opção APENAS se quiser "acender a luz vermelha" de um processo que **já está** na mesa de trabalho.
+        * **Identificação da Sessão:** O sistema é inteligente. Se o lote chegou hoje, use "Data de Hoje". Se você está adicionando um processo atrasado em uma sessão que já começou ontem, escolha "Adicionar a uma Sessão Existente" para não criar uma pasta separada.
+        * **Equipe:** O sistema seleciona todos os presentes automaticamente para o sorteio de trabalho. Se alguém for ficar de fora desta remessa específica, feche o "x" no nome da pessoa.
+
+        ### Passo 2: Inserir Processos
+        * **Digitar Manualmente:** Ideal para quando chega um ou dois processos. Digite o número, o relator e clique em "Verificar e Processar". O sorteio é na hora.
+        * **Importar Planilha (Em Lote):** Ideal para o dia de pico. Baixe a planilha modelo, cole sua lista de processos (sem alterar os títulos das colunas), faça o upload e clique em "Iniciar Importação". O sistema distribui 50 processos em 3 segundos!
         """)
 
-    with st.expander("🗂️ ABA 2: Como trabalhar nos processos (A Mesa de Trabalho)"):
+    with st.expander("🗂️ ABA 2: Como trabalhar nos processos (O Painel Ativo)"):
         st.markdown("""
-        Esta é a sua **Mesa de Trabalho Diária** (Painel Ativo). Todo o setor visualiza esta mesma tela simultaneamente. Cada linha que aparece na tabela é um processo que aguarda uma ação da equipe.
-        
-        **O que significam as caixinhas para marcar?**
-        * 🔲 **Expedido:** Você deve marcar esta caixinha assim que terminar de redigir/montar o documento inicial.
-        * 🔲 **Revisado:** O colega responsável por conferir o seu trabalho deve marcar esta caixinha quando terminar de ler e concordar que a minuta está correta.
-        * 🔲 **Despachado:** Marque esta caixinha **APENAS** quando o processo estiver 100% pronto, assinado e finalizado no sistema oficial. 
-        
-        **⚠️ O BOTÃO MAIS IMPORTANTE DO SISTEMA:**
-        Sempre que você marcar ou desmarcar qualquer uma dessas caixinhas, você **precisa** descer até o fim da tabela e clicar no botão azul **"💾 Salvar Alterações desta Sessão"**. 
-        *Se você não clicar neste botão de salvar, o sistema não vai guardar o seu serviço e a caixinha vai desmarcar sozinha!*
-        
-        **O que acontece depois que eu marco "Despachado" e salvo?**
-        O processo é considerado finalizado com sucesso. Para manter a tela limpa e organizada, ele **desaparece** da Mesa de Trabalho e é enviado magicamente para a gaveta do "Histórico".
+        ### O que é esta aba?
+        Esta é a sua **Mesa de Trabalho Diária**. O que aparece aqui é o que precisa ser feito HOJE. O sistema é dividido por sub-abas (Ordinária, Reservada, etc.).
+
+        ### Como preencher as caixinhas?
+        1. 🔲 **Expedido:** Marque quando você terminar de redigir/montar a primeira versão do documento.
+        2. 🔲 **Revisado:** O colega que conferiu o seu trabalho marca esta caixa quando tudo estiver correto.
+        3. 🔲 **Despachado:** Marque **APENAS** quando o processo estiver 100% finalizado e assinado no sistema oficial.
+
+        > ⚠️ **A REGRA DE OURO DO SISTEMA:** > Toda vez que você marcar ou desmarcar uma caixinha, você **TEM QUE DESCER ATÉ O FIM DA TABELA E CLICAR EM "💾 SALVAR ALTERAÇÕES"**. Se não clicar, o sistema não grava o seu trabalho!
+
+        ### A Trava Mestre de Segurança (Por que não consigo despachar?)
+        Se você tentar despachar um processo de Sessão Ordinária/Virtual, o sistema vai te bloquear se:
+        * Você esqueceu de criar os ofícios dele na **Aba 2.5**.
+        * Você criou os ofícios, mas esqueceu de dar a "baixa" neles na **Aba 2.5**.
+
+        ### ❌ O Botão de Quarentena (Devolver para Correção)
+        Se você é o Revisor e achou um erro grave (Ex: "Falta ofício para a Sec. de Turismo"), não marque "Revisado". Vá no final da tela, selecione o processo, digite o motivo do erro e clique em **Devolver Processo**. 
+        * O processo vai sumir da tabela principal e cair na tabela vermelha de "Quarentena", com um aviso gigante para o Expedidor corrigir.
         """)
 
-    with st.expander("🗄️ ABA 3: Onde vão parar os processos prontos? (Histórico)"):
+    with st.expander("✉️ ABA 2.5: Como gerar os ofícios (Controle de Ofícios)"):
         st.markdown("""
-        Esta tela funciona como o **Arquivo Morto** e a **Memória** do setor. O que você encontra aqui?
-        
-        * **✅ Arquivo: Concluídas:** Lembra dos processos que você despachou na Aba 2? Quando **todos** os processos de uma mesma sessão/data forem finalizados pela equipe, o lote inteiro vem para cá. Você pode usar os campos de busca para rastrear aquele processo antigo feito meses atrás.
-        * **🗑️ Auditoria: Processos Excluídos:** Se a chefia precisar apagar um processo do sistema por algum erro grave, ele não evapora. Ele fica registrado nesta lixeira de segurança, mostrando o número e o motivo da exclusão para controle interno.
+        ### O que é esta aba?
+        É a **Fábrica de Comunicação**. O processo só termina de verdade quando os interessados são notificados. Esta aba organiza as vias e destinatários.
+
+        ### Passo a Passo de Uso:
+        1. **Filtre a Mesa:** No topo da tela, escolha a Sessão e o seu nome. O sistema vai listar só os processos que estão com você. Selecione o processo que vai trabalhar.
+        2. **Retirar da Quarentena:** Se o processo estiver travado na quarentena (alerta vermelho), corrija o erro e clique em **"✅ Correção Realizada"** para ele voltar para a mesa principal.
+        3. **Cadastrar Ofícios:**
+            * Escolha se é **Jurisdicionado** (Órgãos Públicos) ou **Não Jurisdicionado** (Empresas/Pessoas).
+            * **Busca Inteligente:** Comece a digitar o nome do destinatário. O sistema vai sugerir nomes que já foram usados no passado para você não precisar digitar tudo de novo! Se for um nome inédito, escolha "Cadastrar Novo" e o sistema aprenderá para a próxima.
+            * Coloque o número do ofício e clique em Salvar.
+        4. **Dar a Baixa:** Na parte de baixo da tela, fica a lista de todos os ofícios que você criou para aquele processo. Quando você efetivamente enviá-los, marque a caixinha **"Ofício Despachado"** e clique em Atualizar Status. Só assim a Aba 2 deixará você despachar o processo inteiro!
+
+        > 💡 **Dica de Regra de Vias:** O sistema avisa na tela o que fazer com os papéis. Jurisdicionado = Original no Protocolo e Clone no Processo. Não Jurisdicionado = Original no Processo e Clone no Protocolo.
         """)
 
-    with st.expander("⚙️ ABA 4: O que é a Gestão Administrativa?"):
+    with st.expander("🗄️ ABA 3: Onde vão parar os processos prontos? (O Histórico)"):
         st.markdown("""
-        Esta aba é exclusiva para o funcionamento interno do setor e atua como a **Sala da Chefia**. Por conter dados sensíveis, ela é protegida por senha (🔒). 
+        ### O que é esta aba?
+        Este é o **Arquivo Morto** e a **Memória Permanente** do setor. O banco de dados nunca apaga informações.
+
+        * **✅ Arquivo - Concluídas:** Quando uma sessão inteira é despachada na Aba 2, ela vem para cá. Use os 5 filtros de busca (Data, Tipo, Colaborador, Processo ou Relator) para rastrear rapidamente um documento feito meses atrás.
+        * **🗑️ Auditoria - Excluídos:** Se a chefia deletar um processo que entrou por engano, ele fica salvo nesta Lixeira, informando quem deletou e por qual motivo.
+        * **📢 Auditoria - Avisos:** O histórico de todos os "Alertas Vermelhos" (Letreiros) que já rodaram na tela do setor.
+        * **📋 Histórico de Ofícios:** Uma lista rápida, limpa e direta mostrando todo ofício expedido, seu respectivo processo e o colaborador que assinou o envio. Perfeito para tirar dúvidas rápidas ("A gente já enviou ofício para a empresa X?").
+        * **🌴 Auditoria - Férias:** Registro de licenças, férias e atestados da equipe.
         
-        **Apenas gestores autorizados entram aqui para:**
-        * Apagar processos que foram cadastrados por engano.
-        * Enviar os "Alertas Vermelhos" (Letreiro) para comunicar urgências à equipe.
-        * Cadastrar quem entrou de Férias ou apresentou Atestado Médico (assim o sistema "sabe" que aquela pessoa não está trabalhando e para de enviar processos para o nome dela).
-        * Visualizar gráficos automáticos de produtividade para apresentar à diretoria.
+        > 🔄 **Múltiplos Ritos:** Se o Processo 123 já foi concluído mês passado, mas precisou voltar hoje para o setor por causa de uma nova notificação, não se assuste! O sistema aceita ele de novo e criará um **novo registro independente** no histórico. 
         """)
 
-    with st.expander("📚 DICIONÁRIO DO SISTEMA (Termos Explicados)"):
+    with st.expander("⚙️ ABA 4: O que é a Gestão Administrativa? (Restrito)"):
+        st.markdown("""
+        ### O que é esta aba?
+        É a **Sala da Chefia**, protegida por senha (🔒). É usada pelos gestores para manter o sistema rodando sem erros e analisar a produtividade da equipe.
+
+        ### Ferramentas Disponíveis:
+        * **Controle de Banco de Dados:**
+            * **Liberação Extraordinária:** Um botão "Super Poder" que permite à chefia despachar um processo que travou por algum motivo excepcional, ignorando as travas de ofícios. Fica registrado na auditoria!
+            * **Letreiro (Mural):** Para publicar recados urgentes piscando no topo da tela de todos (O letreiro some sozinho quando o processo citado for despachado).
+            * **Módulo de Férias:** Permite avisar ao sistema que um colaborador está de atestado/férias. O sistema para de mandar processos no nome da pessoa até a data de retorno.
+        * **Analytics e Desempenho:**
+            * O painel de **Business Intelligence (BI)** do setor. Mostra gráficos de quem expede mais ofícios, quem é a dupla que mais trabalha junta, tempo médio de conclusão das tarefas (em minutos) e um "Termômetro" de processos travados na quarentena em tempo real.
+        * **Backup e Restauração:** Para salvar a base de dados inteira em planilhas CSV por segurança.
+        """)
+
+    with st.expander("📚 DICIONÁRIO E GLOSSÁRIO TÉCNICO"):
         st.markdown("""
         Ouviu alguma palavra no sistema e ficou em dúvida? A resposta está aqui:
         
-        * **Expedidor:** É a pessoa que "inicia" o trabalho. Quem lê o processo original, redige a minuta ou monta a primeira versão do documento.
-        * **Revisor:** É a pessoa que age como um controle de qualidade. Ela recebe o que o Expedidor fez, confere se há erros de digitação ou leis aplicadas incorretamente, e só então libera o documento.
-        * **Processo Urgente:** São os processos que "furam a fila". Quando a recepção cadastra um processo como urgente, a linha dele na sua tela fica com a letra mais grossa (negrito) e na cor **vermelha**. Ao ver o vermelho, pare o que está fazendo e dê prioridade máxima.
-        * **Letreiro (Mural de Avisos):** É aquela faixa vermelha que fica correndo da direita para a esquerda no topo da sua tela, igual em noticiário de TV. É usado pela chefia para recados rápidos (Ex: *"Processo X aguardando anexo"*). Quando a equipe despachar o processo citado, o aviso some sozinho do letreiro!
-        * **Sessão:** No nosso sistema, "Sessão" é a palavra que usamos para organizar os "Lotes" ou "Pastas" do dia. Agrupamos os processos em sessões para manter o trabalho organizado por datas ou reuniões.
+        * **Expedidor:** A pessoa responsável por iniciar o fluxo de trabalho. É quem lê a decisão original e monta/redige os documentos iniciais e os ofícios.
+        * **Revisor:** O "Controle de Qualidade". É o colega que recebe o trabalho do expedidor e confere a legalidade, os dados e a digitação antes de liberar o despacho.
+        * **Despachar (Ato):** Significa que a tarefa foi 100% finalizada tanto no S.A.D.E. quanto no sistema oficial do Tribunal/Órgão.
+        * **Quarentena:** Estado de alerta. Um processo entra em quarentena quando o Revisor encontra um erro e o devolve. Ele fica travado até o Expedidor consertar.
+        * **Letreiro / Mural:** A faixa vermelha móvel no topo do aplicativo, usada para recados críticos da chefia.
+        * **Sessão:** A forma como agrupamos o trabalho. Uma "Sessão" é basicamente o "Lote" ou a "Pasta" de processos que chegaram juntos ou pertencem à mesma pauta de julgamento.
+        * **Rito Retomado:** Quando um processo antigo que já estava no Histórico retorna ao setor ativo para novas providências (Ex: chegou uma resposta de diligência).
         """)
