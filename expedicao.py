@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datetime import datetime, date, timedelta
+from datetime import datetime
 import io
 import time
 import unicodedata
@@ -12,70 +12,6 @@ from st_supabase_connection import SupabaseConnection
 # 1. FRONTEND: CONFIGURAÇÃO INICIAL DA PÁGINA
 # ==========================================
 st.set_page_config(page_title="Sistema de Sessões", layout="wide")
-
-# ==========================================
-# 2. BACKEND: CONEXÃO COM A NUVEM SUPABASE
-# ==========================================
-conn = st.connection("supabase", type=SupabaseConnection)
-
-# ==========================================
-# 3. DECLARAÇÃO DA FUNÇÃO INTELIGENTE
-# ==========================================
-def gerar_avisos_letreiro_automaticos():
-    avisos_sistema = []
-    
-    # Agora usamos 'date' diretamente, sem o datetime. na frente
-    hoje = date.today()
-    hoje_str = hoje.strftime('%Y-%m-%d')
-    
-    # 1. Busca Trocas de Escala Ativas
-    try:
-        trocas = conn.client.table("trocas_escala").gte("data_nova", hoje_str).execute().data
-        for t in trocas:
-            # Usando 'datetime.strptime' (agora é a classe importada)
-            d_orig = datetime.strptime(t['data_original'], '%Y-%m-%d').strftime('%d/%m')
-            d_nova = datetime.strptime(t['data_nova'], '%Y-%m-%d').strftime('%d/%m')
-            avisos_sistema.append(f"🔄 ESCALA: {t['usuario']} alterou seu dia presencial de {d_orig} para {d_nova}.")
-    except:
-        pass
-
-    # 2. Busca Afastamentos (Férias e Atestados)
-    try:
-        afastamentos = conn.client.table("afastamentos").execute().data
-        for a in afastamentos:
-            dt_ini = datetime.strptime(a['data_inicio'], '%Y-%m-%d').date()
-            dt_fim = datetime.strptime(a['data_fim'], '%Y-%m-%d').date()
-            
-            # Regra para Atestado Médico
-            if a['tipo'] == "Atestado Médico" and dt_ini <= hoje <= dt_fim:
-                retorno = (dt_fim + timedelta(days=1)).strftime('%d/%m')
-                avisos_sistema.append(f"🩺 ATESTADO: {a['usuario']} afastado por motivos médicos. Retorno previsto: {retorno}.")
-                
-            # Regra para Férias
-            elif a['tipo'] == "Férias" and hoje == dt_fim:
-                avisos_sistema.append(f"🏖️ FÉRIAS: O colaborador {a['usuario']} regressará amanhã ao serviço!")
-    except:
-        pass
-        
-    return avisos_sistema
-
-
-# ==========================================
-# 4. CONSTRUÇÃO DA TELA (O Letreiro)
-# ==========================================
-st.title("🏛️ Sistema S.A.D.E.")
-
-avisos_frequencia = gerar_avisos_letreiro_automaticos()
-
-if avisos_frequencia:
-    with st.container():
-        for aviso in avisos_frequencia:
-            if "🩺" in aviso:
-                st.info(aviso)
-            elif "🔄" in aviso:
-                st.warning(aviso)
-            else:
-                st.success(aviso)
 
 # ==========================================
 # 2. BACKEND: CONEXÃO COM A NUVEM SUPABASE
@@ -210,11 +146,10 @@ def carregar_excluidos():
     except: return pd.DataFrame()
     
 def processo_existe(numero_processo, nome_sessao):
-    try:      
+    try:
         # Agora o sistema verifica se o processo existe NAQUELA SESSÃO ESPECÍFICA, e não no banco todo.
         res = conn.client.table("processos").select("id", count="exact").eq("numero_processo", numero_processo).eq("nome_sessao", nome_sessao).execute()
         return res.count > 0
-        if not processo_existe(p_limpo, hist_sessao):
     except: return False
 
 def marcar_urgente(numero_processo):
@@ -868,98 +803,114 @@ with aba_sessoes:
     
     # Cria as sub-abas logo abaixo do filtro
     sub_aba_ord, sub_aba_ordv, sub_aba_res, sub_aba_adm = st.tabs(["🏛️ Ordinária", "💻 Ordinária Virtual", "🔒 Reservada", "📁 Administrativa"])
-    
     def exibir_tabela_interativa(df_filtrado, key_prefix, data_sessao, tipo_sessao_tb):
         titulo_placeholder = st.empty()
         
-        # Garante colunas de quarentena
+        # Garante que as colunas de quarentena existam para não dar erro
         if 'precisa_correcao' not in df_filtrado.columns: df_filtrado['precisa_correcao'] = 0
         if 'motivo_correcao' not in df_filtrado.columns: df_filtrado['motivo_correcao'] = ""
         
-        # Preparação da coluna de status para o editor
-        df_exibicao = df_filtrado.copy()
-        
-        # Criamos a coluna 'Revisado_Display' para o Selectbox
-        def definir_status_revisao(row):
-            if row['precisa_correcao'] == 1: return "❌ Corrigir (Quarentena)"
-            if row['revisado_ok'] == 1: return "OK - Liberado"
-            return "Pendente"
+        # DIVISÃO DA TELA: Normais vs Quarentena
+        df_normais = df_filtrado[df_filtrado['precisa_correcao'] == 0].copy()
+        df_quarentena = df_filtrado[df_filtrado['precisa_correcao'] == 1].copy()
 
-        df_exibicao['Revisado_Display'] = df_exibicao.apply(definir_status_revisao, axis=1)
+        # ------------------- 1. TABELA PRINCIPAL -------------------
+        if not df_normais.empty:
+            cols_base = ['id', 'urgente', 'numero_processo', 'relator', 'expedicao', 'expedido_ok', 'revisao', 'revisado_ok']
+            if tipo_sessao_tb == "Sessão Reservada": cols_base.extend(['enviado_email', 'enviado_mensageria', 'recebido'])
+            cols_base.append('despachado')
 
-        # Seleção de colunas para exibição
-        cols_exibir = ['id', 'urgente', 'numero_processo', 'relator', 'expedicao', 'expedido_ok', 'revisao', 'Revisado_Display', 'despachado']
-        df_exib = df_exibicao[cols_exibir].copy()
-        
-        # Renomeação para o usuário
-        rename_dict = {'numero_processo': 'Processo', 'expedido_ok': 'Expedido', 'revisado_ok': 'Revisado_OK', 'despachado': 'Despachado'}
-        df_exib = df_exib.rename(columns=rename_dict)
-        
-        # Configuração do Editor
-        cfg_colunas = {
-            "id": None, 
-            "urgente": None,
-            "Processo": st.column_config.TextColumn(disabled=True), 
-            "Relator": st.column_config.TextColumn(disabled=True), 
-            "Expedição": st.column_config.SelectboxColumn("Expedição", options=TODOS_NOMES),
-            "Revisão": st.column_config.SelectboxColumn("Revisão", options=TODOS_NOMES),
-            "Revisado_Display": st.column_config.SelectboxColumn("Status Revisão", options=["Pendente", "OK - Liberado", "❌ Corrigir (Quarentena)"]),
-            "Despachado": st.column_config.CheckboxColumn("Despachado")
-        }
+            df_exibicao = df_normais[cols_base].copy()
+            bool_cols = ['expedido_ok', 'revisado_ok', 'despachado']
+            if tipo_sessao_tb == "Sessão Reservada": bool_cols.extend(['enviado_email', 'enviado_mensageria', 'recebido'])
+            df_exibicao[bool_cols] = df_exibicao[bool_cols].astype(bool)
 
-        with st.form(key=f"form_{key_prefix}_{data_sessao}"):
-            edited_df = st.data_editor(
-                df_exib, 
-                column_config=cfg_colunas, 
-                hide_index=True, 
-                use_container_width=True,
-                key=f"editor_{key_prefix}_{data_sessao}"
-            )
-            submit_button = st.form_submit_button("💾 Salvar Alterações desta Sessão", type="primary")
+            rename_dict = {'numero_processo': 'Processo', 'urgente': 'urgente_flag', 'relator': 'Relator', 'expedicao': 'Expedição', 'expedido_ok': 'Expedido', 'revisao': 'Revisão', 'revisado_ok': 'Revisado', 'despachado': 'Despachado'}
+            if tipo_sessao_tb == "Sessão Reservada": rename_dict.update({'enviado_email': 'E-mail', 'enviado_mensageria': 'Mensageria', 'recebido': 'Recebido'})
 
-            if submit_button:
-                alteracoes_feitas = 0
-                bloqueio_ativo = False
-                
-                for i in range(len(edited_df)):
-                    linha_nova = edited_df.iloc[i]
-                    linha_antiga = df_exib.iloc[i]
+            df_exibicao = df_exibicao.rename(columns=rename_dict)
+            styled_df = df_exibicao.style.apply(color_urgentes, axis=1)
+
+            cfg_colunas = {"id": None, "urgente_flag": None, "Processo": st.column_config.TextColumn(disabled=True), "Relator": st.column_config.TextColumn(disabled=True), "Expedição": st.column_config.SelectboxColumn("Expedição", options=TODOS_NOMES, required=True), "Revisão": st.column_config.SelectboxColumn("Revisão", options=TODOS_NOMES, required=True)}
+            if tipo_sessao_tb == "Sessão Reservada": cfg_colunas.update({"E-mail": st.column_config.CheckboxColumn("E-mail"), "Mensageria": st.column_config.CheckboxColumn("Mensageria"), "Recebido": st.column_config.CheckboxColumn("Recebido")})
+
+            pendentes = len(df_exibicao[df_exibicao['Despachado'] == False])
+            if pendentes > 0: titulo_placeholder.markdown(f"##### 📅 {data_sessao} | ⏳ {pendentes} Pendentes", unsafe_allow_html=True)
+            else: titulo_placeholder.markdown(f"##### 📅 {data_sessao} | ✅ Concluído!", unsafe_allow_html=True)
+
+            with st.form(key=f"form_{key_prefix}_{data_sessao}"):
+                edited_df = st.data_editor(styled_df, column_config=cfg_colunas, hide_index=True, use_container_width=True, key=f"{key_prefix}_{data_sessao}")
+                submit_button = st.form_submit_button("💾 Salvar Alterações desta Sessão", type="primary")
+
+                if submit_button:
+                    alteracoes_feitas = 0
+                    bloqueio_ativo = False
+                    mapa_banco = {'Expedição': 'expedicao', 'Revisão': 'revisao', 'Expedido': 'expedido_ok', 'Revisado': 'revisado_ok', 'Despachado': 'despachado', 'E-mail': 'enviado_email', 'Mensageria': 'enviado_mensageria', 'Recebido': 'recebido'}
                     
-                    if not linha_nova.equals(linha_antiga):
-                        mudancas = {}
+                    for i in range(len(edited_df)):
+                        linha_nova = edited_df.iloc[i].to_dict()
+                        linha_antiga = df_exibicao.iloc[i].to_dict()
+                        if linha_nova != linha_antiga:
+                            
+                            # --- TRAVA MESTRE INTELIGENTE ---
+                            if linha_nova.get('Despachado') == True and linha_antiga.get('Despachado') == False:
+                                if tipo_sessao_tb in ["Sessão Ordinária", "Sessão Ordinária Virtual"]:
+                                    # 1. Verifica se foi marcado como ISENTO
+                                    isento = conn.client.table("processos").select("precisa_correcao").eq("numero_processo", linha_nova['Processo']).execute().data
+                                    # Se 'precisa_correcao' estiver como 2, vamos chamar de "ISENTO DE OFÍCIOS"
+                                    if not (isento and isento[0].get('precisa_correcao') == 2):
+                                        
+                                        # 2. Se não for isento, faz a verificação padrão
+                                        if not tem_oficio_cadastrado(linha_nova['Processo']):
+                                            st.error(f"🚨 ERRO: Processo {linha_nova['Processo']} sem ofícios/memorandos. Cadastre na Aba 2.5 ou marque como ISENTO!")
+                                            bloqueio_ativo = True
+                                            continue
+                                        if verificar_oficios_pendentes(linha_nova['Processo']):
+                                            st.error(f"🚨 ERRO: Processo {linha_nova['Processo']} tem ofícios/memorandos pendentes. Despache-os na Aba 2.5 primeiro!")
+                                            bloqueio_ativo = True
+                                            continue
+                            # -----------------------------------
+                            
+                            mudancas = {}
+                            for col_tela, col_banco in mapa_banco.items():
+                                if col_tela in linha_nova and linha_nova[col_tela] != linha_antiga.get(col_tela):
+                                    val = linha_nova[col_tela]
+                                    if col_tela in ['Expedido', 'Revisado', 'Despachado', 'E-mail', 'Mensageria', 'Recebido']: mudancas[col_banco] = 1 if val else 0
+                                    else: mudancas[col_banco] = val
+                            if mudancas:
+                                atualizar_processo(int(linha_nova['id']), mudancas)
+                                alteracoes_feitas += 1
+                                
+                    if alteracoes_feitas > 0 and not bloqueio_ativo:
+                        st.toast(f"✅ {alteracoes_feitas} processo(s) atualizado(s) no banco!")
+                        time.sleep(1) 
+                        st.rerun()
+                    elif bloqueio_ativo:
+                        st.warning("⚠️ Algumas alterações foram desfeitas pela Trava de Segurança.")
                         
-                        # Lógica da Revisão (A nova trava/liberação)
-                        if linha_nova['Revisado_Display'] == "OK - Liberado":
-                            mudancas['revisado_ok'] = 1
-                            mudancas['precisa_correcao'] = 0
-                        elif linha_nova['Revisado_Display'] == "❌ Corrigir (Quarentena)":
-                            mudancas['revisado_ok'] = 0
-                            mudancas['precisa_correcao'] = 1
-                        else: # Pendente
-                            mudancas['revisado_ok'] = 0
-                            mudancas['precisa_correcao'] = 0
-
-                        # Lógica do Despacho (Mantendo a trava mestre)
-                        if linha_nova['Despachado'] == True and linha_antiga['Despachado'] == False:
-                            if tipo_sessao_tb in ["Sessão Ordinária", "Sessão Ordinária Virtual"]:
-                                isento = conn.client.table("processos").select("precisa_correcao").eq("numero_processo", linha_nova['Processo']).execute().data
-                                if not (isento and isento[0].get('precisa_correcao') == 2):
-                                    if not tem_oficio_cadastrado(linha_nova['Processo']) or verificar_oficios_pendentes(linha_nova['Processo']):
-                                        st.error(f"🚨 ERRO: Processo {linha_nova['Processo']} possui pendências de ofício!")
-                                        bloqueio_ativo = True
-                                        continue
-                        
-                        mudancas['despachado'] = 1 if linha_nova['Despachado'] else 0
-                        mudancas['expedicao'] = linha_nova['Expedição']
-                        mudancas['revisao'] = linha_nova['Revisão']
-                        
-                        atualizar_processo(int(linha_nova['id']), mudancas)
-                        alteracoes_feitas += 1
-                
-                if alteracoes_feitas > 0 and not bloqueio_ativo:
-                    st.rerun()
-                elif bloqueio_ativo:
-                    st.warning("⚠️ Algumas alterações foram bloqueadas.")
+        # ------------------- 2. TABELA DE QUARENTENA E DEVOLUÇÃO -------------------
+        st.markdown("<br>", unsafe_allow_html=True)
+        if not df_quarentena.empty:
+            st.error("🚨 PROCESSOS EM QUARENTENA (Aguardando Correção na Aba de Ofícios)")
+            df_q_exib = df_quarentena[['numero_processo', 'relator', 'motivo_correcao', 'expedicao']].rename(columns={'numero_processo':'Processo', 'relator':'Relator', 'motivo_correcao':'Motivo do Erro', 'expedicao':'Expedidor (Responsável)'})
+            st.dataframe(df_q_exib, hide_index=True, use_container_width=True)
+            
+        # Botão do Revisor
+        with st.expander("❌ Ocorreu um erro? Devolver processo para Correção (Enviar para Quarentena)"):
+            col_q1, col_q2, col_q3 = st.columns([2, 4, 2])
+            with col_q1: p_quar = st.selectbox("Selecione o Processo:", df_filtrado['numero_processo'].tolist(), key=f"q_proc_{data_sessao}")
+            with col_q2: m_quar = st.text_input("Qual o Erro? (Ex: Falta Ofício Sec. de Turismo):", key=f"q_mot_{data_sessao}")
+            with col_q3: 
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("Devolver Processo", type="primary", use_container_width=True, key=f"q_btn_{data_sessao}"):
+                    if m_quar:
+                        conn.client.table("processos").update({"precisa_correcao": 1, "motivo_correcao": m_quar}).eq("numero_processo", p_quar).eq("despachado", 0).execute()
+                        st.success("✅ Processo enviado para a Quarentena!")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.warning("⚠️ Escreva o motivo do erro para o Expedidor saber o que arrumar.")
+        st.markdown("---")
 
     with sub_aba_ord:
         df_ord = carregar_dados_sqlite("Sessão Ordinária")
@@ -1167,83 +1118,37 @@ with aba_oficios:
             except: pass
 
 # ------------------------------------------
-# ABA 2.7: RELATÓRIO DE EXPEDIÇÃO INDIVIDUAL (COM FILTRO DE SESSÃO)
+# ABA 2.7: RELATÓRIO DE EXPEDIÇÃO INDIVIDUAL
 # ------------------------------------------
-with aba_oficios_relatorio:
+with aba_oficios_relatorio: # Lembre-se de adicionar 'aba_oficios_relatorio' na sua lista de st.tabs lá em cima
     st.header("📄 Relatório de Expedição Individual")
     
-    # Dividimos o topo igualmente para os dois filtros
-    col_r1, col_r2 = st.columns(2)
+    col_r1, col_r2 = st.columns([1, 2])
     with col_r1:
-        colab_rel = st.selectbox("Selecione o Colaborador (Expedidor):", TODOS_NOMES, key="rel_colab")
-        
-    if colab_rel:
-        # 1. Busca os processos ATIVOS onde o usuário é o EXPEDIDOR e puxa o NOME DA SESSÃO junto
-        try:
-            dados_processos = conn.client.table("processos").select("numero_processo, precisa_correcao, nome_sessao").eq("expedicao", colab_rel).eq("despachado", 0).execute().data
-            df_proc_ativos = pd.DataFrame(dados_processos)
-        except:
-            df_proc_ativos = pd.DataFrame()
+        colab_rel = st.selectbox("Selecione o Colaborador:", TODOS_NOMES, key="rel_colab")
+        if st.button("📋 Gerar Relatório de Produção"):
+            # Busca todos os ofícios expedidos pelo colaborador
+            df_prod = pd.DataFrame(conn.client.table("oficios").select("*").eq("quem_expediu", colab_rel).eq("oficio_despachado", 1).execute().data)
             
-        if not df_proc_ativos.empty:
-            # Puxa apenas as sessões onde o colaborador tem pendências reais agora
-            sessoes_ativas_colab = df_proc_ativos['nome_sessao'].unique().tolist()
-            
-            # Filtro Inteligente de Sessão
-            with col_r2:
-                sessao_selecionada = st.selectbox("Filtre por Sessão:", ["Todas as Sessões"] + sessoes_ativas_colab, key="rel_sessao")
+            if not df_prod.empty:
+                st.subheader(f"Produção de: {colab_rel}")
                 
-            # Aplica o filtro na tabela antes de gerar a visualização
-            if sessao_selecionada != "Todas as Sessões":
-                df_proc_ativos = df_proc_ativos[df_proc_ativos['nome_sessao'] == sessao_selecionada]
-                
-            lista_processos = df_proc_ativos['numero_processo'].unique().tolist()
-            
-            # 2. Busca os ofícios/memorandos apenas dos processos filtrados
-            try:
-                dados_oficios = conn.client.table("oficios").select("*").in_("numero_processo", lista_processos).execute().data
-                df_oficios_ativos = pd.DataFrame(dados_oficios)
-            except:
-                df_oficios_ativos = pd.DataFrame()
-            
-            st.subheader(f"📋 Checklist de Trabalho")
-            if sessao_selecionada == "Todas as Sessões":
-                st.write(f"Exibindo **todas as pendências globais** de {colab_rel}.")
+                # Agrupa por processo
+                for proc in df_prod['numero_processo'].unique():
+                    with st.expander(f"Processo: {proc}"):
+                        oficios_proc = df_prod[df_prod['numero_processo'] == proc]
+                        
+                        # Exibe ofícios
+                        st.markdown("**✉️ Ofícios expedidos:**")
+                        for _, row in oficios_proc[oficios_proc['categoria'] != "Memorando (Envio Interno)"].iterrows():
+                            st.write(f"- {row['numero_oficio']} | Destino: {row['destinatario']} ({row['categoria']})")
+                        
+                        # Exibe memorandos
+                        st.markdown("**📝 Memorandos expedidos:**")
+                        for _, row in oficios_proc[oficios_proc['categoria'] == "Memorando (Envio Interno)"].iterrows():
+                            st.write(f"- {row['numero_oficio']} | Destino: {row['destinatario']}")
             else:
-                st.write(f"Exibindo apenas processos da **{sessao_selecionada}**.")
-            st.markdown("---")
-            
-            # Varre a lista de processos filtrados do colaborador
-            for proc in lista_processos:
-                status_proc = df_proc_ativos[df_proc_ativos['numero_processo'] == proc]['precisa_correcao'].values[0]
-                
-                with st.expander(f"📦 Processo: {proc}"):
-                    if status_proc == 2:
-                        st.success("🚫 Este processo foi marcado como ISENTO de ofícios/memorandos.")
-                    
-                    elif not df_oficios_ativos.empty and proc in df_oficios_ativos['numero_processo'].values:
-                        oficios_proc = df_oficios_ativos[df_oficios_ativos['numero_processo'] == proc]
-                        
-                        df_ofic = oficios_proc[oficios_proc['categoria'] != "Memorando (Envio Interno)"]
-                        df_memo = oficios_proc[oficios_proc['categoria'] == "Memorando (Envio Interno)"]
-                        
-                        if not df_ofic.empty:
-                            st.markdown("**✉️ Ofícios Cadastrados:**")
-                            for _, row in df_ofic.iterrows():
-                                status_envio = "✅ Despachado no SADE" if row.get('oficio_despachado') == 1 else "⏳ Pendente de Envio"
-                                st.write(f"- Nº {row['numero_oficio']} | Destino: {row['destinatario']} ({row['categoria']}) -> *{status_envio}*")
-                        
-                        if not df_memo.empty:
-                            st.markdown("**📝 Memorandos Cadastrados:**")
-                            for _, row in df_memo.iterrows():
-                                status_envio = "✅ Despachado no SADE" if row.get('oficio_despachado') == 1 else "⏳ Pendente de Envio"
-                                st.write(f"- Nº {row['numero_oficio']} | Destino: {row['destinatario']} -> *{status_envio}*")
-                    else:
-                        st.warning("⏳ Nenhum documento cadastrado para este processo ainda. Cadastre na Aba 2.5.")
-        else:
-            with col_r2:
-                st.selectbox("Filtre por Sessão:", ["Nenhuma pendência"], disabled=True)
-            st.info(f"✨ Excelente! **{colab_rel}** não possui processos ativos aguardando despacho.")
+                st.info("Nenhum ofício/memorando registrado para este colaborador.")
 
 # ------------------------------------------
 # ABA 3: HISTÓRICO, EXCLUSÕES E AVISOS
@@ -1696,24 +1601,17 @@ with aba_gestao:
         with sub_dados:
             st.header("📈 Dashboard Analítico e Distribuição Operacional")
             df_dados = carregar_dados_sqlite()
-            
             if df_dados.empty or 'data_expedido' not in df_dados.columns: 
                 st.info("📊 O banco de dados está vazio.")
             else:
-                # Conversão e tratamento de datas e tempos
                 for c in ['data_entrada', 'data_expedido', 'data_revisado', 'data_conclusao']:
-                    df_dados[c + '_dt'] = pd.to_datetime(df_dados[c], format="%d/%m/%Y %H:%M:%S", errors='coerce').fillna(
-                                          pd.to_datetime(df_dados[c], format="%d/%m/%Y %H:%M", errors='coerce'))
-                
+                    df_dados[c + '_dt'] = pd.to_datetime(df_dados[c], format="%d/%m/%Y %H:%M:%S", errors='coerce').fillna(pd.to_datetime(df_dados[c], format="%d/%m/%Y %H:%M", errors='coerce'))
                 df_concluidos = df_dados[df_dados['despachado'] == 1].copy()
-                df_ativos = df_dados[df_dados['despachado'] == 0].copy()
                 df_tempo_real = df_concluidos[df_concluidos['data_entrada'] != df_concluidos['data_conclusao']].copy()
-                
-                # CORREÇÃO: Forçamos a criação das colunas sempre, evitando o KeyError
                 df_tempo_real['min_exp'] = (df_tempo_real['data_expedido_dt'] - df_tempo_real['data_entrada_dt']).dt.total_seconds() / 60
                 df_tempo_real['min_rev'] = (df_tempo_real['data_revisado_dt'] - df_tempo_real['data_expedido_dt']).dt.total_seconds() / 60
                 df_tempo_real['min_total'] = (df_tempo_real['data_conclusao_dt'] - df_tempo_real['data_entrada_dt']).dt.total_seconds() / 60
-                
+
                 def format_tempo(minutos):
                     if pd.isna(minutos) or minutos < 0: return "N/A"
                     return f"{int(minutos)} min" if int(minutos) < 60 else f"{int(minutos) // 60}h {int(minutos) % 60}m"
@@ -1724,8 +1622,6 @@ with aba_gestao:
 
                 if visao_selecionada == "Todo o Setor (Global)":
                     st.subheader("🌐 Visão Macro (Histórico Completo)")
-                    
-                    # --- CARD ROW 1: PROCESSOS GERAIS ---
                     col1, col2, col3, col4 = st.columns(4)
                     total_despachados = len(df_concluidos)
                     total_sessoes = df_concluidos['nome_sessao'].nunique()
@@ -1735,191 +1631,114 @@ with aba_gestao:
                     col2.metric("🏛️ Sessões Realizadas", total_sessoes)
                     col3.metric("⚖️ Média Proc./Sessão", media_proc_sessao)
                     col4.metric("🔥 Urgências Atendidas", total_urgentes)
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    # --- NOVO MÓDULO DE ANALYTICS: OFÍCIOS E ERROS ---
+                    st.markdown("---")
+                    st.markdown("### ✉️ Inteligência de Expedição (Ofícios e Correções)")
                     
-                    # --- CARD ROW 2: INTELIGÊNCIA DE OFÍCIOS ---
                     try:
                         df_oficios_analytics = pd.DataFrame(conn.client.table("oficios").select("*").execute().data)
                     except:
                         df_oficios_analytics = pd.DataFrame()
 
                     if not df_oficios_analytics.empty:
+                        # Filtra apenas os que realmente foram despachados
                         df_ofic_despachados = df_oficios_analytics[df_oficios_analytics['oficio_despachado'] == 1]
                         total_oficios = len(df_ofic_despachados)
                         proc_com_oficios = df_ofic_despachados['numero_processo'].nunique()
                         media_ofic_proc = round(total_oficios / proc_com_oficios, 1) if proc_com_oficios > 0 else 0
-                        ofic_jur = len(df_ofic_despachados[df_ofic_despachados['categoria'] == 'Jurisdicionado'])
                         
-                        st.markdown("<br>", unsafe_allow_html=True)
                         col_of1, col_of2, col_of3, col_of4 = st.columns(4)
                         col_of1.metric("✉️ Ofícios Expedidos", total_oficios)
                         col_of2.metric("📊 Média Ofícios/Processo", media_ofic_proc)
+                        
+                        ofic_jur = len(df_ofic_despachados[df_ofic_despachados['categoria'] == 'Jurisdicionado'])
                         col_of3.metric("🏛️ Ofic. Jurisdicionados", ofic_jur)
                         col_of4.metric("🏢 Ofic. Não Jurisdic.", total_oficios - ofic_jur)
-                    
-                    # --- MONITORAMENTO EM TEMPO REAL E RETRABALHO ---
+                        
+                        st.markdown("#### 🏆 Ranking de Emissão de Ofícios")
+                        ofic_counts = df_ofic_despachados['quem_expediu'].value_counts().reset_index()
+                        ofic_counts.columns = ['Colaborador', 'Ofícios Gerados']
+                        
+                        if not ofic_counts.empty:
+                            fig_ofic = px.bar(ofic_counts, x='Colaborador', y='Ofícios Gerados', text='Ofícios Gerados', color='Ofícios Gerados', color_continuous_scale='Blues')
+                            fig_ofic.update_traces(textposition='outside')
+                            fig_ofic.update_layout(margin=dict(l=0, r=0, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)")
+                            st.plotly_chart(fig_ofic, use_container_width=True)
+                    else:
+                        st.info("Nenhum dado de ofício registrado ainda para gerar estatísticas.")
+
+                    st.markdown("#### 🚨 Termômetro de Retrabalho (Quarentena Ativa)")
+                    if 'precisa_correcao' in df_dados.columns:
+                        df_erros_ativos = df_dados[df_dados['precisa_correcao'] == 1]
+                        total_erros_ativos = len(df_erros_ativos)
+                        
+                        if total_erros_ativos > 0:
+                            st.error(f"⚠️ Atualmente existem {total_erros_ativos} processo(s) travado(s) na quarentena aguardando correção.")
+                            erros_por_user = df_erros_ativos['expedicao'].value_counts().reset_index()
+                            erros_por_user.columns = ['Expedidor', 'Processos com Erro Ativos']
+                            st.dataframe(erros_por_user, hide_index=True)
+                        else:
+                            st.success("🎉 Zero processos na quarentena hoje! Equipe trabalhando com 100% de precisão.")
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    # -------------------------------------------------
+                    st.markdown("### 🤝 Volume de Participação Operacional (Carga de Trabalho)")
+                    col_g1, col_g2 = st.columns(2)
+                    with col_g1:
+                        st.markdown("#### 📦 Expedição") 
+                        exp_counts = df_concluidos['expedicao'].value_counts().reset_index()
+                        exp_counts.columns = ['Colaborador', 'Processos']
+                        if not exp_counts.empty:
+                            fig_exp = px.pie(exp_counts, values='Processos', names='Colaborador', hole=0.5)
+                            fig_exp.update_traces(textposition='inside', textinfo='percent+value')
+                            fig_exp.update_layout(margin=dict(l=0, r=0, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)", legend_title="Colaborador")
+                            st.plotly_chart(fig_exp, use_container_width=True)
+                        else: st.info("Sem dados de expedição.")
+                    with col_g2:
+                        st.markdown("#### 🔍 Revisão") 
+                        rev_counts = df_concluidos['revisao'].value_counts().reset_index()
+                        rev_counts.columns = ['Colaborador', 'Processos']
+                        if not rev_counts.empty:
+                            fig_rev = px.pie(rev_counts, values='Processos', names='Colaborador', hole=0.5)
+                            fig_rev.update_traces(textposition='inside', textinfo='percent+value')
+                            fig_rev.update_layout(margin=dict(l=0, r=0, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)", legend_title="Colaborador")
+                            st.plotly_chart(fig_rev, use_container_width=True)
+                        else: st.info("Sem dados de revisão.")
                     st.markdown("---")
-                    col_ret1, col_ret2 = st.columns([1, 1])
-                    
-                    with col_ret1:
-                        st.markdown("#### 🚨 Retrabalho (Quarentena Ativa)")
-                        if 'precisa_correcao' in df_dados.columns:
-                            df_erros_ativos = df_dados[(df_dados['precisa_correcao'] == 1) & (df_dados['despachado'] == 0)]
-                            total_erros_ativos = len(df_erros_ativos)
-                            if total_erros_ativos > 0:
-                                st.error(f"⚠️ Existem {total_erros_ativos} processo(s) na quarentena.")
-                                erros_por_user = df_erros_ativos['expedicao'].value_counts().reset_index()
-                                erros_por_user.columns = ['Expedidor', 'Pendências']
-                                st.dataframe(erros_por_user, hide_index=True, use_container_width=True)
-                            else:
-                                st.success("🎉 Zero processos na quarentena! Trabalho com 100% de precisão.")
-                    
-                    with col_ret2:
-                        st.markdown("#### 📡 Radar Ativo (Mesa Agora)")
-                        sessoes_stats = df_dados.groupby('nome_sessao')['despachado'].agg(['count', 'sum']).reset_index()
-                        ativas_list = sessoes_stats[sessoes_stats['count'] > sessoes_stats['sum']]['nome_sessao'].tolist()
-                        df_ativos_reais = df_dados[df_dados['nome_sessao'].isin(ativas_list) & (df_dados['despachado'] == 0)].copy()
-                        
-                        if not df_ativos_reais.empty:
-                            urg_pendentes = len(df_ativos_reais[df_ativos_reais['urgente'] == 1])
-                            st.warning(f"📋 Pauta Ativa com {len(df_ativos_reais)} processos em andamento.")
-                            st.markdown(f"**⏳ Aguardando Elaboração:** {len(df_ativos_reais[df_ativos_reais['expedido_ok'] == 0])}")
-                            st.markdown(f"**🔍 Aguardando Conferência:** {len(df_ativos_reais[(df_ativos_reais['expedido_ok'] == 1) & (df_ativos_reais['revisado_ok'] == 0)])}")
-                            st.markdown(f"**🚨 Urgentes pendentes:** {urg_pendentes}")
-                        else:
-                            st.success("✨ Pauta limpa! Sem pendências urgentes ou ordinárias no radar.")
-
-                    # =========================================================
-                    # 🧠 ABAS INTERATIVAS DE INVESTIGAÇÃO DE DADOS (BI GLOBAL)
-                    # =========================================================
+                    st.markdown("### ⏱️ Cadência e Desempenho")
+                    c_t1, c_t2, c_t3 = st.columns(3)
+                    c_t1.metric("Média de Elaboração (Expedição)", format_tempo(df_tempo_real['min_exp'].mean()))
+                    c_t2.metric("Média de Conferência (Revisão)", format_tempo(df_tempo_real['min_rev'].mean()))
+                    c_t3.metric("Tempo de Ciclo Total", format_tempo(df_tempo_real['min_total'].mean()))
                     st.markdown("---")
-                    st.markdown("### 📊 Central de Análise de Comportamento e Desempenho")
-                    
-                    tab_sinergia, tab_cadencia, tab_urgencias, tab_score = st.tabs([
-                        "🤝 Participação e Sinergia", 
-                        "⏱️ Gargalos e Cadência", 
-                        "🔥 Índice de Urgências", 
-                        "⭐ Score de Elite"
-                    ])
-                    
-                    with tab_sinergia:
-                        st.markdown("#### 🤝 Volume de Participação Operacional e Matriz de Sinergia")
-                        col_g1, col_g2 = st.columns(2)
-                        with col_g1:
-                            st.markdown("##### 📦 Distribuição de Expedição") 
-                            exp_counts = df_concluidos['expedicao'].value_counts().reset_index()
-                            exp_counts.columns = ['Colaborador', 'Processos']
-                            if not exp_counts.empty:
-                                fig_exp = px.pie(exp_counts, values='Processos', names='Colaborador', hole=0.4)
-                                fig_exp.update_traces(textposition='inside', textinfo='percent+value')
-                                st.plotly_chart(fig_exp, use_container_width=True)
-                        with col_g2:
-                            st.markdown("##### 🔍 Distribuição de Revisão") 
-                            rev_counts = df_concluidos['revisao'].value_counts().reset_index()
-                            rev_counts.columns = ['Colaborador', 'Processos']
-                            if not rev_counts.empty:
-                                fig_rev = px.pie(rev_counts, values='Processos', names='Colaborador', hole=0.4)
-                                fig_rev.update_traces(textposition='inside', textinfo='percent+value')
-                                st.plotly_chart(fig_rev, use_container_width=True)
-                        
-                        st.markdown("##### 📊 Matriz de Colaboração (Raio-X de Soft Skills)")
-                        matriz = df_concluidos.groupby(['expedicao', 'revisao']).size().reset_index(name='Despachos Juntos')
-                        if not matriz.empty:
-                            fig_matriz = px.density_heatmap(matriz, x='revisao', y='expedicao', z='Despachos Juntos', text_auto=True, color_continuous_scale='Viridis')
-                            fig_matriz.update_layout(xaxis_title="Quem Revisou", yaxis_title="Quem Expediu")
-                            st.plotly_chart(fig_matriz, use_container_width=True)
-
-                    with tab_cadencia:
-                        st.markdown("#### ⏱️ Análise de Gargalos Operacionais e Tempos Médios")
-                        c_t1, c_t2, c_t3 = st.columns(3)
-                        c_t1.metric("Média de Elaboração", format_tempo(df_tempo_real['min_exp'].mean()) if not df_tempo_real.empty else "N/A")
-                        c_t2.metric("Média de Conferência", format_tempo(df_tempo_real['min_rev'].mean()) if not df_tempo_real.empty else "N/A")
-                        c_t3.metric("Tempo de Ciclo Total", format_tempo(df_tempo_real['min_total'].mean()) if not df_tempo_real.empty else "N/A")
-                        
-                        st.markdown("<br>", unsafe_allow_html=True)
-                        col_grg1, col_grg2 = st.columns(2)
-                        with col_grg1:
-                            st.markdown("**Tempo Médio na Elaboração por Usuário (Minutos)**")
-                            t_exp = df_tempo_real[df_tempo_real['min_exp'] >= 0].groupby('expedicao')['min_exp'].mean().reset_index()
-                            t_exp.columns = ['Colaborador', 'Média (Min)']
-                            if not t_exp.empty:
-                                st.plotly_chart(px.bar(t_exp, x='Colaborador', y='Média (Min)', color='Média (Min)', color_continuous_scale='Reds'), use_container_width=True)
-                        with col_grg2:
-                            st.markdown("**Tempo Médio na Revisão por Usuário (Minutos)**")
-                            t_rev = df_tempo_real[df_tempo_real['min_rev'] >= 0].groupby('revisao')['min_rev'].mean().reset_index()
-                            t_rev.columns = ['Colaborador', 'Média (Min)']
-                            if not t_rev.empty:
-                                st.plotly_chart(px.bar(t_rev, x='Colaborador', y='Média (Min)', color='Média (Min)', color_continuous_scale='Blues'), use_container_width=True)
-
-                    with tab_urgencias:
-                        st.markdown("#### 🚨 Distribuição Crítica e Índice de Urgentes")
-                        urg_df = df_concluidos[df_concluidos['urgente'] == 1].groupby('expedicao').size().reset_index(name='Urgências Resolvidas')
-                        if not urg_df.empty:
-                            fig_urg = px.pie(urg_df, values='Urgências Resolvidas', names='expedicao', hole=0.4, color_discrete_sequence=px.colors.sequential.YlOrRd_r)
-                            fig_urg.update_traces(textposition='inside', textinfo='percent+label+value')
-                            st.plotly_chart(fig_urg, use_container_width=True)
-                        else:
-                            st.info("Nenhum processo urgente foi finalizado no período analisado.")
-
-                    with tab_score:
-                        st.markdown("#### ⭐ Score de Elite S.A.D.E. (Qualidade & Proatividade)")
-                        st.write("Métrica de desempenho unificada: Velocidade setorial + bônus por urgências solucionadas - penalidades por erros atuais na quarentena.")
-                        
-                        if not df_tempo_real.empty:
-                            media_setor_exp = df_tempo_real['min_exp'].mean()
-                            scores_list = []
-                            
-                            for colab in TODOS_NOMES:
-                                df_colab = df_concluidos[df_concluidos['expedicao'] == colab]
-                                vol_total = len(df_colab)
-                                
-                                if vol_total > 0:
-                                    df_colab_tempo = df_tempo_real[df_tempo_real['expedicao'] == colab]
-                                    tempo_colab = df_colab_tempo['min_exp'].mean() if not df_colab_tempo.empty else 9999
-                                    
-                                    # 1. Componente Proatividade/Velocidade (Até 50 pts)
-                                    score_vel = 50 if tempo_colab <= media_setor_exp else 30
-                                    
-                                    # 2. Componente de Carga Crítica (Até 30 pts)
-                                    urg_colab = len(df_colab[df_colab['urgente'] == 1])
-                                    score_urg = min((urg_colab / vol_total) * 100, 30)
-                                    
-                                    # 3. Penalidade de Qualidade em Tempo Real (Quarentena)
-                                    erros_ativos = len(df_dados[(df_dados['expedicao'] == colab) & (df_dados['precisa_correcao'] == 1) & (df_dados['despachado'] == 0)])
-                                    penalidade = erros_ativos * 15
-                                    
-                                    # Equação Final unificada
-                                    nota = 20 + score_vel + score_urg - penalidade
-                                    nota = max(0, min(100, round(nota, 1)))
-                                    
-                                    scores_list.append({'Colaborador': colab, 'Score Performance': nota, 'Erros em Aberto': erros_ativos})
-                            
-                            if scores_list:
-                                df_scores = pd.DataFrame(scores_list).sort_values(by='Score Performance', ascending=False)
-                                fig_score = px.bar(df_scores, x='Score Performance', y='Colaborador', orientation='h',
-                                                   text='Score Performance', color='Score Performance', color_continuous_scale='RdYlGn')
-                                fig_score.update_layout(yaxis={'categoryorder':'total ascending'}, plot_bgcolor="rgba(0,0,0,0)")
-                                st.plotly_chart(fig_score, use_container_width=True)
-                                st.dataframe(df_scores.style.background_gradient(cmap='RdYlGn', subset=['Score Performance']), hide_index=True, use_container_width=True)
-                        else:
-                            st.info("Dados de cadência insuficientes para calcular o Score de Elite neste momento.")
-
+                    st.markdown("### 📡 Radar em Tempo Real (Painel Ativo)")
+                    sessoes_stats = df_dados.groupby('nome_sessao')['despachado'].agg(['count', 'sum']).reset_index()
+                    ativas_list = sessoes_stats[sessoes_stats['count'] > sessoes_stats['sum']]['nome_sessao'].tolist()
+                    df_ativos_reais = df_dados[df_dados['nome_sessao'].isin(ativas_list)].copy()
+                    if not df_ativos_reais.empty:
+                        col_r1, col_r2, col_r3, col_r4, col_r5 = st.columns(5)
+                        urg_pendentes = len(df_ativos_reais[(df_ativos_reais['urgente'] == 1) & (df_ativos_reais['despachado'] == 0)])
+                        col_r1.metric("📋 Total na Pauta", len(df_ativos_reais))
+                        col_r2.metric("⏳ Aguardando Elab.", len(df_ativos_reais[df_ativos_reais['expedido_ok'] == 0]))
+                        col_r3.metric("🔍 Aguardando Conf.", len(df_ativos_reais[(df_ativos_reais['expedido_ok'] == 1) & (df_ativos_reais['revisado_ok'] == 0)]))
+                        col_r4.metric("✍️ Prontos p/ Despacho", len(df_ativos_reais[(df_ativos_reais['revisado_ok'] == 1) & (df_ativos_reais['despachado'] == 0)]))
+                        with col_r5:
+                            st.markdown(f"""
+                            <div style='background-color: #ff4b4b; padding: 15px; border-radius: 8px; text-align: center; color: white; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);'>
+                                <p style='margin: 0; font-size: 14px; font-weight: bold;'>🚨 Urgentes Restantes</p>
+                                <h2 style='margin: 0; padding-top: 5px; color: white; font-weight: bold;'>{urg_pendentes}</h2>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    else: st.success("✨ Pauta limpa! Não há processos pendentes no radar ativo neste exato momento.")
                 else:
-                    # ---------------------------------------------------------
-                    # PERFIL OPERACIONAL INDIVIDUAL (MANTIDO INTEGRALMENTE)
-                    # ---------------------------------------------------------
                     st.subheader(f"🔎 Perfil Operacional: {visao_selecionada}")
                     try: ausentes = obter_colaboradores_ausentes_hoje()
                     except: ausentes = []
-                    
-                    if visao_selecionada in ausentes: 
-                        st.warning(f"📌 **Status:** Afastamento Legítimo Ativo.", icon="🌴")
-                    else: 
-                        st.info(f"📌 **Status no Dia de Hoje:** Ativo e Operacional.", icon="✅")
-                        
+                    if visao_selecionada in ausentes: st.warning(f"📌 **Status:** Afastamento Legítimo Ativo.", icon="🌴")
+                    else: st.info(f"📌 **Status no Dia de Hoje:** Ativo e Operacional.", icon="✅")
                     df_user_exp = df_concluidos[df_concluidos['expedicao'] == visao_selecionada]
                     df_user_rev = df_concluidos[df_concluidos['revisao'] == visao_selecionada]
                     df_user_total = df_concluidos[(df_concluidos['expedicao'] == visao_selecionada) | (df_concluidos['revisao'] == visao_selecionada)]
-                    
                     st.markdown("#### 📦 Resumo de Participação Histórica")
                     col_u1, col_u2, col_u3, col_u4 = st.columns(4)
                     col_u1.metric("Participações Totais", len(df_user_total))
@@ -1927,15 +1746,12 @@ with aba_gestao:
                     col_u3.metric("Como Revisor", len(df_user_rev))
                     col_u4.metric("🔥 Urgências Salvas", len(df_user_total[df_user_total['urgente'] == 1]))
                     st.markdown("<br>", unsafe_allow_html=True)
-                    
                     st.markdown("#### ⏱️ Qualidade e Cadência")
-                    df_user_tempo_exp = df_tempo_real[df_tempo_real['expedicao'] == visao_selecionada] if not df_tempo_real.empty else pd.DataFrame()
-                    df_user_tempo_rev = df_tempo_real[df_tempo_real['revisao'] == visao_selecionada] if not df_tempo_real.empty else pd.DataFrame()
-                    
+                    df_user_tempo_exp = df_tempo_real[df_tempo_real['expedicao'] == visao_selecionada]
+                    df_user_tempo_rev = df_tempo_real[df_tempo_real['revisao'] == visao_selecionada]
                     cu1, cu2, cu3 = st.columns(3)
-                    cu1.metric("Tempo Médio de Elaboração", format_tempo(df_user_tempo_exp['min_exp'].mean()) if not df_user_tempo_exp.empty else "N/A")
-                    cu2.metric("Tempo Médio de Conferência", format_tempo(df_user_tempo_rev['min_rev'].mean()) if not df_user_tempo_rev.empty else "N/A")
-                    
+                    cu1.metric("Tempo Médio de Elaboração", format_tempo(df_user_tempo_exp['min_exp'].mean()))
+                    cu2.metric("Tempo Médio de Conferência", format_tempo(df_user_tempo_rev['min_rev'].mean()))
                     if not df_user_total.empty:
                         parceiros = []
                         parceiros.extend(df_user_exp['revisao'].tolist())
@@ -1944,59 +1760,24 @@ with aba_gestao:
                             dupla = pd.Series(parceiros).mode()[0]
                             cu3.metric("🤝 Parceiro Mais Frequente", dupla)
                         else: cu3.metric("🤝 Parceiro Operacional", "N/A")
-                    else: 
-                        cu3.metric("🤝 Parceiro Operacional", "N/A")
+                    else: cu3.metric("🤝 Parceiro Operacional", "N/A")
 
-# O seu "with" já deve estar na linha 1937, algo como "with sub_ferias:"
-       with sub_ferias:
-            st.subheader("🗓️ Gestão de Frequência e Escala Presencial")
-
-            # Matriz de Escala Padrão
-            ESCALA_PRESENCIAL = {
-                "Segunda-Feira": ["André", "Lu Fiorote", "Maurício", "Kátia", "Luanna C"],
-                "Terça-Feira": ["André", "Jessyca", "Lu Fiorote", "Kátia", "Elaine", "Luanna C"],
-                "Quarta-Feira": ["André", "Jessyca", "Lu Fiorote", "Mariana", "Elaine", "Luanna C"],
-                "Quinta-Feira": ["Lu Fiorote", "Maurício", "Mariana", "Kátia", "Elaine", "Luanna C"],
-                "Sexta-Feira": ["Jessyca", "Lu Fiorote", "Maurício", "Mariana", "Luanna C"]
-            }
-            dias_conversao = {0: "Segunda-Feira", 1: "Terça-Feira", 2: "Quarta-Feira", 3: "Quinta-Feira", 4: "Sexta-Feira"}
-
-            # --- PAINEL UNIFICADO DE AFASTAMENTOS E TROCAS ---
-            col_esq, col_dir = st.columns([1, 1])
-
-            with col_esq:
-                st.markdown("### 🏖️ Registrar Afastamento")
-                with st.form("form_afastamento_unico", clear_on_submit=True):
-                    usr_afastado = st.selectbox("Colaborador:", TODOS_NOMES)
-                    d_inicio = st.date_input("Data de Início:", format="DD/MM/YYYY")
-                    d_fim = st.date_input("Data de Fim (Retorno):", format="DD/MM/YYYY")
-                    t_afastamento = st.selectbox("Tipo de Ausência:", ["Férias", "Recesso", "Atestado Médico"])
-                    
+        with sub_ferias:
+            st.header("🌴 Painel de Férias e Afastamentos Operacionais")
+            with st.container(border=True):
+                st.subheader("📝 Registrar Nova Ausência")
+                with st.form("form_afastamento", clear_on_submit=True):
+                    col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+                    with col_f1: usr_afastado = st.selectbox("Colaborador:", TODOS_NOMES)
+                    with col_f2: d_inicio = st.date_input("Data de Início:", format="DD/MM/YYYY")
+                    with col_f3: d_fim = st.date_input("Data de Fim (Retorno):", format="DD/MM/YYYY")
+                    with col_f4: t_afastamento = st.selectbox("Tipo de Ausência:", ["Férias", "Recesso", "Atestado Médico"])
                     if st.form_submit_button("🚀 Confirmar e Bloquear", type="primary", use_container_width=True):
-                        if d_inicio > d_fim: 
-                            st.error("❌ Erro: A data de início não pode ser maior que a de término.")
+                        if d_inicio > d_fim: st.error("❌ Erro: A data de início não pode ser maior que a de término.")
                         else:
                             ok, msg = salvar_afastamento(usr_afastado, d_inicio.strftime("%d/%m/%Y"), d_fim.strftime("%d/%m/%Y"), t_afastamento)
                             if ok: st.success(msg); time.sleep(1); st.rerun()
                             else: st.error(msg)
-
-            with col_dir:
-                st.markdown("### 🔄 Troca de Escala Pontual")
-                with st.form("form_troca_escala", clear_on_submit=True):
-                    tr_user = st.selectbox("Colaborador:", TODOS_NOMES)
-                    tr_data_original = st.date_input("Dia Original:")
-                    tr_data_nova = st.date_input("Novo Dia Presencial:")
-                    
-                    if st.form_submit_button("Mudar Dia Presencial", type="secondary", use_container_width=True):
-                        conn.client.table("trocas_escala").insert({
-                            "usuario": tr_user, 
-                            "data_original": tr_data_original.strftime('%Y-%m-%d'), 
-                            "data_nova": tr_data_nova.strftime('%Y-%m-%d'),
-                            "data_registro": datetime.date.today().strftime('%Y-%m-%d')
-                        }).execute()
-                        st.success("✅ Troca registrada!")
-                        time.sleep(1); st.rerun()
-
             st.markdown("---")
             st.subheader("📋 Quadro de Ausências Ativas (Quem está fora hoje)")
             df_af = carregar_afastamentos()
@@ -2008,10 +1789,11 @@ with aba_gestao:
                 if not df_ativas.empty:
                     df_ativas_display = df_ativas.rename(columns={'usuario': 'Colaborador Ausente', 'tipo': 'Tipo / Motivo', 'data_inicio': 'Data de Saída', 'data_fim': 'Data de Retorno'})
                     st.dataframe(df_ativas_display[['Colaborador Ausente', 'Tipo / Motivo', 'Data de Saída', 'Data de Retorno']], hide_index=True, use_container_width=True)
-                else: st.success("✨ Toda a equipe operacional está ativa hoje.")
+                else: st.success("✨ Toda a equipe operacional está ativa e disponível hoje.")
+            else: st.info("✨ Nenhum afastamento ativo registrado no momento.")
 
 # ------------------------------------------
-# ABA 5: AJUDA E GLOSSÁRIO (MANUAL DEFINITIVO)
+# ABA 5: AJUDA E GLOSSÁRIO (MANUAL DETALHADO)
 # ------------------------------------------
 with aba_ajuda:
     st.header("📖 Manual Operacional Completo: S.A.D.E.")
@@ -2035,23 +1817,11 @@ with aba_ajuda:
         * **Quarentena:** Processos devolvidos pelo revisor ficam na tabela inferior (vermelha). Eles **não** avançam para despacho até que a correção seja feita na Aba 2.5 e o botão "Correção Realizada" seja acionado.
         """)
 
-    with st.expander("✉️ 2.5. Controle de Ofícios (Fábrica de Documentos)"):
+    with st.expander("✉️ 2.5. Controle de Ofícios & 2.7. Relatório de Expedição"):
         st.markdown("""
         * **Controle:** Cadastro de Jurisdicionados, Não Jurisdicionados e Memorandos. O sistema usa "Autocomplete" para sugerir destinatários recorrentes.
         * **Trava de Segurança:** Processos da Ordinária/Virtual **não podem ser despachados** sem antes ter seus ofícios cadastrados e marcados como despachados (ou o processo ser marcado como "Isento").
-        * **Isenção:** Se um processo não requer nenhum documento oficial, clique no botão "🚫 Isentar este processo" para o sistema liberar o despacho final.
-        """)
-
-    with st.expander("📄 2.7. Relatório de Expedição (O Checklist Final)"):
-        st.markdown("""
-        ### O que é esta aba?
-        É a sua lista de tarefas dinâmica. Ela mostra tudo o que você já fez no S.A.D.E. e que agora precisa ser efetivamente protocolado (passado a limpo) no sistema oficial do Tribunal.
-
-        ### Como usar na prática:
-        1. **Filtre seu Nome:** Selecione seu nome no primeiro campo para carregar seus processos ativos como Expedidor.
-        2. **Filtre a Sessão (Opcional):** Para não se perder em uma lista gigante, use o segundo campo para focar apenas em uma sessão específica de cada vez.
-        3. **Consulte e Copie:** Abra o menu expansível de cada processo para ver exatamente quais Ofícios e Memorandos você preparou e para quem eles devem ser enviados.
-        4. **A Mágica do Sistema:** Após você copiar os dados e realizar o protocolo no Tribunal, volte na Aba 2 e marque aquele processo como "Despachado". **Ele sumirá automaticamente desta lista do Relatório!** O objetivo do seu dia é deixar essa tela vazia.
+        * **Relatório Individual:** Na Aba 2.7, o colaborador gera seu relatório de produção diária, que lista exatamente o que foi feito (ofícios/memorandos) por processo. É a sua lista para "passar a limpo" no sistema do Tribunal.
         """)
 
     with st.expander("🗄️ 3. Histórico e Auditoria"):
@@ -2062,7 +1832,7 @@ with aba_ajuda:
         * **Férias e Ausências:** Exibe quem da equipe está afastado. **Regra:** O sistema cruza os dados do cadastro de afastamentos com as datas de distribuição; se um colaborador estiver em período de afastamento, o sistema ignora o nome dele no sorteio automático, evitando que ele receba trabalho enquanto está ausente.
         """)
 
-    with st.expander("⚙️ 4. Gestão Administrativa (Manual de Operações Críticas)"):
+    with st.expander("⚙️ 4. Gestão Administrativa (Manual de Operações Criticas)"):
         st.markdown("""
         * **Controle de Banco de Dados:** Visualize volumetria de expedição/revisão por data.
         * **Remover Processo:** Exclui um processo da pauta, movendo-o para a lixeira de auditoria.
@@ -2073,26 +1843,6 @@ with aba_ajuda:
         * **Backup e Restauração:** O Backup gera um CSV com o banco atual. A Restauração limpa a base e substitui pelos dados do CSV (Use com cautela).
         * **Modo Limpeza:** * **Por Período:** Apaga processos em um intervalo de datas.
             * **Modo Nuclear:** Reseta todo o banco de processos (ativos e histórico). Colaboradores e afastamentos são preservados.
-        """)
-
-    with st.expander("🤝 4.5. Entendendo a Matriz de Colaboração (Raio-X de Soft Skills)"):
-        st.markdown("""
-        ### O que é esse gráfico colorido na Aba 4?
-        É um **Gráfico de Calor de Densidade (Heatmap)**. Ele serve para mapear o comportamento prático, o entrosamento e a sinergia da equipe através do cruzamento de dados de produção. Ele ajuda a tirar o "achismo" na hora de gerenciar as pessoas do setor.
-
-        ### Como ler o gráfico:
-        * **Quem está na vertical (Eixo Y):** São os nomes de quem atuou como **Expedidor** (quem redigiu os documentos iniciais).
-        * **Quem está na horizontal (Eixo X):** São os nomes de quem atuou como **Revisor** (quem conferiu o trabalho).
-        * **Os Quadrados Numerados:** Cada quadrado representa o encontro de dois colaboradores. O número indica quantos processos aquela dupla específica finalizou e despachou com sucesso juntos.
-
-        ### O significado das cores (O Termômetro Operacional):
-        * **🟣 Tons de Roxo/Azul Escuro (Frio):** Baixo ou nenhum volume de processos finalizados por essa dupla. Indica que eles trabalham pouco juntos ou que o fluxo trava quando se cruzam.
-        * **🟡 Tons de Verde Claro/Amarelo (Quente):** Alto volume de processos concluídos com sucesso. É a representação visual de uma **Dupla de Ouro**.
-
-        ### Como usar isso estrategicamente na Gestão:
-        1. **Mapeamento de Sinergia:** Quadrados amarelos mostram colaboradores com excelente comunicação e entrosamento natural. Em dias de pico ou crise no Tribunal, direcione as pautas críticas para essas duplas para garantir velocidade.
-        2. **Identificação de Gargalos Invisíveis:** Se dois colaboradores produzem muito individualmente, mas o quadrado onde eles se cruzam está sempre escuro, pode haver um desalinhamento de critérios ou de comunicação entre eles que precisa de mediação ou treinamento.
-        3. **Líderes Ocultos (O Coringa):** Fique atento ao Revisor que consegue manter quadrados claros/verdes com quase todos os expedidores da equipe. Essa pessoa possui alta adaptabilidade e inteligência emocional, sendo ideal para treinar novos membros ou assumir substituições de liderança.
         """)
 
     with st.expander("📚 Glossário de Termos"):
