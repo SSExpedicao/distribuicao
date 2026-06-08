@@ -400,6 +400,12 @@ def obter_avisos_pendentes():
         df_proc = pd.DataFrame(conn.client.table("processos").select("numero_processo, nome_sessao, despachado").execute().data)
         if df_av.empty: return pd.DataFrame()
         if df_proc.empty: df_proc = pd.DataFrame(columns=['numero_processo', 'nome_sessao', 'despachado'])
+        
+        # CORREÇÃO PARA MÚLTIPLOS RITOS: Ordena para colocar as versões ativas (0) no topo
+        # e remove duplicados, mantendo apenas a instância em andamento para o cruzamento.
+        if not df_proc.empty:
+            df_proc = df_proc.sort_values(by='despachado', ascending=True).drop_duplicates(subset=['numero_processo'], keep='first')
+            
         df_avisos = pd.merge(df_av, df_proc, on='numero_processo', how='left')
         df_avisos = df_avisos[(df_avisos['numero_processo'] == '') | (df_avisos['despachado'] == 0)]
         linhas_validas = []
@@ -422,6 +428,12 @@ def carregar_historico_avisos():
         df_proc = pd.DataFrame(conn.client.table("processos").select("numero_processo, despachado").execute().data)
         if df_av.empty: return pd.DataFrame(columns=['numero_processo', 'usuario', 'mensagem', 'data_criacao', 'ativo', 'despachado', 'proc_existe', 'status'])
         df_proc['proc_existe'] = df_proc['numero_processo'] if not df_proc.empty else None
+        
+        # CORREÇÃO PARA MÚLTIPLOS RITOS: Evita que o histórico de avisos multiplique as linhas
+        # se o processo tiver passado várias vezes pelo banco de dados.
+        if not df_proc.empty:
+            df_proc = df_proc.sort_values(by='despachado', ascending=True).drop_duplicates(subset=['numero_processo'], keep='first')
+            
         df = pd.merge(df_av, df_proc, on='numero_processo', how='left')
         status_list = []
         for _, row in df.iterrows():
