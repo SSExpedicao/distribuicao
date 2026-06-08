@@ -12,11 +12,20 @@ from st_supabase_connection import SupabaseConnection
 # 1. FRONTEND: CONFIGURAÇÃO INICIAL DA PÁGINA
 # ==========================================
 st.set_page_config(page_title="Sistema de Sessões", layout="wide")
+
+# ==========================================
+# 2. BACKEND: CONEXÃO COM A NUVEM SUPABASE
+# ==========================================
+# 👈 CORREÇÃO 2: A conexão precisa vir ANTES do letreiro para ele conseguir ler os avisos
+conn = st.connection("supabase", type=SupabaseConnection)
+
+# ==========================================
+# 3. DECLARAÇÃO DA FUNÇÃO INTELIGENTE
+# ==========================================
 def gerar_avisos_letreiro_automaticos():
     avisos_sistema = []
     hoje = datetime.date.today()
     hoje_str = hoje.strftime('%Y-%m-%d')
-    amanha_str = (hoje + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
     
     # 1. Busca Trocas de Escala Ativas
     try:
@@ -49,7 +58,9 @@ def gerar_avisos_letreiro_automaticos():
     return avisos_sistema
 
 
-# 2. DEPOIS O PYTHON CONSTROI A TELA E CHAMA A FUNÇÃO (Sua Linha 19)
+# ==========================================
+# 4. CONSTRUÇÃO DA TELA
+# ==========================================
 st.title("🏛️ Sistema S.A.D.E.")
 
 avisos_frequencia = gerar_avisos_letreiro_automaticos()
