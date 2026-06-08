@@ -977,9 +977,8 @@ with aba_oficios:
     st.header("✉️ Controle e Expedição de Ofícios")
     
     # --- BLINDAGEM CONTRA BANCO VAZIO ---
-    # Verifica se a tabela tem dados E se a coluna 'despachado' existe antes de tentar filtrar
     if df_geral_status.empty or 'despachado' not in df_geral_status.columns or 'tipo_sessao' not in df_geral_status.columns:
-        df_ativos_base = pd.DataFrame() # Cria uma tabela vazia invisível para não quebrar o sistema
+        df_ativos_base = pd.DataFrame() # Cria tabela vazia e evita o KeyError
     else:
         # Puxa os dados brutos (apenas ativos de Ord/Virtual)
         df_ativos_base = df_geral_status[(df_geral_status['despachado'] == 0) & (df_geral_status['tipo_sessao'].isin(['Sessão Ordinária', 'Sessão Ordinária Virtual']))].copy()
@@ -990,7 +989,6 @@ with aba_oficios:
     else:
         st.subheader("🔍 1. Filtros de Seleção da Mesa")
         col_f1, col_f2, col_f3 = st.columns(3)
-        # ... (seu código continua normalmente a partir daqui) ...
         
         with col_f1:
             tipo_sessao_filtro = st.selectbox("Qual a Sessão?", ["Sessão Ordinária", "Sessão Ordinária Virtual"])
