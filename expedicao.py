@@ -24,7 +24,7 @@ conn = st.connection("supabase", type=SupabaseConnection)
 def gerar_avisos_letreiro_automaticos():
     avisos_sistema = []
     
-    # Agora usamos o módulo 'datetime' importado inteiramente
+    # Usando o módulo 'datetime' importado corretamente
     hoje = datetime.date.today()
     hoje_str = hoje.strftime('%Y-%m-%d')
     
@@ -32,7 +32,6 @@ def gerar_avisos_letreiro_automaticos():
     try:
         trocas = conn.client.table("trocas_escala").gte("data_nova", hoje_str).execute().data
         for t in trocas:
-            # Usando datetime.datetime (módulo . classe)
             d_orig = datetime.datetime.strptime(t['data_original'], '%Y-%m-%d').strftime('%d/%m')
             d_nova = datetime.datetime.strptime(t['data_nova'], '%Y-%m-%d').strftime('%d/%m')
             avisos_sistema.append(f"🔄 ESCALA: {t['usuario']} alterou seu dia presencial de {d_orig} para {d_nova}.")
@@ -59,7 +58,6 @@ def gerar_avisos_letreiro_automaticos():
         
     return avisos_sistema
 
-
 # ==========================================
 # 4. CONSTRUÇÃO DA TELA (O Letreiro)
 # ==========================================
@@ -77,8 +75,6 @@ if avisos_frequencia:
             else:
                 st.success(aviso)
 
-# Daqui para baixo, continuam as suas variáveis normais (ex: TODOS_NOMES) e o resto do código...
-                
 # ==========================================
 # 2. BACKEND: CONEXÃO COM A NUVEM SUPABASE
 # ==========================================
