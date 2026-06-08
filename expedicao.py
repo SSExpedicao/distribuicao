@@ -1947,10 +1947,10 @@ with aba_gestao:
                         cu3.metric("🤝 Parceiro Operacional", "N/A")
 
 # O seu "with" já deve estar na linha 1937, algo como "with sub_ferias:"
-        with sub_ferias: # (Mantenha o nome que você já usa na sua aba)
+       with sub_ferias:
             st.subheader("🗓️ Gestão de Frequência e Escala Presencial")
 
-            # Matriz de Escala Padrão do Setor
+            # Matriz de Escala Padrão
             ESCALA_PRESENCIAL = {
                 "Segunda-Feira": ["André", "Lu Fiorote", "Maurício", "Kátia", "Luanna C"],
                 "Terça-Feira": ["André", "Jessyca", "Lu Fiorote", "Kátia", "Elaine", "Luanna C"],
@@ -1960,118 +1960,77 @@ with aba_gestao:
             }
             dias_conversao = {0: "Segunda-Feira", 1: "Terça-Feira", 2: "Quarta-Feira", 3: "Quinta-Feira", 4: "Sexta-Feira"}
 
-            col_esc1, col_esc2 = st.columns(2)
+            # --- PAINEL UNIFICADO ---
+            col_esq, col_dir = st.columns([1, 1])
 
-            # --- MÓDULO 1: AFASTAMENTOS (COM INTELIGÊNCIA DE APAGÃO) ---
-            with col_esc1:
-                st.markdown("##### 🏖️ Cadastrar Férias ou Atestado")
-                
-                # Campos reativos (sem "st.form" para o alerta piscar na hora)
-                af_user = st.selectbox("Colaborador:", TODOS_NOMES, key="af_u")
-                af_tipo = st.selectbox("Tipo:", ["Férias", "Atestado Médico"], key="af_t")
-                af_ini = st.date_input("Início:", key="af_i")
-                af_fim = st.date_input("Fim (Último dia afastado):", key="af_f")
-                
+            with col_esq:
+                st.markdown("### 🏖️ Registrar Afastamento")
+                # Inputs de afastamento (reativos para disparar o alerta)
+                usr_afastado = st.selectbox("Colaborador:", TODOS_NOMES, key="af_user_unique")
+                t_afastamento = st.selectbox("Tipo de Ausência:", ["Férias", "Recesso", "Atestado Médico"], key="af_tipo_unique")
+                d_inicio = st.date_input("Data de Início:", format="DD/MM/YYYY", key="af_ini_unique")
+                d_fim = st.date_input("Data de Fim (Retorno):", format="DD/MM/YYYY", key="af_fim_unique")
+
+                # Lógica de Alerta de Apagão
                 dias_com_dois = []
                 dias_com_um = []
                 pode_salvar = True
-                
-                if af_user and af_ini <= af_fim:
-                    # Busca quem já está afastado no banco
-                    try:
-                        df_af_atual = pd.DataFrame(conn.client.table("afastamentos").execute().data)
-                    except:
-                        df_af_atual = pd.DataFrame()
-                        
-                    periodo_solicitado = pd.date_range(start=af_ini, end=af_fim)
+
+                if d_inicio <= d_fim:
+                    df_af_atual = carregar_afastamentos()
+                    periodo = pd.date_range(start=d_inicio, end=d_fim)
                     
-                    for dia in periodo_solicitado:
-                        if dia.weekday() in [5, 6]: continue # Ignora Sábado e Domingo
-                        
+                    for dia in periodo:
+                        if dia.weekday() in [5, 6]: continue
                         dia_semana_pt = dias_conversao[dia.weekday()]
                         equipe_dia = ESCALA_PRESENCIAL[dia_semana_pt].copy()
                         
-                        # Remove quem está pedindo férias agora
-                        if af_user in equipe_dia:
-                            equipe_dia.remove(af_user)
-                            
-                        # Remove quem JÁ ESTÁ de férias no banco para este dia
+                        if usr_afastado in equipe_dia: equipe_dia.remove(usr_afastado)
+                        
+                        # Remove quem já está afastado no período
                         if not df_af_atual.empty:
                             for _, row in df_af_atual.iterrows():
                                 try:
-                                    ini_banco = pd.to_datetime(row['data_inicio']).date()
-                                    fim_banco = pd.to_datetime(row['data_fim']).date()
-                                    if ini_banco <= dia.date() <= fim_banco:
-                                        if row['usuario'] in equipe_dia:
-                                            equipe_dia.remove(row['usuario'])
+                                    ini = pd.to_datetime(row['data_inicio'], format="%d/%m/%Y").date()
+                                    fim = pd.to_datetime(row['data_fim'], format="%d/%m/%Y").date()
+                                    if ini <= dia.date() <= fim:
+                                        if row['usuario'] in equipe_dia: equipe_dia.remove(row['usuario'])
                                 except: pass
-                                
-                        total_restante = len(equipe_dia)
-                        data_format = dia.strftime('%d/%m (%a)')
                         
-                        if total_restante == 2:
-                            dias_com_dois.append(f"{data_format} - Restam: {', '.join(equipe_dia)}")
-                        elif total_restante <= 1:
-                            dias_com_um.append(f"{data_format} - Resta: {', '.join(equipe_dia) if equipe_dia else 'NENHUM'}")
+                        total = len(equipe_dia)
+                        if total == 2: dias_com_dois.append(f"{dia.strftime('%d/%m')} - Restam: {', '.join(equipe_dia)}")
+                        elif total <= 1: dias_com_um.append(f"{dia.strftime('%d/%m')} - Resta: {', '.join(equipe_dia) if equipe_dia else 'NENHUM'}")
 
-                    # Dispara os alertas baseados nos cálculos
-                    if dias_com_dois:
-                        st.warning("⚠️ **ALERTA DE ESCALA (Apenas 2 Servidores):**\n" + "\n".join([f"- {d}" for d in dias_com_dois]))
-                    
-                    if dias_com_um:
-                        st.error("🚨 **RISCO DE APAGÃO (Apenas 1 ou 0 Servidores no balcão):**\n" + "\n".join([f"- {d}" for d in dias_com_um]))
-                        confirmou_risco = st.checkbox("❗ Confirmo que desejo prosseguir com a escala reduzida.", value=False)
-                        pode_salvar = confirmou_risco
+                if dias_com_dois: st.warning(f"⚠️ **Atenção:** Nos dias abaixo teremos apenas 2 servidores:\n" + "\n".join([f"- {d}" for d in dias_com_dois]))
+                if dias_com_um: 
+                    st.error(f"🚨 **Risco de Apagão (1 ou 0 servidores):**\n" + "\n".join([f"- {d}" for d in dias_com_um]))
+                    pode_salvar = st.checkbox("❗ Confirmo o risco de escala reduzida e desejo prosseguir.", value=False)
 
-                st.markdown("---")
-                if st.button("💾 Registrar Afastamento", type="primary", use_container_width=True, disabled=not pode_salvar):
-                    conn.client.table("afastamentos").insert({
-                        "usuario": af_user, "tipo": af_tipo, 
-                        "data_inicio": af_ini.strftime('%Y-%m-%d'), 
-                        "data_fim": af_fim.strftime('%Y-%m-%d')
-                    }).execute()
-                    st.success(f"✅ {af_tipo} registrada com sucesso!")
-                    time.sleep(1)
-                    st.rerun()
+                if st.button("🚀 Confirmar e Bloquear", type="primary", use_container_width=True, disabled=not pode_salvar):
+                    ok, msg = salvar_afastamento(usr_afastado, d_inicio.strftime("%d/%m/%Y"), d_fim.strftime("%d/%m/%Y"), t_afastamento)
+                    if ok: st.success(msg); time.sleep(1); st.rerun()
+                    else: st.error(msg)
 
-            # --- MÓDULO 2: TROCA DE ESCALA PONTUAL ---
-            with col_esc2:
-                st.markdown("##### 🔄 Troca de Escala Pontual")
-                with st.form("form_troca_escala"):
-                    tr_user = st.selectbox("Colaborador:", TODOS_NOMES, key="tr_u")
-                    tr_data_original = st.date_input("Data Original (Dia que sairia):", key="tr_do")
-                    tr_data_nova = st.date_input("Nova Data (Dia que irá presencial):", key="tr_dn")
+            with col_dir:
+                st.markdown("### 🔄 Troca de Escala Pontual")
+                with st.form("form_troca_escala", clear_on_submit=True):
+                    tr_user = st.selectbox("Colaborador:", TODOS_NOMES, key="tr_u_unique")
+                    tr_data_original = st.date_input("Dia Original:", key="tr_do_unique")
+                    tr_data_nova = st.date_input("Novo Dia Presencial:", key="tr_dn_unique")
                     
-                    btn_tr = st.form_submit_button("Mudar Dia Presencial", type="secondary", use_container_width=True)
-                    
-                    if btn_tr:
+                    if st.form_submit_button("Mudar Dia Presencial", type="secondary", use_container_width=True):
                         conn.client.table("trocas_escala").insert({
                             "usuario": tr_user, 
                             "data_original": tr_data_original.strftime('%Y-%m-%d'), 
                             "data_nova": tr_data_nova.strftime('%Y-%m-%d'),
                             "data_registro": datetime.date.today().strftime('%Y-%m-%d')
                         }).execute()
-                        st.success("✅ Troca registrada! O aviso já está no letreiro do sistema.")
-                        time.sleep(1)
-                        st.rerun()
-            
-            st.header("🌴 Painel de Férias e Afastamentos Operacionais")
-            with st.container(border=True):
-                st.subheader("📝 Registrar Nova Ausência")
-                with st.form("form_afastamento", clear_on_submit=True):
-                    col_f1, col_f2, col_f3, col_f4 = st.columns(4)
-                    with col_f1: usr_afastado = st.selectbox("Colaborador:", TODOS_NOMES)
-                    with col_f2: d_inicio = st.date_input("Data de Início:", format="DD/MM/YYYY")
-                    with col_f3: d_fim = st.date_input("Data de Fim (Retorno):", format="DD/MM/YYYY")
-                    with col_f4: t_afastamento = st.selectbox("Tipo de Ausência:", ["Férias", "Recesso", "Atestado Médico"])
-                    if st.form_submit_button("🚀 Confirmar e Bloquear", type="primary", use_container_width=True):
-                        if d_inicio > d_fim: st.error("❌ Erro: A data de início não pode ser maior que a de término.")
-                        else:
-                            ok, msg = salvar_afastamento(usr_afastado, d_inicio.strftime("%d/%m/%Y"), d_fim.strftime("%d/%m/%Y"), t_afastamento)
-                            if ok: st.success(msg); time.sleep(1); st.rerun()
-                            else: st.error(msg)
+                        st.success("✅ Troca registrada!")
+                        time.sleep(1); st.rerun()
+
             st.markdown("---")
-            st.subheader("📋 Quadro de Ausências Ativas (Quem está fora hoje)")
+            st.markdown("### 📋 Quadro de Ausências Ativas (Quem está fora hoje)")
+            # [Manter aqui o dataframe de visualização das ausências que já tínhamos]
             df_af = carregar_afastamentos()
             if not df_af.empty:
                 hoje = datetime.now().date()
