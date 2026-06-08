@@ -1608,9 +1608,20 @@ with aba_gestao:
                     df_dados[c + '_dt'] = pd.to_datetime(df_dados[c], format="%d/%m/%Y %H:%M:%S", errors='coerce').fillna(pd.to_datetime(df_dados[c], format="%d/%m/%Y %H:%M", errors='coerce'))
                 df_concluidos = df_dados[df_dados['despachado'] == 1].copy()
                 df_tempo_real = df_concluidos[df_concluidos['data_entrada'] != df_concluidos['data_conclusao']].copy()
-                df_tempo_real['min_exp'] = (df_tempo_real['data_expedido_dt'] - df_tempo_real['data_entrada_dt']).dt.total_seconds() / 60
-                df_tempo_real['min_rev'] = (df_tempo_real['data_revisado_dt'] - df_tempo_real['data_expedido_dt']).dt.total_seconds() / 60
-                df_tempo_real['min_total'] = (df_tempo_real['data_conclusao_dt'] - df_tempo_real['data_entrada_dt']).dt.total_seconds() / 60
+
+                # --- BLOCO BLINDADO DE CÁLCULOS ---
+                # Criamos as colunas com valor 0 por padrão para evitar erros
+                df_tempo_real['min_exp'] = 0.0
+                df_tempo_real['min_rev'] = 0.0
+                df_tempo_real['min_total'] = 0.0
+
+                if not df_tempo_real.empty:
+                    # Só fazemos o cálculo se o DataFrame não estiver vazio
+                    # E garantimos que as colunas são do tipo datetime
+                    df_tempo_real['min_exp'] = (pd.to_datetime(df_tempo_real['data_expedido_dt']) - pd.to_datetime(df_tempo_real['data_entrada_dt'])).dt.total_seconds() / 60
+                    df_tempo_real['min_rev'] = (pd.to_datetime(df_tempo_real['data_revisado_dt']) - pd.to_datetime(df_tempo_real['data_expedido_dt'])).dt.total_seconds() / 60
+                    df_tempo_real['min_total'] = (pd.to_datetime(df_tempo_real['data_conclusao_dt']) - pd.to_datetime(df_tempo_real['data_entrada_dt'])).dt.total_seconds() / 60
+                # ----------------------------------
 
                 def format_tempo(minutos):
                     if pd.isna(minutos) or minutos < 0: return "N/A"
