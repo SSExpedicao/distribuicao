@@ -210,10 +210,11 @@ def carregar_excluidos():
     except: return pd.DataFrame()
     
 def processo_existe(numero_processo, nome_sessao):
-    try:
+    try:      
         # Agora o sistema verifica se o processo existe NAQUELA SESSÃO ESPECÍFICA, e não no banco todo.
         res = conn.client.table("processos").select("id", count="exact").eq("numero_processo", numero_processo).eq("nome_sessao", nome_sessao).execute()
         return res.count > 0
+        if not processo_existe(p_limpo, hist_sessao):
     except: return False
 
 def marcar_urgente(numero_processo):
