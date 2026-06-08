@@ -3,4 +3,5 @@ pandas
 numpy
 plotly
 openpyxl
+datatime
 st-supabase-connection
