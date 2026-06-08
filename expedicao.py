@@ -105,21 +105,26 @@ def carregar_excluidos():
     try: return pd.DataFrame(conn.client.table("processos_excluidos").select("*").execute().data)
     except: return pd.DataFrame()
     
-def processo_existe(numero_processo):
+def processo_existe(numero_processo, nome_sessao):
     try:
-        res = conn.client.table("processos").select("id", count="exact").eq("numero_processo", numero_processo).execute()
+        # Agora o sistema verifica se o processo existe NAQUELA SESSÃO ESPECÍFICA, e não no banco todo.
+        res = conn.client.table("processos").select("id", count="exact").eq("numero_processo", numero_processo).eq("nome_sessao", nome_sessao).execute()
         return res.count > 0
     except: return False
 
 def marcar_urgente(numero_processo):
     numero_processo, _ = higienizar_dados(numero_processo)
     try:
-        res = conn.client.table("processos").select("id").eq("numero_processo", numero_processo).execute().data
-        if not res: return False, f"❌ Processo {numero_processo} não encontrado. Insira-o na sua sessão normal primeiro."
-        conn.client.table("processos").update({"urgente": 1}).eq("numero_processo", numero_processo).execute()
+        # Busca o processo, mas APENAS as versões que estão em andamento (despachado = 0)
+        res = conn.client.table("processos").select("id").eq("numero_processo", numero_processo).eq("despachado", 0).execute().data
+        if not res: return False, f"❌ Processo {numero_processo} não encontrado nas sessões ativas. Insira-o na sua pauta atual primeiro."
+        
+        # Se achar, marca todas as entradas ativas como urgentes
+        for p in res:
+            conn.client.table("processos").update({"urgente": 1}).eq("id", p['id']).execute()
         return True, f"🚨 Processo {numero_processo} destacado como URGENTE!"
     except Exception as e: return False, f"❌ Erro: {e}"
-
+        
 def atualizar_processo(id_processo, mudancas):
     if not mudancas: return
     agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
@@ -307,10 +312,12 @@ def gerar_relatorio_gerencial(mes, ano):
 
 def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, expedidores_selecionados, revisores_selecionados):
     numero_processo, relator = higienizar_dados(numero_processo, relator)
-    if processo_existe(numero_processo): return False, "❌ Processo já existe."
+    
+    # Atualizamos a trava de segurança para olhar apenas para a sessão atual
+    if processo_existe(numero_processo, nome_sessao): 
+        return False, f"❌ O processo já existe nesta mesma sessão ({nome_sessao})."
     
     # 1. Puxa a carga global APENAS para os membros que foram SELECIONADOS
-    # Usamos os expedidores_selecionados para filtrar o histórico
     res_global = conn.client.table("processos").select("expedicao, revisao").in_("expedicao", expedidores_selecionados).execute().data
     
     # 2. Conta quanto cada um dos SELECIONADOS tem no total (Histórico Geral)
@@ -377,9 +384,10 @@ def restaurar_backup(df_backup):
 
 def adicionar_aviso(usuario, numero_processo, mensagem):
     try:
-        res = conn.client.table("processos").select("despachado").eq("numero_processo", numero_processo).execute().data
-        if not res: return False, f"❌ Processo '{numero_processo}' não encontrado no sistema."
-        if res[0]['despachado'] == 1: return False, f"❌ O processo '{numero_processo}' já foi concluído."
+        # Verifica se existe pelo menos uma entrada desse processo que ainda NÃO foi despachada
+        res = conn.client.table("processos").select("id").eq("numero_processo", numero_processo).eq("despachado", 0).execute().data
+        if not res: return False, f"❌ Processo '{numero_processo}' não está ativo em nenhuma sessão no momento (ou já foi concluído)."
+        
         agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         conn.client.table("avisos").insert({"usuario": usuario, "numero_processo": numero_processo, "mensagem": mensagem, "data_criacao": agora, "ativo": 1}).execute()
         return True, "✅ Aviso publicado no letreiro!"
