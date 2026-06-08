@@ -12,7 +12,23 @@ from st_supabase_connection import SupabaseConnection
 # 1. FRONTEND: CONFIGURAÇÃO INICIAL DA PÁGINA
 # ==========================================
 st.set_page_config(page_title="Sistema de Sessões", layout="wide")
+# No topo do seu app, abaixo do título principal do S.A.D.E.
+st.title("🏛️ Sistema S.A.D.E.")
 
+# Coleta os avisos automáticos de escala + seus avisos normais do banco
+avisos_frequencia = gerar_avisos_letreiro_automaticos()
+
+# Exemplo de exibição em formato de caixa de alertas destacados no topo
+if avisos_frequencia:
+    with st.container():
+        for aviso in avisos_frequencia:
+            if "🩺" in aviso:
+                st.info(aviso) # Azul para atestados
+            elif "🔄" in aviso:
+                st.warning(aviso) # Amarelo para trocas de escala
+            else:
+                st.success(aviso) # Verde para regressos de férias
+                
 # ==========================================
 # 2. BACKEND: CONEXÃO COM A NUVEM SUPABASE
 # ==========================================
@@ -497,6 +513,42 @@ def adicionar_aviso(usuario, numero_processo, mensagem):
         return True, "✅ Aviso publicado no letreiro!"
     except Exception as e: return False, f"❌ Erro: {e}"
 
+def gerar_avisos_letreiro_automaticos():
+    avisos_sistema = []
+    hoje = datetime.date.today()
+    hoje_str = hoje.strftime('%Y-%m-%d')
+    amanha_str = (hoje + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+    
+    # 1. Busca Trocas de Escala Ativas
+    try:
+        trocas = conn.client.table("trocas_escala").gte("data_nova", hoje_str).execute().data
+        for t in trocas:
+            d_orig = datetime.datetime.strptime(t['data_original'], '%Y-%m-%d').strftime('%d/%m')
+            d_nova = datetime.datetime.strptime(t['data_nova'], '%Y-%m-%d').strftime('%d/%m')
+            avisos_sistema.append(f"🔄 ESCALA: {t['usuario']} alterou seu dia presencial de {d_orig} para {d_nova}.")
+    except:
+        pass
+
+    # 2. Busca Afastamentos (Férias e Atestados)
+    try:
+        afastamentos = conn.client.table("afastamentos").execute().data
+        for a in afastamentos:
+            dt_ini = datetime.datetime.strptime(a['data_inicio'], '%Y-%m-%d').date()
+            dt_fim = datetime.datetime.strptime(a['data_fim'], '%Y-%m-%d').date()
+            
+            # Regra para Atestado Médico: Avisa durante todo o período até o colaborador voltar
+            if a['tipo'] == "Atestado Médico" and dt_ini <= hoje <= dt_fim:
+                retorno = (dt_fim + datetime.timedelta(days=1)).strftime('%d/%m')
+                avisos_sistema.append(f"🩺 ATESTADO: {a['usuario']} afastado por motivos médicos. Retorno previsto: {retorno}.")
+                
+            # Regra para Férias: Avisa EXATAMENTE um dia antes do retorno
+            elif a['tipo'] == "Férias" and hoje == dt_fim:
+                avisos_sistema.append(f"🏖️ FÉRIAS: O colaborador {a['usuario']} regressará amanhã ao serviço!")
+    except:
+        pass
+        
+    return avisos_sistema
+    
 def obter_avisos_pendentes():
     hoje = datetime.now().strftime("%d/%m/%Y")
     try:
@@ -1883,6 +1935,67 @@ with aba_gestao:
                         cu3.metric("🤝 Parceiro Operacional", "N/A")
 
         with sub_ferias:
+            # --------------------------------------------------------------
+# 🔄 MÓDULO DE ESCALAS, AFASTAMENTOS E TROCAS (S.A.D.E.)
+# --------------------------------------------------------------
+st.subheader("🗓️ Gestão de Frequência e Escala Presencial")
+
+# Matriz de Escala Padrão do Setor
+ESCALA_PRESENCIAL = {
+    "Segunda-Feira": ["André", "Lu Fiorote", "Maurício", "Kátia", "Luanna C"],
+    "Terça-Feira": ["André", "Jessyca", "Lu Fiorote", "Kátia", "Elaine", "Luanna C"],
+    "Quarta-Feira": ["André", "Jessyca", "Lu Fiorote", "Mariana", "Elaine", "Luanna C"],
+    "Quinta-Feira": ["Lu Fiorote", "Maurício", "Mariana", "Kátia", "Elaine", "Luanna C"],
+    "Sexta-Feira": ["Jessyca", "Lu Fiorote", "Maurício", "Mariana", "Luanna C"]
+}
+dias_conversao = {0: "Segunda-Feira", 1: "Terça-Feira", 2: "Quarta-Feira", 3: "Quinta-Feira", 4: "Sexta-Feira"}
+
+col_esc1, col_esc2 = st.columns(2)
+
+# --- FORMULÁRIO 1: AFASTAMENTOS (FÉRIAS / ATESTADOS) ---
+with col_esc1:
+    st.markdown("##### 🏖️ Cadastrar Férias ou Atestado")
+    with st.form("form_afastamento"):
+        af_user = st.selectbox("Colaborador:", TODOS_NOMES, key="af_u")
+        af_tipo = st.selectbox("Tipo:", ["Férias", "Atestado Médico"], key="af_t")
+        af_ini = st.date_input("Início:", key="af_i")
+        af_fim = st.date_input("Fim (Último dia afastado):", key="af_f")
+        
+        btn_af = st.form_submit_button("Registrar Afastamento", type="primary")
+        
+        if btn_af:
+            if af_ini <= af_fim:
+                # Salva no banco de afastamentos do Supabase
+                conn.client.table("afastamentos").insert({
+                    "usuario": af_user, "tipo": af_tipo, 
+                    "data_inicio": af_ini.strftime('%Y-%m-%d'), 
+                    "data_fim": af_fim.strftime('%Y-%m-%d')
+                }).execute()
+                st.success(f"✅ {af_tipo} de {af_user} registrada!")
+                time.sleep(1)
+                st.rerun()
+
+# --- FORMULÁRIO 2: TROCA DE ESCALA EXCEPCIONAL ---
+with col_esc2:
+    st.markdown("##### 🔄 Troca de Escala Pontual")
+    with st.form("form_troca_escala"):
+        tr_user = st.selectbox("Colaborador:", TODOS_NOMES, key="tr_u")
+        tr_data_original = st.date_input("Data Original (Dia que sairia):", key="tr_do")
+        tr_data_nova = st.date_input("Nova Data (Dia que irá presencial):", key="tr_dn")
+        
+        btn_tr = st.form_submit_button("Mudar Dia Presencial", type="secondary")
+        
+        if btn_tr:
+            # Salva a troca pontual no Supabase
+            conn.client.table("trocas_escala").insert({
+                "usuario": tr_user, 
+                "data_original": tr_data_original.strftime('%Y-%m-%d'), 
+                "data_nova": tr_data_nova.strftime('%Y-%m-%d'),
+                "data_registro": datetime.date.today().strftime('%Y-%m-%d')
+            }).execute()
+            st.success(f"✅ Troca de escala de {tr_user} registrada com sucesso!")
+            time.sleep(1)
+            st.rerun()
             st.header("🌴 Painel de Férias e Afastamentos Operacionais")
             with st.container(border=True):
                 st.subheader("📝 Registrar Nova Ausência")
