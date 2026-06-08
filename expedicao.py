@@ -782,8 +782,26 @@ def color_urgentes(row): return ['color: #ff4b4b; font-weight: bold'] * len(row)
 # ABA 2: PAINEL DAS SESSÕES ATIVAS
 # ------------------------------------------
 with aba_sessoes:
+    # --- NOVO FILTRO INTELIGENTE E SAUDAÇÃO ---
+    col_saudacao, col_filtro_p = st.columns([2, 1])
+    with col_saudacao:
+        st.markdown("### 💼 Minha Mesa de Trabalho")
+    with col_filtro_p:
+        colab_painel = st.selectbox(
+            "Filtrar processos por responsável:", 
+            ["👁️ Ver Todos os Processos do Setor"] + TODOS_NOMES,
+            key="filtro_colab_painel_ativo",
+            label_visibility="collapsed"
+        )
+    
+    # Mensagem personalizada baseada na seleção
+    if colab_painel != "👁️ Ver Todos os Processos do Setor":
+        st.markdown(f"👋 **Bom trabalho, {colab_painel}!** Exibindo estritamente as demandas onde você é o Expedidor ou o Revisor.")
+    
+    st.markdown("---")
+    
+    # Cria as sub-abas logo abaixo do filtro
     sub_aba_ord, sub_aba_ordv, sub_aba_res, sub_aba_adm = st.tabs(["🏛️ Ordinária", "💻 Ordinária Virtual", "🔒 Reservada", "📁 Administrativa"])
-
     def exibir_tabela_interativa(df_filtrado, key_prefix, data_sessao, tipo_sessao_tb):
         titulo_placeholder = st.empty()
         
@@ -890,34 +908,60 @@ with aba_sessoes:
     with sub_aba_ord:
         df_ord = carregar_dados_sqlite("Sessão Ordinária")
         if not df_ord.empty:
-            for data in df_ord['nome_sessao'].unique():
-                chave = f"Sessão Ordinária | {str(data).strip()}"
-                if chave not in sessoes_finalizadas:
+            # Aplica o filtro se o usuário selecionar um nome específico
+            if colab_painel != "👁️ Ver Todos os Processos do Setor":
+                df_ord = df_ord[(df_ord['expedicao'] == colab_painel) | (df_ord['revisao'] == colab_painel)]
+            
+            # Descobre quais sessões ativas realmente têm processos desse colaborador
+            sessoes_com_processos = [data for data in df_ord['nome_sessao'].unique() if f"Sessão Ordinária | {str(data).strip()}" not in sessoes_finalizadas]
+            
+            if sessoes_com_processos:
+                for data in sessoes_com_processos:
                     exibir_tabela_interativa(df_ord[df_ord['nome_sessao'] == data], "ord", data, "Sessão Ordinária")
+            else:
+                st.success("✨ Você não possui nenhum processo pendente nesta sub-aba!")
 
     with sub_aba_ordv:
         df_ordv = carregar_dados_sqlite("Sessão Ordinária Virtual")
         if not df_ordv.empty:
-            for data in df_ordv['nome_sessao'].unique():
-                chave = f"Sessão Ordinária Virtual | {str(data).strip()}"
-                if chave not in sessoes_finalizadas:
+            if colab_painel != "👁️ Ver Todos os Processos do Setor":
+                df_ordv = df_ordv[(df_ordv['expedicao'] == colab_painel) | (df_ordv['revisao'] == colab_painel)]
+                
+            sessoes_com_processos = [data for data in df_ordv['nome_sessao'].unique() if f"Sessão Ordinária Virtual | {str(data).strip()}" not in sessoes_finalizadas]
+            
+            if sessoes_com_processos:
+                for data in sessoes_com_processos:
                     exibir_tabela_interativa(df_ordv[df_ordv['nome_sessao'] == data], "ordv", data, "Sessão Ordinária Virtual")
+            else:
+                st.success("✨ Você não possui nenhum processo pendente nesta sub-aba!")
 
     with sub_aba_res:
         df_res = carregar_dados_sqlite("Sessão Reservada")
         if not df_res.empty:
-            for data in df_res['nome_sessao'].unique():
-                chave = f"Sessão Reservada | {str(data).strip()}"
-                if chave not in sessoes_finalizadas:
+            if colab_painel != "👁️ Ver Todos os Processos do Setor":
+                df_res = df_res[(df_res['expedicao'] == colab_painel) | (df_res['revisao'] == colab_painel)]
+                
+            sessoes_com_processos = [data for data in df_res['nome_sessao'].unique() if f"Sessão Reservada | {str(data).strip()}" not in sessoes_finalizadas]
+            
+            if sessoes_com_processos:
+                for data in sessoes_com_processos:
                     exibir_tabela_interativa(df_res[df_res['nome_sessao'] == data], "res", data, "Sessão Reservada")
+            else:
+                st.success("✨ Você não possui nenhum processo pendente nesta sub-aba!")
 
     with sub_aba_adm:
         df_adm = carregar_dados_sqlite("Sessão Administrativa")
         if not df_adm.empty:
-            for data in df_adm['nome_sessao'].unique():
-                chave = f"Sessão Administrativa | {str(data).strip()}"
-                if chave not in sessoes_finalizadas:
+            if colab_painel != "👁️ Ver Todos os Processos do Setor":
+                df_adm = df_adm[(df_adm['expedicao'] == colab_painel) | (df_adm['revisao'] == colab_painel)]
+                
+            sessoes_com_processos = [data for data in df_adm['nome_sessao'].unique() if f"Sessão Administrativa | {str(data).strip()}" not in sessoes_finalizadas]
+            
+            if sessoes_com_processos:
+                for data in sessoes_com_processos:
                     exibir_tabela_interativa(df_adm[df_adm['nome_sessao'] == data], "adm", data, "Sessão Administrativa")
+            else:
+                st.success("✨ Você não possui nenhum processo pendente nesta sub-aba!")
 
 # ------------------------------------------
 # ABA 2.5: CONTROLE DE OFÍCIOS E QUARENTENA
