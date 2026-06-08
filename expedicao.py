@@ -24,7 +24,7 @@ conn = st.connection("supabase", type=SupabaseConnection)
 def gerar_avisos_letreiro_automaticos():
     avisos_sistema = []
     
-    # Repare que agora usamos apenas "date.today()" direto
+    # Usando diretamente os nomes importados no topo do arquivo
     hoje = date.today() 
     hoje_str = hoje.strftime('%Y-%m-%d')
     
@@ -32,6 +32,7 @@ def gerar_avisos_letreiro_automaticos():
     try:
         trocas = conn.client.table("trocas_escala").gte("data_nova", hoje_str).execute().data
         for t in trocas:
+            # Usando a classe datetime importada
             d_orig = datetime.strptime(t['data_original'], '%Y-%m-%d').strftime('%d/%m')
             d_nova = datetime.strptime(t['data_nova'], '%Y-%m-%d').strftime('%d/%m')
             avisos_sistema.append(f"🔄 ESCALA: {t['usuario']} alterou seu dia presencial de {d_orig} para {d_nova}.")
