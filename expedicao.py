@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datetime import datetime
+import datetime
 import io
 import time
 import unicodedata
@@ -16,7 +16,6 @@ st.set_page_config(page_title="Sistema de Sessões", layout="wide")
 # ==========================================
 # 2. BACKEND: CONEXÃO COM A NUVEM SUPABASE
 # ==========================================
-# 👈 CORREÇÃO 2: A conexão precisa vir ANTES do letreiro para ele conseguir ler os avisos
 conn = st.connection("supabase", type=SupabaseConnection)
 
 # ==========================================
@@ -59,7 +58,7 @@ def gerar_avisos_letreiro_automaticos():
 
 
 # ==========================================
-# 4. CONSTRUÇÃO DA TELA
+# 4. CONSTRUÇÃO DA TELA (O Letreiro)
 # ==========================================
 st.title("🏛️ Sistema S.A.D.E.")
 
@@ -74,6 +73,8 @@ if avisos_frequencia:
                 st.warning(aviso)
             else:
                 st.success(aviso)
+
+# Daqui para baixo, continuam as suas variáveis normais (ex: TODOS_NOMES) e o resto do código...
                 
 # ==========================================
 # 2. BACKEND: CONEXÃO COM A NUVEM SUPABASE
