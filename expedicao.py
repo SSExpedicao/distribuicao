@@ -497,6 +497,61 @@ def carregar_afastamentos():
     try: return pd.DataFrame(conn.client.table("afastamentos").select("*").execute().data)
     except: return pd.DataFrame()
 
+def obter_lista_destinatarios(categoria):
+    try:
+        res = conn.client.table("oficios").select("destinatario").eq("categoria", categoria).execute().data
+        nomes = sorted(list(set([row['destinatario'] for row in res if row.get('destinatario')])))
+        return nomes
+    except:
+        return []
+
+def adicionar_oficio(numero_processo, numero_oficio, categoria, tipo_nao_jurisdicionado, destinatario, clonado, fluxo_documento, quem_expediu):
+    try:
+        conn.client.table("oficios").insert({
+            "numero_processo": numero_processo,
+            "numero_oficio": numero_oficio,
+            "categoria": categoria,
+            "tipo_nao_jurisdicionado": tipo_nao_jurisdicionado,
+            "destinatario": destinatario,
+            "clonado": int(clonado),
+            "fluxo_documento": fluxo_documento,
+            "quem_expediu": quem_expediu,
+            "oficio_despachado": 0
+        }).execute()
+        return True, "✅ Ofício cadastrado com sucesso!"
+    except Exception as e:
+        return False, f"❌ Erro ao cadastrar ofício: {e}"
+
+def liberar_processo_chefia(numero_processo, justificativa, usuario="Chefia"):
+    agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    try:
+        # 1. Verifica se o processo está pendente no Painel Ativo
+        res = conn.client.table("processos").select("id").eq("numero_processo", numero_processo).eq("despachado", 0).execute().data
+        if not res: return False, f"❌ O processo {numero_processo} não foi encontrado nas sessões ativas ou já foi despachado."
+        
+        id_proc = res[0]['id']
+        
+        # 2. Salva a digital da chefia na auditoria
+        conn.client.table("auditoria_chefia").insert({
+            "numero_processo": numero_processo,
+            "justificativa": justificativa,
+            "usuario_chefia": usuario,
+            "data_liberacao": agora
+        }).execute()
+        
+        # 3. Força a finalização do processo passando por cima das travas
+        conn.client.table("processos").update({
+            "expedido_ok": 1,
+            "revisado_ok": 1,
+            "despachado": 1, 
+            "data_conclusao": agora,
+            "precisa_correcao": 0
+        }).eq("id", id_proc).execute()
+        
+        return True, f"✅ Processo {numero_processo} forçado para o histórico com sucesso!"
+    except Exception as e:
+        return False, f"❌ Erro interno: {e}"
+        
 # ==========================================
 # 3. FRONTEND: RENDERIZAÇÃO DA INTERFACE UI
 # ==========================================
@@ -850,6 +905,33 @@ with aba_gestao:
         sub_controle, sub_dados, sub_ferias = st.tabs(["📊 4.1. Controle de Banco de Dados", "📈 4.2. Analytics e Desempenho", "🌴 4.3. Afastamentos da Equipe"])
         
         with sub_controle:
+            # --- NOVO: MÓDULO DE LIBERAÇÃO FORÇADA PELA CHEFIA ---
+            st.subheader("🔑 Liberação Extraordinária de Processo")
+            st.write("Force o despacho de um processo travado (ignora regras de ofícios e revisões). Esta ação ficará gravada na Auditoria da Chefia.")
+            col_lib1, col_lib2, col_lib3 = st.columns([2, 4, 2])
+            with col_lib1:
+                proc_forcar = st.text_input("Número do Processo:", key="proc_chefia")
+            with col_lib2:
+                just_forcar = st.text_input("Justificativa Legal / Motivo:", key="just_chefia")
+            with col_lib3:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("⚡ Forçar Despacho", type="primary", use_container_width=True):
+                    if proc_forcar and just_forcar:
+                        ok, m = liberar_processo_chefia(proc_forcar, just_forcar)
+                        if ok:
+                            st.success(m)
+                            time.sleep(1.5)
+                            st.rerun()
+                        else:
+                            st.error(m)
+                    else:
+                        st.warning("⚠️ Preencha o número do processo e a justificativa para auditoria.")
+            st.markdown("---")
+            # -----------------------------------------------------
+            
+            # (O restante do código que já existia no sub_controle continua normal daqui para baixo)
+            if not df_geral_status.empty:
+                data_selecionada = st.selectbox("📅 Data da Sessão (OKs):", sorted(df_geral_status['nome_sessao'].unique(), reverse=True))
             if not df_geral_status.empty:
                 data_selecionada = st.selectbox("📅 Data da Sessão (OKs):", sorted(df_geral_status['nome_sessao'].unique(), reverse=True))
                 df_filtrado = df_geral_status[df_geral_status['nome_sessao'] == data_selecionada]
