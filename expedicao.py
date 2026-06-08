@@ -1913,7 +1913,7 @@ with aba_gestao:
             else: st.info("✨ Nenhum afastamento ativo registrado no momento.")
 
 # ------------------------------------------
-# ABA 5: AJUDA E GLOSSÁRIO (MANUAL DETALHADO)
+# ABA 5: AJUDA E GLOSSÁRIO (MANUAL DEFINITIVO)
 # ------------------------------------------
 with aba_ajuda:
     st.header("📖 Manual Operacional Completo: S.A.D.E.")
@@ -1937,11 +1937,23 @@ with aba_ajuda:
         * **Quarentena:** Processos devolvidos pelo revisor ficam na tabela inferior (vermelha). Eles **não** avançam para despacho até que a correção seja feita na Aba 2.5 e o botão "Correção Realizada" seja acionado.
         """)
 
-    with st.expander("✉️ 2.5. Controle de Ofícios & 2.7. Relatório de Expedição"):
+    with st.expander("✉️ 2.5. Controle de Ofícios (Fábrica de Documentos)"):
         st.markdown("""
         * **Controle:** Cadastro de Jurisdicionados, Não Jurisdicionados e Memorandos. O sistema usa "Autocomplete" para sugerir destinatários recorrentes.
         * **Trava de Segurança:** Processos da Ordinária/Virtual **não podem ser despachados** sem antes ter seus ofícios cadastrados e marcados como despachados (ou o processo ser marcado como "Isento").
-        * **Relatório Individual:** Na Aba 2.7, o colaborador gera seu relatório de produção diária, que lista exatamente o que foi feito (ofícios/memorandos) por processo. É a sua lista para "passar a limpo" no sistema do Tribunal.
+        * **Isenção:** Se um processo não requer nenhum documento oficial, clique no botão "🚫 Isentar este processo" para o sistema liberar o despacho final.
+        """)
+
+    with st.expander("📄 2.7. Relatório de Expedição (O Checklist Final)"):
+        st.markdown("""
+        ### O que é esta aba?
+        É a sua lista de tarefas dinâmica. Ela mostra tudo o que você já fez no S.A.D.E. e que agora precisa ser efetivamente protocolado (passado a limpo) no sistema oficial do Tribunal.
+
+        ### Como usar na prática:
+        1. **Filtre seu Nome:** Selecione seu nome no primeiro campo para carregar seus processos ativos como Expedidor.
+        2. **Filtre a Sessão (Opcional):** Para não se perder em uma lista gigante, use o segundo campo para focar apenas em uma sessão específica de cada vez.
+        3. **Consulte e Copie:** Abra o menu expansível de cada processo para ver exatamente quais Ofícios e Memorandos você preparou e para quem eles devem ser enviados.
+        4. **A Mágica do Sistema:** Após você copiar os dados e realizar o protocolo no Tribunal, volte na Aba 2 e marque aquele processo como "Despachado". **Ele sumirá automaticamente desta lista do Relatório!** O objetivo do seu dia é deixar essa tela vazia.
         """)
 
     with st.expander("🗄️ 3. Histórico e Auditoria"):
@@ -1952,7 +1964,7 @@ with aba_ajuda:
         * **Férias e Ausências:** Exibe quem da equipe está afastado. **Regra:** O sistema cruza os dados do cadastro de afastamentos com as datas de distribuição; se um colaborador estiver em período de afastamento, o sistema ignora o nome dele no sorteio automático, evitando que ele receba trabalho enquanto está ausente.
         """)
 
-    with st.expander("⚙️ 4. Gestão Administrativa (Manual de Operações Criticas)"):
+    with st.expander("⚙️ 4. Gestão Administrativa (Manual de Operações Críticas)"):
         st.markdown("""
         * **Controle de Banco de Dados:** Visualize volumetria de expedição/revisão por data.
         * **Remover Processo:** Exclui um processo da pauta, movendo-o para a lixeira de auditoria.
@@ -1963,6 +1975,26 @@ with aba_ajuda:
         * **Backup e Restauração:** O Backup gera um CSV com o banco atual. A Restauração limpa a base e substitui pelos dados do CSV (Use com cautela).
         * **Modo Limpeza:** * **Por Período:** Apaga processos em um intervalo de datas.
             * **Modo Nuclear:** Reseta todo o banco de processos (ativos e histórico). Colaboradores e afastamentos são preservados.
+        """)
+
+    with st.expander("🤝 4.5. Entendendo a Matriz de Colaboração (Raio-X de Soft Skills)"):
+        st.markdown("""
+        ### O que é esse gráfico colorido na Aba 4?
+        É um **Gráfico de Calor de Densidade (Heatmap)**. Ele serve para mapear o comportamento prático, o entrosamento e a sinergia da equipe através do cruzamento de dados de produção. Ele ajuda a tirar o "achismo" na hora de gerenciar as pessoas do setor.
+
+        ### Como ler o gráfico:
+        * **Quem está na vertical (Eixo Y):** São os nomes de quem atuou como **Expedidor** (quem redigiu os documentos iniciais).
+        * **Quem está na horizontal (Eixo X):** São os nomes de quem atuou como **Revisor** (quem conferiu o trabalho).
+        * **Os Quadrados Numerados:** Cada quadrado representa o encontro de dois colaboradores. O número indica quantos processos aquela dupla específica finalizou e despachou com sucesso juntos.
+
+        ### O significado das cores (O Termômetro Operacional):
+        * **🟣 Tons de Roxo/Azul Escuro (Frio):** Baixo ou nenhum volume de processos finalizados por essa dupla. Indica que eles trabalham pouco juntos ou que o fluxo trava quando se cruzam.
+        * **🟡 Tons de Verde Claro/Amarelo (Quente):** Alto volume de processos concluídos com sucesso. É a representação visual de uma **Dupla de Ouro**.
+
+        ### Como usar isso estrategicamente na Gestão:
+        1. **Mapeamento de Sinergia:** Quadrados amarelos mostram colaboradores com excelente comunicação e entrosamento natural. Em dias de pico ou crise no Tribunal, direcione as pautas críticas para essas duplas para garantir velocidade.
+        2. **Identificação de Gargalos Invisíveis:** Se dois colaboradores produzem muito individualmente, mas o quadrado onde eles se cruzam está sempre escuro, pode haver um desalinhamento de critérios ou de comunicação entre eles que precisa de mediação ou treinamento.
+        3. **Líderes Ocultos (O Coringa):** Fique atento ao Revisor que consegue manter quadrados claros/verdes com quase todos os expedidores da equipe. Essa pessoa possui alta adaptabilidade e inteligência emocional, sendo ideal para treinar novos membros ou assumir substituições de liderança.
         """)
 
     with st.expander("📚 Glossário de Termos"):
