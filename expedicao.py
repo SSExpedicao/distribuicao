@@ -1793,111 +1793,62 @@ with aba_gestao:
             else: st.info("✨ Nenhum afastamento ativo registrado no momento.")
 
 # ------------------------------------------
-# ABA 5: AJUDA E GLOSSÁRIO (MEGA MANUAL)
+# ABA 5: AJUDA E GLOSSÁRIO (MANUAL DETALHADO)
 # ------------------------------------------
 with aba_ajuda:
-    st.header("📖 Mega Manual do Usuário e Glossário S.A.D.E.")
-    st.markdown("""
-    **Seja muito bem-vindo(a) ao S.A.D.E.!** *(Sistema de Automação de Distribuição e Expedição)*
+    st.header("📖 Manual Operacional Completo: S.A.D.E.")
+    st.markdown("Bem-vindo ao guia definitivo de operação. Siga estas instruções para manter a integridade dos dados e a produtividade do setor.")
 
-    Pense neste sistema como um grande **balcão virtual inteligente**. Em vez de termos pilhas de pastas físicas se perdendo nas mesas, o sistema organiza automaticamente quem faz o quê, rastreia prazos, evita erros de comunicação e garante que nada seja esquecido.
-    
-    Clique nos títulos abaixo para abrir e ler a explicação detalhada de cada etapa do seu trabalho. Se bater a dúvida no dia a dia, a resposta está aqui!
-    """)
-    
-    with st.expander("📥 ABA 1: Como dar entrada em novos processos (Inserir Novos)"):
+    with st.expander("📥 1. Inserir Novos (Recepção de Pauta)"):
         st.markdown("""
-        ### O que é esta aba?
-        É a **Recepção** do setor. Aqui você avisa ao sistema que chegou trabalho novo e para onde ele deve ir.
-
-        ### Passo 1: Configurar a Sessão (O Destino)
-        * **Destino (Tipo de Sessão):** Escolha a "caixa" correta (Ex: Ordinária, Reservada, etc.). 
-        * **🚨 Modo Urgente:** Escolha esta opção APENAS se quiser "acender a luz vermelha" de um processo que **já está** na mesa de trabalho.
-        * **Identificação da Sessão:** O sistema é inteligente. Se o lote chegou hoje, use "Data de Hoje". Se você está adicionando um processo atrasado em uma sessão que já começou ontem, escolha "Adicionar a uma Sessão Existente" para não criar uma pasta separada.
-        * **Equipe:** O sistema seleciona todos os presentes automaticamente para o sorteio de trabalho. Se alguém for ficar de fora desta remessa específica, feche o "x" no nome da pessoa.
-
-        ### Passo 2: Inserir Processos
-        * **Digitar Manualmente:** Ideal para quando chega um ou dois processos. Digite o número, o relator e clique em "Verificar e Processar". O sorteio é na hora.
-        * **Importar Planilha (Em Lote):** Ideal para o dia de pico. Baixe a planilha modelo, cole sua lista de processos (sem alterar os títulos das colunas), faça o upload e clique em "Iniciar Importação". O sistema distribui 50 processos em 3 segundos!
+        * **Modo Manual:** Escolha o tipo de sessão, o identificador (data ou nome da sessão) e insira o processo e o relator. O sistema fará a distribuição automática baseada na carga de trabalho global.
+        * **Importação em Lote (Planilhas):**
+            1. **Modelo:** Baixe o arquivo modelo (CSV).
+            2. **Formato:** O arquivo **deve** ser salvo obrigatoriamente como `.csv` (separado por vírgula ou ponto e vírgula).
+            3. **Regras:** Não altere o nome das colunas `Processo` e `Relator`.
+            4. **Upload:** Arraste o arquivo para a área de upload do sistema. O S.A.D.E. processará linha por linha, limpando nomes e validando duplicidades automaticamente.
         """)
 
-    with st.expander("🗂️ ABA 2: Como trabalhar nos processos (O Painel Ativo)"):
+    with st.expander("🗂️ 2. Painel Ativo (A Mesa de Trabalho)"):
         st.markdown("""
-        ### O que é esta aba?
-        Esta é a sua **Mesa de Trabalho Diária**. O que aparece aqui é o que precisa ser feito HOJE. O sistema é dividido por sub-abas (Ordinária, Reservada, etc.).
-
-        ### Como preencher as caixinhas?
-        1. 🔲 **Expedido:** Marque quando você terminar de redigir/montar a primeira versão do documento.
-        2. 🔲 **Revisado:** O colega que conferiu o seu trabalho marca esta caixa quando tudo estiver correto.
-        3. 🔲 **Despachado:** Marque **APENAS** quando o processo estiver 100% finalizado e assinado no sistema oficial.
-
-        > ⚠️ **A REGRA DE OURO DO SISTEMA:** > Toda vez que você marcar ou desmarcar uma caixinha, você **TEM QUE DESCER ATÉ O FIM DA TABELA E CLICAR EM "💾 SALVAR ALTERAÇÕES"**. Se não clicar, o sistema não grava o seu trabalho!
-
-        ### A Trava Mestre de Segurança (Por que não consigo despachar?)
-        Se você tentar despachar um processo de Sessão Ordinária/Virtual, o sistema vai te bloquear se:
-        * Você esqueceu de criar os ofícios dele na **Aba 2.5**.
-        * Você criou os ofícios, mas esqueceu de dar a "baixa" neles na **Aba 2.5**.
-
-        ### ❌ O Botão de Quarentena (Devolver para Correção)
-        Se você é o Revisor e achou um erro grave (Ex: "Falta ofício para a Sec. de Turismo"), não marque "Revisado". Vá no final da tela, selecione o processo, digite o motivo do erro e clique em **Devolver Processo**. 
-        * O processo vai sumir da tabela principal e cair na tabela vermelha de "Quarentena", com um aviso gigante para o Expedidor corrigir.
+        * **Fluxo:** É aqui que o trabalho acontece. O sistema filtra os processos da sessão escolhida.
+        * **Análise de Dados:** O sistema coleta, em tempo real, o tempo que cada processo leva entre a entrada, expedição, revisão e despacho. Esses dados alimentam os gráficos da aba de Gestão, permitindo que você visualize seu desempenho individual e do setor.
+        * **Salvamento:** Ao alterar qualquer status (Expedido/Revisado), você deve confirmar no botão **"💾 Salvar Alterações desta Sessão"**.
+        * **Quarentena:** Processos devolvidos pelo revisor ficam na tabela inferior (vermelha). Eles **não** avançam para despacho até que a correção seja feita na Aba 2.5 e o botão "Correção Realizada" seja acionado.
         """)
 
-    with st.expander("✉️ ABA 2.5: Como gerar os ofícios (Controle de Ofícios)"):
+    with st.expander("✉️ 2.5. Controle de Ofícios & 2.7. Relatório de Expedição"):
         st.markdown("""
-        ### O que é esta aba?
-        É a **Fábrica de Comunicação**. O processo só termina de verdade quando os interessados são notificados. Esta aba organiza as vias e destinatários.
-
-        ### Passo a Passo de Uso:
-        1. **Filtre a Mesa:** No topo da tela, escolha a Sessão e o seu nome. O sistema vai listar só os processos que estão com você. Selecione o processo que vai trabalhar.
-        2. **Retirar da Quarentena:** Se o processo estiver travado na quarentena (alerta vermelho), corrija o erro e clique em **"✅ Correção Realizada"** para ele voltar para a mesa principal.
-        3. **Cadastrar Ofícios:**
-            * Escolha se é **Jurisdicionado** (Órgãos Públicos) ou **Não Jurisdicionado** (Empresas/Pessoas).
-            * **Busca Inteligente:** Comece a digitar o nome do destinatário. O sistema vai sugerir nomes que já foram usados no passado para você não precisar digitar tudo de novo! Se for um nome inédito, escolha "Cadastrar Novo" e o sistema aprenderá para a próxima.
-            * Coloque o número do ofício e clique em Salvar.
-        4. **Dar a Baixa:** Na parte de baixo da tela, fica a lista de todos os ofícios que você criou para aquele processo. Quando você efetivamente enviá-los, marque a caixinha **"Ofício Despachado"** e clique em Atualizar Status. Só assim a Aba 2 deixará você despachar o processo inteiro!
-
-        > 💡 **Dica de Regra de Vias:** O sistema avisa na tela o que fazer com os papéis. Jurisdicionado = Original no Protocolo e Clone no Processo. Não Jurisdicionado = Original no Processo e Clone no Protocolo.
+        * **Controle:** Cadastro de Jurisdicionados, Não Jurisdicionados e Memorandos. O sistema usa "Autocomplete" para sugerir destinatários recorrentes.
+        * **Trava de Segurança:** Processos da Ordinária/Virtual **não podem ser despachados** sem antes ter seus ofícios cadastrados e marcados como despachados (ou o processo ser marcado como "Isento").
+        * **Relatório Individual:** Na Aba 2.7, o colaborador gera seu relatório de produção diária, que lista exatamente o que foi feito (ofícios/memorandos) por processo. É a sua lista para "passar a limpo" no sistema do Tribunal.
         """)
 
-    with st.expander("🗄️ ABA 3: Onde vão parar os processos prontos? (O Histórico)"):
+    with st.expander("🗄️ 3. Histórico e Auditoria"):
         st.markdown("""
-        ### O que é esta aba?
-        Este é o **Arquivo Morto** e a **Memória Permanente** do setor. O banco de dados nunca apaga informações.
-
-        * **✅ Arquivo - Concluídas:** Quando uma sessão inteira é despachada na Aba 2, ela vem para cá. Use os 5 filtros de busca (Data, Tipo, Colaborador, Processo ou Relator) para rastrear rapidamente um documento feito meses atrás.
-        * **🗑️ Auditoria - Excluídos:** Se a chefia deletar um processo que entrou por engano, ele fica salvo nesta Lixeira, informando quem deletou e por qual motivo.
-        * **📢 Auditoria - Avisos:** O histórico de todos os "Alertas Vermelhos" (Letreiros) que já rodaram na tela do setor.
-        * **📋 Histórico de Ofícios:** Uma lista rápida, limpa e direta mostrando todo ofício expedido, seu respectivo processo e o colaborador que assinou o envio. Perfeito para tirar dúvidas rápidas ("A gente já enviou ofício para a empresa X?").
-        * **🌴 Auditoria - Férias:** Registro de licenças, férias e atestados da equipe.
-        
-        > 🔄 **Múltiplos Ritos:** Se o Processo 123 já foi concluído mês passado, mas precisou voltar hoje para o setor por causa de uma nova notificação, não se assuste! O sistema aceita ele de novo e criará um **novo registro independente** no histórico. 
+        * **Arquivo:** Sessões 100% concluídas.
+        * **Lixeira:** Processos excluídos com registro do motivo.
+        * **Histórico de Avisos:** Consulta de comunicados que já rodaram no Letreiro.
+        * **Férias e Ausências:** Exibe quem da equipe está afastado. **Regra:** O sistema cruza os dados do cadastro de afastamentos com as datas de distribuição; se um colaborador estiver em período de afastamento, o sistema ignora o nome dele no sorteio automático, evitando que ele receba trabalho enquanto está ausente.
         """)
 
-    with st.expander("⚙️ ABA 4: O que é a Gestão Administrativa? (Restrito)"):
+    with st.expander("⚙️ 4. Gestão Administrativa (Manual de Operações Criticas)"):
         st.markdown("""
-        ### O que é esta aba?
-        É a **Sala da Chefia**, protegida por senha (🔒). É usada pelos gestores para manter o sistema rodando sem erros e analisar a produtividade da equipe.
-
-        ### Ferramentas Disponíveis:
-        * **Controle de Banco de Dados:**
-            * **Liberação Extraordinária:** Um botão "Super Poder" que permite à chefia despachar um processo que travou por algum motivo excepcional, ignorando as travas de ofícios. Fica registrado na auditoria!
-            * **Letreiro (Mural):** Para publicar recados urgentes piscando no topo da tela de todos (O letreiro some sozinho quando o processo citado for despachado).
-            * **Módulo de Férias:** Permite avisar ao sistema que um colaborador está de atestado/férias. O sistema para de mandar processos no nome da pessoa até a data de retorno.
-        * **Analytics e Desempenho:**
-            * O painel de **Business Intelligence (BI)** do setor. Mostra gráficos de quem expede mais ofícios, quem é a dupla que mais trabalha junta, tempo médio de conclusão das tarefas (em minutos) e um "Termômetro" de processos travados na quarentena em tempo real.
-        * **Backup e Restauração:** Para salvar a base de dados inteira em planilhas CSV por segurança.
+        * **Controle de Banco de Dados:** Visualize volumetria de expedição/revisão por data.
+        * **Remover Processo:** Exclui um processo da pauta, movendo-o para a lixeira de auditoria.
+        * **Mural de Avisos (Letreiro):** Publique avisos. Se marcar para "Todos", o aviso limpa automaticamente após 24h. Se marcar um processo, ele limpa assim que o processo for despachado.
+        * **Identificar/Nomear Sessão:** Renomeia o lote de processos (Ex: mudar "10/06/2026" para "Sessão 125 - 10/06/2026").
+        * **Relatório Gerencial:** Compila todos os dados de produtividade, tempos de ciclo e ofícios, gerando um resumo textual para exportação.
+        * **Gestão de Colaboradores:** Adicione, substitua ou edite as permissões (Expedidor/Revisor) dos membros da equipe.
+        * **Backup e Restauração:** O Backup gera um CSV com o banco atual. A Restauração limpa a base e substitui pelos dados do CSV (Use com cautela).
+        * **Modo Limpeza:** * **Por Período:** Apaga processos em um intervalo de datas.
+            * **Modo Nuclear:** Reseta todo o banco de processos (ativos e histórico). Colaboradores e afastamentos são preservados.
         """)
 
-    with st.expander("📚 DICIONÁRIO E GLOSSÁRIO TÉCNICO"):
+    with st.expander("📚 Glossário de Termos"):
         st.markdown("""
-        Ouviu alguma palavra no sistema e ficou em dúvida? A resposta está aqui:
-        
-        * **Expedidor:** A pessoa responsável por iniciar o fluxo de trabalho. É quem lê a decisão original e monta/redige os documentos iniciais e os ofícios.
-        * **Revisor:** O "Controle de Qualidade". É o colega que recebe o trabalho do expedidor e confere a legalidade, os dados e a digitação antes de liberar o despacho.
-        * **Despachar (Ato):** Significa que a tarefa foi 100% finalizada tanto no S.A.D.E. quanto no sistema oficial do Tribunal/Órgão.
-        * **Quarentena:** Estado de alerta. Um processo entra em quarentena quando o Revisor encontra um erro e o devolve. Ele fica travado até o Expedidor consertar.
-        * **Letreiro / Mural:** A faixa vermelha móvel no topo do aplicativo, usada para recados críticos da chefia.
-        * **Sessão:** A forma como agrupamos o trabalho. Uma "Sessão" é basicamente o "Lote" ou a "Pasta" de processos que chegaram juntos ou pertencem à mesma pauta de julgamento.
-        * **Rito Retomado:** Quando um processo antigo que já estava no Histórico retorna ao setor ativo para novas providências (Ex: chegou uma resposta de diligência).
+        * **Modo Nuclear:** Limpeza total do sistema.
+        * **Isenção:** Processo marcado com status 2, dispensado de ofícios.
+        * **Quarentena:** Estado de bloqueio administrativo para processos com erros.
+        * **Sessão:** Unidade lógica de organização (Lotes de trabalho).
         """)
