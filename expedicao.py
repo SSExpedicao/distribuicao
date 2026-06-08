@@ -23,7 +23,9 @@ conn = st.connection("supabase", type=SupabaseConnection)
 # ==========================================
 def gerar_avisos_letreiro_automaticos():
     avisos_sistema = []
-    hoje = date.today() # <- Agora usa o 'date' diretamente, sem dar erro!
+    
+    # Repare que agora usamos apenas "date.today()" direto
+    hoje = date.today() 
     hoje_str = hoje.strftime('%Y-%m-%d')
     
     # 1. Busca Trocas de Escala Ativas
