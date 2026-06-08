@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datetime import dt
+from datetime import datetime, date, timedelta
 import io
 import time
 import unicodedata
@@ -562,42 +562,6 @@ def adicionar_aviso(usuario, numero_processo, mensagem):
         return True, "✅ Aviso publicado no letreiro!"
     except Exception as e: return False, f"❌ Erro: {e}"
 
-def gerar_avisos_letreiro_automaticos():
-    avisos_sistema = []
-    hoje = datetime.date.today()
-    hoje_str = hoje.strftime('%Y-%m-%d')
-    amanha_str = (hoje + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
-    
-    # 1. Busca Trocas de Escala Ativas
-    try:
-        trocas = conn.client.table("trocas_escala").gte("data_nova", hoje_str).execute().data
-        for t in trocas:
-            d_orig = datetime.datetime.strptime(t['data_original'], '%Y-%m-%d').strftime('%d/%m')
-            d_nova = datetime.datetime.strptime(t['data_nova'], '%Y-%m-%d').strftime('%d/%m')
-            avisos_sistema.append(f"🔄 ESCALA: {t['usuario']} alterou seu dia presencial de {d_orig} para {d_nova}.")
-    except:
-        pass
-
-    # 2. Busca Afastamentos (Férias e Atestados)
-    try:
-        afastamentos = conn.client.table("afastamentos").execute().data
-        for a in afastamentos:
-            dt_ini = datetime.datetime.strptime(a['data_inicio'], '%Y-%m-%d').date()
-            dt_fim = datetime.datetime.strptime(a['data_fim'], '%Y-%m-%d').date()
-            
-            # Regra para Atestado Médico: Avisa durante todo o período até o colaborador voltar
-            if a['tipo'] == "Atestado Médico" and dt_ini <= hoje <= dt_fim:
-                retorno = (dt_fim + datetime.timedelta(days=1)).strftime('%d/%m')
-                avisos_sistema.append(f"🩺 ATESTADO: {a['usuario']} afastado por motivos médicos. Retorno previsto: {retorno}.")
-                
-            # Regra para Férias: Avisa EXATAMENTE um dia antes do retorno
-            elif a['tipo'] == "Férias" and hoje == dt_fim:
-                avisos_sistema.append(f"🏖️ FÉRIAS: O colaborador {a['usuario']} regressará amanhã ao serviço!")
-    except:
-        pass
-        
-    return avisos_sistema
-    
 def obter_avisos_pendentes():
     hoje = datetime.now().strftime("%d/%m/%Y")
     try:
