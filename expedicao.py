@@ -4,6 +4,8 @@ import plotly.express as px
 from datetime import datetime
 import io
 import time
+import unicodedata
+import difflib
 from st_supabase_connection import SupabaseConnection
 
 # ==========================================
@@ -15,6 +17,44 @@ st.set_page_config(page_title="Sistema de Sessões", layout="wide")
 # 2. BACKEND: CONEXÃO COM A NUVEM SUPABASE
 # ==========================================
 conn = st.connection("supabase", type=SupabaseConnection)
+
+def normalizar_texto(texto):
+    """Remove acentos, espaços extras e deixa tudo minúsculo para comparação."""
+    if not texto or str(texto).strip() == "": return ""
+    texto = str(texto).strip().lower()
+    # Remove os acentos matematicamente
+    texto = ''.join(c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn')
+    return texto
+
+def higienizar_colaborador(nome_digitado, lista_oficial_nomes):
+    """Compara o que foi digitado com a lista oficial da equipe."""
+    if not nome_digitado or str(nome_digitado).strip() == "": return ""
+    
+    nome_norm = normalizar_texto(nome_digitado)
+    
+    # 1. Tenta correspondência exata primeiro (ignorando acentos e maiúsculas)
+    # Ex: Digitou "andre" ou " ANDRÉ " -> Mapeia para "André"
+    for nome_oficial in lista_oficial_nomes:
+        if nome_norm == normalizar_texto(nome_oficial):
+            return nome_oficial
+            
+    # 2. Se não achou exato, usa Inteligência de Similaridade (erros de digitação)
+    # Cria uma lista das versões "limpas" dos nomes oficiais
+    lista_norm = [normalizar_texto(n) for n in lista_oficial_nomes]
+    
+    # Busca nomes que tenham pelo menos 75% de semelhança com o que foi digitado
+    # Ex: "Andte" ou "Eliane" (no lugar de Elaine)
+    matches = difflib.get_close_matches(nome_norm, lista_norm, n=1, cutoff=0.75)
+    
+    if matches:
+        # Achou um erro de digitação! Puxa o nome oficial correspondente.
+        indice = lista_norm.index(matches[0])
+        return lista_oficial_nomes[indice]
+        
+    # 3. É UM NOME TOTALMENTE NOVO (Ex: Douglas)
+    # Se não parece com ninguém da equipe, o sistema aceita como um cara novo
+    # e padroniza a primeira letra em maiúscula (Title Case)
+    return str(nome_digitado).strip().title()
 
 def higienizar_dados(processo, relator=""):
     proc_limpo = str(processo).strip()
@@ -1005,17 +1045,22 @@ with aba_gestao:
                                 p_val = str(row['Processo']).strip() if pd.notna(row.get('Processo')) else ""
                                 r_val = str(row.get('Relator', '')).strip() if pd.notna(row.get('Relator')) else ""
                                 p_limpo, r_limpo = higienizar_dados(p_val, r_val)
-                                
-                                exp_val = str(row.get('Expedidor', hist_exp)).strip() if pd.notna(row.get('Expedidor')) else hist_exp
-                                rev_val = str(row.get('Revisor', hist_rev)).strip() if pd.notna(row.get('Revisor')) else hist_rev
-                                
-                                data_val = str(row.get('Data_Sessao', hist_sessao)).strip() if pd.notna(row.get('Data_Sessao')) else hist_sessao
-                                tipo_val = str(row.get('Tipo_Sessao', hist_tipo)).strip() if pd.notna(row.get('Tipo_Sessao')) else hist_tipo
-                                
-                                if " " in data_val and "-" in data_val:
-                                    try:
-                                        data_val = datetime.strptime(data_val.split()[0], "%Y-%m-%d").strftime("%d/%m/%Y")
-                                    except: pass
+    
+    # 1. Pega o nome exatamente como veio da planilha (pode estar com erro)
+                               exp_bruto = str(row.get('Expedidor', hist_exp)).strip() if pd.notna(row.get('Expedidor')) else hist_exp
+                               rev_bruto = str(row.get('Revisor', hist_rev)).strip() if pd.notna(row.get('Revisor')) else hist_rev
+    
+    # 2. A MÁGICA ACONTECE AQUI: Passa no filtro para corrigir erros de digitação
+                               exp_val = higienizar_colaborador(exp_bruto, TODOS_NOMES)
+                               rev_val = higienizar_colaborador(rev_bruto, TODOS_NOMES)
+    
+                               data_val = str(row.get('Data_Sessao', hist_sessao)).strip() if pd.notna(row.get('Data_Sessao')) else hist_sessao
+                               tipo_val = str(row.get('Tipo_Sessao', hist_tipo)).strip() if pd.notna(row.get('Tipo_Sessao')) else hist_tipo
+    
+                               if " " in data_val and "-" in data_val:
+                                   try:
+                                       data_val = datetime.strptime(data_val.split()[0], "%Y-%m-%d").strftime("%d/%m/%Y")
+                                   except: pass
 
                                 if p_limpo and not processo_existe(p_limpo):
                                     data_historico = f"{data_val} 23:59:59"
