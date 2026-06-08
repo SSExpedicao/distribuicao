@@ -271,12 +271,22 @@ def gerar_relatorio_gerencial(mes, ano):
     try:
         df_dados = carregar_dados_sqlite()
         df_afastamentos = carregar_afastamentos()
+        
+        # Puxa os ofícios despachados para o cruzamento de dados
+        try:
+            df_oficios_banco = pd.DataFrame(conn.client.table("oficios").select("*").eq("oficio_despachado", 1).execute().data)
+        except:
+            df_oficios_banco = pd.DataFrame()
+
         if df_dados.empty: return False, "❌ O banco de dados está vazio."
+        
         for c in ['data_entrada', 'data_expedido', 'data_revisado', 'data_conclusao']:
             df_dados[c + '_dt'] = pd.to_datetime(df_dados[c], format="%d/%m/%Y %H:%M:%S", errors='coerce').fillna(
                                   pd.to_datetime(df_dados[c], format="%d/%m/%Y %H:%M", errors='coerce'))
+        
         df_dados['ano_filtro'] = df_dados['data_entrada_dt'].dt.year
         df_dados['mes_filtro'] = df_dados['data_entrada_dt'].dt.month
+        
         if mes == 0:
             df_filtrado = df_dados[df_dados['ano_filtro'] == ano].copy()
             periodo_str = f"ANUAL (ANO INTEIRO DE {ano})"
@@ -284,8 +294,10 @@ def gerar_relatorio_gerencial(mes, ano):
             df_filtrado = df_dados[(df_dados['ano_filtro'] == ano) & (df_dados['mes_filtro'] == mes)].copy()
             nomes_meses = {1: "JANEIRO", 2: "FEVEREIRO", 3: "MARÇO", 4: "ABRIL", 5: "MAIO", 6: "JUNHO", 7: "JULHO", 8: "AGOSTO", 9: "SETEMBRO", 10: "OUTUBRO", 11: "NOVEMBRO", 12: "DEZEMBRO"}
             periodo_str = f"{nomes_meses[mes]} DE {ano}"
+            
         df_concluidos = df_filtrado[df_filtrado['despachado'] == 1].copy()
         df_tempo_real = df_concluidos[df_concluidos['data_entrada'] != df_concluidos['data_conclusao']].copy()
+        
         agora_str = datetime.now().strftime("%d/%m/%Y às %H:%M:%S")
         linhas = []
         linhas.append("====================================================")
@@ -293,6 +305,8 @@ def gerar_relatorio_gerencial(mes, ano):
         linhas.append(f"        PERÍODO: {periodo_str}                      ")
         linhas.append(f"        EMISSÃO: {agora_str}                        ")
         linhas.append("====================================================\n")
+        
+        # 1. RESUMO EXECUTIVO
         linhas.append("1. RESUMO EXECUTIVO DE PRODUTIVIDADE")
         linhas.append("----------------------------------------------------")
         if not df_concluidos.empty:
@@ -304,6 +318,8 @@ def gerar_relatorio_gerencial(mes, ano):
             linhas.append(f" -> Demandas Críticas (Urgências) Atendidas com Sucesso: {total_u}\n")
         else:
             linhas.append(" -> Nenhum processo finalizado encontrado neste período de tempo.\n")
+            
+        # 2. DISTRIBUIÇÃO OPERACIONAL
         linhas.append("2. DISTRIBUIÇÃO OPERACIONAL DA EQUIPE (VOLUMETRIA)")
         linhas.append("----------------------------------------------------")
         if not df_concluidos.empty:
@@ -316,6 +332,8 @@ def gerar_relatorio_gerencial(mes, ano):
             linhas.append("")
         else:
             linhas.append(" -> Sem registros de volumetria por equipe no período selecionado.\n")
+            
+        # 3. EFICIÊNCIA DE TEMPOS
         linhas.append("3. EFICIÊNCIA DE TEMPOS E CADÊNCIA (MÉDIAS REAIS)")
         linhas.append("----------------------------------------------------")
         if not df_tempo_real.empty:
@@ -330,7 +348,37 @@ def gerar_relatorio_gerencial(mes, ano):
             linhas.append(f" -> Tempo de Ciclo Total (Entrada ao Despacho): {fmt(df_tempo_real['min_total'].mean())}\n")
         else:
             linhas.append(" -> Indicadores de tempo real indisponíveis para o intervalo selecionado.\n")
-        linhas.append("4. CONTROLE DE DISPONIBILIDADE E AFASTAMENTOS")
+            
+        # 4. CONTROLE DE OFÍCIOS (MÓDULO NOVO INTEGRADO)
+        linhas.append("4. CONTROLE E PRODUTIVIDADE DE OFÍCIOS")
+        linhas.append("----------------------------------------------------")
+        if not df_oficios_banco.empty and not df_filtrado.empty:
+            processos_periodo = df_filtrado['numero_processo'].tolist()
+            df_oficios_filtrado = df_oficios_banco[df_oficios_banco['numero_processo'].isin(processos_periodo)].copy()
+            
+            if not df_oficios_filtrado.empty:
+                total_ofic = len(df_oficios_filtrado)
+                proc_com_ofic = df_oficios_filtrado['numero_processo'].nunique()
+                media_ofic = round(total_ofic / proc_com_ofic, 1) if proc_com_ofic > 0 else 0
+                ofic_jur = len(df_oficios_filtrado[df_oficios_filtrado['categoria'] == 'Jurisdicionado'])
+                ofic_n_jur = total_ofic - ofic_jur
+                
+                linhas.append(f" -> Total de Ofícios Expedidos e Despachados: {total_ofic}")
+                linhas.append(f" -> Média de Ofícios por Processo Atendido: {media_ofic}")
+                linhas.append(f" -> Ofícios para Órgãos Jurisdicionados: {ofic_jur}")
+                linhas.append(f" -> Ofícios para Não Jurisdicionados (Empresas/Interessados): {ofic_n_jur}")
+                linhas.append("\n[EMISSÃO DE OFÍCIOS POR COLABORADOR]")
+                ofic_rank = df_oficios_filtrado['quem_expediu'].value_counts()
+                for nome, qtd in ofic_rank.items():
+                    linhas.append(f"   - {nome}: {qtd} ofício(s) enviado(s)")
+                linhas.append("")
+            else:
+                linhas.append(" -> Nenhum ofício foi expedido para os processos deste período.\n")
+        else:
+            linhas.append(" -> Dados de ofícios indisponíveis para o intervalo selecionado.\n")
+
+        # 5. CONTROLE DE AFASTAMENTOS
+        linhas.append("5. CONTROLE DE DISPONIBILIDADE E AFASTAMENTOS")
         linhas.append("----------------------------------------------------")
         if not df_afastamentos.empty:
             linhas.append("📌 AUSÊNCIAS REGISTRADAS NO PERÍODO:")
@@ -343,6 +391,22 @@ def gerar_relatorio_gerencial(mes, ano):
             if not houve_ausencia: linhas.append("   - Nenhuma ausência ou licença registrada para a equipe neste período.")
         else:
             linhas.append(" -> Sem registros de afastamentos salvos na base de dados.")
+            
+        # 6. SITUAÇÃO DA QUARENTENA EM TEMPO REAL
+        linhas.append("\n6. AUDITORIA ATUAL DE RETRABALHO (SITUAÇÃO DE AGORA)")
+        linhas.append("----------------------------------------------------")
+        if 'precisa_correcao' in df_dados.columns:
+            df_erros_agora = df_dados[(df_dados['precisa_correcao'] == 1) & (df_dados['despachado'] == 0)]
+            if not df_erros_agora.empty:
+                linhas.append(f" ⚠️ ALERTA: Existem {len(df_erros_agora)} processo(s) travado(s) na Quarentena neste momento:")
+                erros_user = df_erros_agora['expedicao'].value_counts()
+                for nome, qtd in erros_user.items():
+                    linhas.append(f"   - {nome}: {qtd} processo(s) pendente(s) de correção")
+            else:
+                linhas.append(" ✅ Setor Limpo: Nenhum processo encontra-se na quarentena neste momento.")
+        else:
+            linhas.append(" -> Indicadores de quarentena indisponíveis.")
+
         linhas.append("\n====================================================")
         linhas.append("        FIM DO RELATÓRIO - AUDITORIA AUTOMÁTICA     ")
         linhas.append("====================================================")
