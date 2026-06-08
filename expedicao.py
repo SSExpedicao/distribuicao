@@ -1934,68 +1934,115 @@ with aba_gestao:
                     else: 
                         cu3.metric("🤝 Parceiro Operacional", "N/A")
 
-        with sub_ferias:
-            # --------------------------------------------------------------
-# 🔄 MÓDULO DE ESCALAS, AFASTAMENTOS E TROCAS (S.A.D.E.)
-# --------------------------------------------------------------
-st.subheader("🗓️ Gestão de Frequência e Escala Presencial")
+# O seu "with" já deve estar na linha 1937, algo como "with sub_ferias:"
+        with sub_ferias: # (Mantenha o nome que você já usa na sua aba)
+            st.subheader("🗓️ Gestão de Frequência e Escala Presencial")
 
-# Matriz de Escala Padrão do Setor
-ESCALA_PRESENCIAL = {
-    "Segunda-Feira": ["André", "Lu Fiorote", "Maurício", "Kátia", "Luanna C"],
-    "Terça-Feira": ["André", "Jessyca", "Lu Fiorote", "Kátia", "Elaine", "Luanna C"],
-    "Quarta-Feira": ["André", "Jessyca", "Lu Fiorote", "Mariana", "Elaine", "Luanna C"],
-    "Quinta-Feira": ["Lu Fiorote", "Maurício", "Mariana", "Kátia", "Elaine", "Luanna C"],
-    "Sexta-Feira": ["Jessyca", "Lu Fiorote", "Maurício", "Mariana", "Luanna C"]
-}
-dias_conversao = {0: "Segunda-Feira", 1: "Terça-Feira", 2: "Quarta-Feira", 3: "Quinta-Feira", 4: "Sexta-Feira"}
+            # Matriz de Escala Padrão do Setor
+            ESCALA_PRESENCIAL = {
+                "Segunda-Feira": ["André", "Lu Fiorote", "Maurício", "Kátia", "Luanna C"],
+                "Terça-Feira": ["André", "Jessyca", "Lu Fiorote", "Kátia", "Elaine", "Luanna C"],
+                "Quarta-Feira": ["André", "Jessyca", "Lu Fiorote", "Mariana", "Elaine", "Luanna C"],
+                "Quinta-Feira": ["Lu Fiorote", "Maurício", "Mariana", "Kátia", "Elaine", "Luanna C"],
+                "Sexta-Feira": ["Jessyca", "Lu Fiorote", "Maurício", "Mariana", "Luanna C"]
+            }
+            dias_conversao = {0: "Segunda-Feira", 1: "Terça-Feira", 2: "Quarta-Feira", 3: "Quinta-Feira", 4: "Sexta-Feira"}
 
-col_esc1, col_esc2 = st.columns(2)
+            col_esc1, col_esc2 = st.columns(2)
 
-# --- FORMULÁRIO 1: AFASTAMENTOS (FÉRIAS / ATESTADOS) ---
-with col_esc1:
-    st.markdown("##### 🏖️ Cadastrar Férias ou Atestado")
-    with st.form("form_afastamento"):
-        af_user = st.selectbox("Colaborador:", TODOS_NOMES, key="af_u")
-        af_tipo = st.selectbox("Tipo:", ["Férias", "Atestado Médico"], key="af_t")
-        af_ini = st.date_input("Início:", key="af_i")
-        af_fim = st.date_input("Fim (Último dia afastado):", key="af_f")
-        
-        btn_af = st.form_submit_button("Registrar Afastamento", type="primary")
-        
-        if btn_af:
-            if af_ini <= af_fim:
-                # Salva no banco de afastamentos do Supabase
-                conn.client.table("afastamentos").insert({
-                    "usuario": af_user, "tipo": af_tipo, 
-                    "data_inicio": af_ini.strftime('%Y-%m-%d'), 
-                    "data_fim": af_fim.strftime('%Y-%m-%d')
-                }).execute()
-                st.success(f"✅ {af_tipo} de {af_user} registrada!")
-                time.sleep(1)
-                st.rerun()
+            # --- MÓDULO 1: AFASTAMENTOS (COM INTELIGÊNCIA DE APAGÃO) ---
+            with col_esc1:
+                st.markdown("##### 🏖️ Cadastrar Férias ou Atestado")
+                
+                # Campos reativos (sem "st.form" para o alerta piscar na hora)
+                af_user = st.selectbox("Colaborador:", TODOS_NOMES, key="af_u")
+                af_tipo = st.selectbox("Tipo:", ["Férias", "Atestado Médico"], key="af_t")
+                af_ini = st.date_input("Início:", key="af_i")
+                af_fim = st.date_input("Fim (Último dia afastado):", key="af_f")
+                
+                dias_com_dois = []
+                dias_com_um = []
+                pode_salvar = True
+                
+                if af_user and af_ini <= af_fim:
+                    # Busca quem já está afastado no banco
+                    try:
+                        df_af_atual = pd.DataFrame(conn.client.table("afastamentos").execute().data)
+                    except:
+                        df_af_atual = pd.DataFrame()
+                        
+                    periodo_solicitado = pd.date_range(start=af_ini, end=af_fim)
+                    
+                    for dia in periodo_solicitado:
+                        if dia.weekday() in [5, 6]: continue # Ignora Sábado e Domingo
+                        
+                        dia_semana_pt = dias_conversao[dia.weekday()]
+                        equipe_dia = ESCALA_PRESENCIAL[dia_semana_pt].copy()
+                        
+                        # Remove quem está pedindo férias agora
+                        if af_user in equipe_dia:
+                            equipe_dia.remove(af_user)
+                            
+                        # Remove quem JÁ ESTÁ de férias no banco para este dia
+                        if not df_af_atual.empty:
+                            for _, row in df_af_atual.iterrows():
+                                try:
+                                    ini_banco = pd.to_datetime(row['data_inicio']).date()
+                                    fim_banco = pd.to_datetime(row['data_fim']).date()
+                                    if ini_banco <= dia.date() <= fim_banco:
+                                        if row['usuario'] in equipe_dia:
+                                            equipe_dia.remove(row['usuario'])
+                                except: pass
+                                
+                        total_restante = len(equipe_dia)
+                        data_format = dia.strftime('%d/%m (%a)')
+                        
+                        if total_restante == 2:
+                            dias_com_dois.append(f"{data_format} - Restam: {', '.join(equipe_dia)}")
+                        elif total_restante <= 1:
+                            dias_com_um.append(f"{data_format} - Resta: {', '.join(equipe_dia) if equipe_dia else 'NENHUM'}")
 
-# --- FORMULÁRIO 2: TROCA DE ESCALA EXCEPCIONAL ---
-with col_esc2:
-    st.markdown("##### 🔄 Troca de Escala Pontual")
-    with st.form("form_troca_escala"):
-        tr_user = st.selectbox("Colaborador:", TODOS_NOMES, key="tr_u")
-        tr_data_original = st.date_input("Data Original (Dia que sairia):", key="tr_do")
-        tr_data_nova = st.date_input("Nova Data (Dia que irá presencial):", key="tr_dn")
-        
-        btn_tr = st.form_submit_button("Mudar Dia Presencial", type="secondary")
-        
-        if btn_tr:
-            # Salva a troca pontual no Supabase
-            conn.client.table("trocas_escala").insert({
-                "usuario": tr_user, 
-                "data_original": tr_data_original.strftime('%Y-%m-%d'), 
-                "data_nova": tr_data_nova.strftime('%Y-%m-%d'),
-                "data_registro": datetime.date.today().strftime('%Y-%m-%d')
-            }).execute()
-            st.success(f"✅ Troca de escala de {tr_user} registrada com sucesso!")
-            time.sleep(1)
-            st.rerun()
+                    # Dispara os alertas baseados nos cálculos
+                    if dias_com_dois:
+                        st.warning("⚠️ **ALERTA DE ESCALA (Apenas 2 Servidores):**\n" + "\n".join([f"- {d}" for d in dias_com_dois]))
+                    
+                    if dias_com_um:
+                        st.error("🚨 **RISCO DE APAGÃO (Apenas 1 ou 0 Servidores no balcão):**\n" + "\n".join([f"- {d}" for d in dias_com_um]))
+                        confirmou_risco = st.checkbox("❗ Confirmo que desejo prosseguir com a escala reduzida.", value=False)
+                        pode_salvar = confirmou_risco
+
+                st.markdown("---")
+                if st.button("💾 Registrar Afastamento", type="primary", use_container_width=True, disabled=not pode_salvar):
+                    conn.client.table("afastamentos").insert({
+                        "usuario": af_user, "tipo": af_tipo, 
+                        "data_inicio": af_ini.strftime('%Y-%m-%d'), 
+                        "data_fim": af_fim.strftime('%Y-%m-%d')
+                    }).execute()
+                    st.success(f"✅ {af_tipo} registrada com sucesso!")
+                    time.sleep(1)
+                    st.rerun()
+
+            # --- MÓDULO 2: TROCA DE ESCALA PONTUAL ---
+            with col_esc2:
+                st.markdown("##### 🔄 Troca de Escala Pontual")
+                with st.form("form_troca_escala"):
+                    tr_user = st.selectbox("Colaborador:", TODOS_NOMES, key="tr_u")
+                    tr_data_original = st.date_input("Data Original (Dia que sairia):", key="tr_do")
+                    tr_data_nova = st.date_input("Nova Data (Dia que irá presencial):", key="tr_dn")
+                    
+                    btn_tr = st.form_submit_button("Mudar Dia Presencial", type="secondary", use_container_width=True)
+                    
+                    if btn_tr:
+                        conn.client.table("trocas_escala").insert({
+                            "usuario": tr_user, 
+                            "data_original": tr_data_original.strftime('%Y-%m-%d'), 
+                            "data_nova": tr_data_nova.strftime('%Y-%m-%d'),
+                            "data_registro": datetime.date.today().strftime('%Y-%m-%d')
+                        }).execute()
+                        st.success("✅ Troca registrada! O aviso já está no letreiro do sistema.")
+                        time.sleep(1)
+                        st.rerun()
+            
             st.header("🌴 Painel de Férias e Afastamentos Operacionais")
             with st.container(border=True):
                 st.subheader("📝 Registrar Nova Ausência")
