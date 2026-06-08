@@ -861,110 +861,129 @@ with aba_sessoes:
 with aba_oficios:
     st.header("✉️ Controle e Expedição de Ofícios")
     
-    # Filtra apenas os processos ativos de sessões ordinárias/virtuais
-    df_ativos_ord = df_geral_status[(df_geral_status['despachado'] == 0) & (df_geral_status['tipo_sessao'].isin(['Sessão Ordinária', 'Sessão Ordinária Virtual']))].copy()
+    # Puxa os dados brutos (apenas ativos de Ord/Virtual)
+    df_ativos_base = df_geral_status[(df_geral_status['despachado'] == 0) & (df_geral_status['tipo_sessao'].isin(['Sessão Ordinária', 'Sessão Ordinária Virtual']))].copy()
     
-    if df_ativos_ord.empty:
+    if df_ativos_base.empty:
         st.success("✨ Pauta limpa! Nenhum processo aguardando ofícios no momento.")
     else:
-        # 1. Seleção do Processo
-        proc_selecionado = st.selectbox("Selecione o Processo para Expedir Ofícios:", df_ativos_ord['numero_processo'].tolist())
+        st.subheader("🔍 1. Filtros de Seleção da Mesa")
+        col_f1, col_f2, col_f3 = st.columns(3)
         
-        # Alerta de Quarentena e Botão de Liberação
-        proc_data = df_ativos_ord[df_ativos_ord['numero_processo'] == proc_selecionado].iloc[0]
-        if proc_data.get('precisa_correcao') == 1:
-            st.error(f"🚨 PROCESSO EM QUARENTENA | Motivo apontado pelo Revisor: **{proc_data.get('motivo_correcao')}**")
-            if st.button("✅ Correção Realizada (Retirar da Quarentena)", type="primary"):
-                conn.client.table("processos").update({"precisa_correcao": 0, "motivo_correcao": ""}).eq("numero_processo", proc_selecionado).execute()
-                st.success("Processo corrigido e liberado para a mesa principal!")
-                time.sleep(1.5)
-                st.rerun()
+        with col_f1:
+            tipo_sessao_filtro = st.selectbox("Qual a Sessão?", ["Sessão Ordinária", "Sessão Ordinária Virtual"])
+            
+        with col_f2:
+            quem_expede_global = st.selectbox("Quem está expedindo?", TODOS_NOMES)
+            
+        # Filtra o dataframe com base na sessão escolhida no primeiro filtro
+        df_ativos_filtrado = df_ativos_base[df_ativos_base['tipo_sessao'] == tipo_sessao_filtro]
         
-        st.markdown("---")
-        
-        # 2. Formulário Interativo de Cadastro (Autocomplete)
-        st.subheader("➕ Cadastrar Novo Ofício")
-        col_o1, col_o2 = st.columns(2)
-        with col_o1: cat_oficio = st.selectbox("Categoria do Destinatário:", ["Jurisdicionado", "Não Jurisdicionado"])
-        with col_o2: 
-            if cat_oficio == "Não Jurisdicionado":
-                tipo_nao_jur = st.selectbox("Especificação:", ["Representante", "Direto para Empresa"])
+        with col_f3:
+            if not df_ativos_filtrado.empty:
+                proc_selecionado = st.selectbox("Nº do Processo:", df_ativos_filtrado['numero_processo'].tolist())
             else:
-                tipo_nao_jur = ""
-                st.write("") # Espaçamento
+                st.info("Nenhum processo pendente nesta sessão.")
+                proc_selecionado = None
                 
-        # O Cérebro do Autocomplete
-        lista_dest = obter_lista_destinatarios(cat_oficio)
-        opcoes_dest = ["-- Selecionar Existente --"] + lista_dest + ["➕ Cadastrar Novo Destinatário..."]
-        dest_selecionado = st.selectbox("Nome do Destinatário (Busca Automática):", opcoes_dest)
-        
-        dest_final = dest_selecionado
-        if dest_selecionado == "➕ Cadastrar Novo Destinatário...":
-            dest_final = st.text_input("Digite o nome oficial (O sistema vai aprender este nome para a próxima):")
+        st.markdown("---")
+
+        # Só abre o restante da tela se o usuário conseguir selecionar um processo válido
+        if proc_selecionado:
             
-        col_o3, col_o4 = st.columns(2)
-        with col_o3: num_oficio = st.text_input("Nº do Ofício (Ex: 125/2026):")
-        with col_o4: quem_expede = st.selectbox("Quem está expedindo?", TODOS_NOMES)
-        
-        # Aplicação da Regra Automática (Inversa)
-        if cat_oficio == "Jurisdicionado":
-            fluxo_doc = "Original no Protocolo | Clone no Processo"
-        else:
-            fluxo_doc = "Original no Processo | Clone no Protocolo"
-            
-        st.info(f"💡 **Regra de Vias Aplicada:** {fluxo_doc}")
-        
-        if st.button("💾 Adicionar Ofício", type="primary", use_container_width=True):
-            if dest_final and dest_final != "-- Selecionar Existente --" and num_oficio:
-                ok, m = adicionar_oficio(proc_selecionado, num_oficio, cat_oficio, tipo_nao_jur, dest_final, 1, fluxo_doc, quem_expede)
-                if ok: 
-                    st.success(m)
-                    time.sleep(1)
+            # Alerta de Quarentena e Botão de Liberação
+            proc_data = df_ativos_filtrado[df_ativos_filtrado['numero_processo'] == proc_selecionado].iloc[0]
+            if proc_data.get('precisa_correcao') == 1:
+                st.error(f"🚨 PROCESSO EM QUARENTENA | Motivo apontado pelo Revisor: **{proc_data.get('motivo_correcao')}**")
+                if st.button("✅ Correção Realizada (Retirar da Quarentena)", type="primary"):
+                    conn.client.table("processos").update({"precisa_correcao": 0, "motivo_correcao": ""}).eq("numero_processo", proc_selecionado).execute()
+                    st.success("Processo corrigido e liberado para a mesa principal!")
+                    time.sleep(1.5)
                     st.rerun()
-                else: st.error(m)
-            else:
-                st.warning("⚠️ Preencha o Destinatário e o Número do Ofício.")
-                
-        st.markdown("---")
-        
-        # 3. Painel de Baixa dos Ofícios (Checkbox)
-        st.subheader("📋 Ofícios Gerados para este Processo")
-        try:
-            df_oficios = pd.DataFrame(conn.client.table("oficios").select("id, numero_oficio, destinatario, fluxo_documento, oficio_despachado").eq("numero_processo", proc_selecionado).execute().data)
-            if not df_oficios.empty:
-                df_oficios['oficio_despachado'] = df_oficios['oficio_despachado'].astype(bool)
-                
-                ed_oficios = st.data_editor(
-                    df_oficios,
-                    column_config={
-                        "id": None, 
-                        "numero_oficio": st.column_config.TextColumn("Nº Ofício", disabled=True),
-                        "destinatario": st.column_config.TextColumn("Destinatário", disabled=True),
-                        "fluxo_documento": st.column_config.TextColumn("Regra da Via", disabled=True),
-                        "oficio_despachado": st.column_config.CheckboxColumn("Ofício Despachado?")
-                    },
-                    hide_index=True, use_container_width=True, key="ed_ofic"
-                )
-                
-                if st.button("💾 Atualizar Status dos Ofícios", type="primary"):
-                    alterados = 0
-                    for i in range(len(ed_oficios)):
-                        id_ofic = int(ed_oficios.iloc[i]['id'])
-                        novo_status = 1 if ed_oficios.iloc[i]['oficio_despachado'] else 0
-                        status_antigo = 1 if df_oficios.iloc[i]['oficio_despachado'] else 0
-                        
-                        if novo_status != status_antigo:
-                            conn.client.table("oficios").update({"oficio_despachado": novo_status}).eq("id", id_ofic).execute()
-                            alterados += 1
+            
+            # 2. Formulário Interativo de Cadastro (Autocomplete)
+            st.subheader("➕ 2. Cadastrar Novo Ofício")
+            col_o1, col_o2 = st.columns(2)
+            with col_o1: cat_oficio = st.selectbox("Categoria do Destinatário:", ["Jurisdicionado", "Não Jurisdicionado"])
+            with col_o2: 
+                if cat_oficio == "Não Jurisdicionado":
+                    tipo_nao_jur = st.selectbox("Especificação:", ["Representante", "Direto para Empresa"])
+                else:
+                    tipo_nao_jur = ""
+                    st.write("") # Espaçamento invisível para alinhar
                     
-                    if alterados > 0:
-                        st.success(f"✅ {alterados} ofício(s) atualizado(s)!")
+            # O Cérebro do Autocomplete
+            lista_dest = obter_lista_destinatarios(cat_oficio)
+            opcoes_dest = ["-- Selecionar Existente --"] + lista_dest + ["➕ Cadastrar Novo Destinatário..."]
+            dest_selecionado = st.selectbox("Nome do Destinatário (Busca Automática):", opcoes_dest)
+            
+            dest_final = dest_selecionado
+            if dest_selecionado == "➕ Cadastrar Novo Destinatário...":
+                dest_final = st.text_input("Digite o nome oficial (O sistema vai aprender este nome para a próxima):")
+                
+            # Aqui estava o antigo selectbox de quem expediu, agora só precisamos pedir o número do ofício
+            num_oficio = st.text_input("Nº do Ofício (Ex: 125/2026):")
+            
+            # Aplicação da Regra Automática (Inversa)
+            if cat_oficio == "Jurisdicionado":
+                fluxo_doc = "Original no Protocolo | Clone no Processo"
+            else:
+                fluxo_doc = "Original no Processo | Clone no Protocolo"
+                
+            st.info(f"💡 **Regra de Vias Aplicada:** {fluxo_doc}")
+            
+            if st.button("💾 Adicionar Ofício", type="primary", use_container_width=True):
+                if dest_final and dest_final != "-- Selecionar Existente --" and num_oficio:
+                    # Envia a variável 'quem_expede_global' que foi definida lá no topo
+                    ok, m = adicionar_oficio(proc_selecionado, num_oficio, cat_oficio, tipo_nao_jur, dest_final, 1, fluxo_doc, quem_expede_global)
+                    if ok: 
+                        st.success(m)
                         time.sleep(1)
                         st.rerun()
-                    else: st.warning("Nenhuma alteração feita.")
-            else:
-                st.warning("Nenhum ofício cadastrado para este processo ainda.")
-        except: pass
+                    else: st.error(m)
+                else:
+                    st.warning("⚠️ Preencha o Destinatário e o Número do Ofício.")
+                    
+            st.markdown("---")
+            
+            # 3. Painel de Baixa dos Ofícios (Checkbox)
+            st.subheader("📋 3. Ofícios Gerados para este Processo")
+            try:
+                df_oficios = pd.DataFrame(conn.client.table("oficios").select("id, numero_oficio, destinatario, fluxo_documento, oficio_despachado").eq("numero_processo", proc_selecionado).execute().data)
+                if not df_oficios.empty:
+                    df_oficios['oficio_despachado'] = df_oficios['oficio_despachado'].astype(bool)
+                    
+                    ed_oficios = st.data_editor(
+                        df_oficios,
+                        column_config={
+                            "id": None, 
+                            "numero_oficio": st.column_config.TextColumn("Nº Ofício", disabled=True),
+                            "destinatario": st.column_config.TextColumn("Destinatário", disabled=True),
+                            "fluxo_documento": st.column_config.TextColumn("Regra da Via", disabled=True),
+                            "oficio_despachado": st.column_config.CheckboxColumn("Ofício Despachado?")
+                        },
+                        hide_index=True, use_container_width=True, key="ed_ofic"
+                    )
+                    
+                    if st.button("💾 Atualizar Status dos Ofícios", type="primary"):
+                        alterados = 0
+                        for i in range(len(ed_oficios)):
+                            id_ofic = int(ed_oficios.iloc[i]['id'])
+                            novo_status = 1 if ed_oficios.iloc[i]['oficio_despachado'] else 0
+                            status_antigo = 1 if df_oficios.iloc[i]['oficio_despachado'] else 0
+                            
+                            if novo_status != status_antigo:
+                                conn.client.table("oficios").update({"oficio_despachado": novo_status}).eq("id", id_ofic).execute()
+                                alterados += 1
+                        
+                        if alterados > 0:
+                            st.success(f"✅ {alterados} ofício(s) atualizado(s)!")
+                            time.sleep(1)
+                            st.rerun()
+                        else: st.warning("Nenhuma alteração feita.")
+                else:
+                    st.warning("Nenhum ofício cadastrado para este processo ainda.")
+            except: pass
 
 # ------------------------------------------
 # ABA 3: HISTÓRICO, EXCLUSÕES E AVISOS
