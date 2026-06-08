@@ -1494,6 +1494,7 @@ with aba_gestao:
                             else:
                                 # Se for XLSX, lê normal
                                 df_up = pd.read_excel(arquivo_hist)
+                            # ... (código anterior do loop) ...
                             barra = st.progress(0)
                             
                             for index, row in df_up.iterrows():
@@ -1506,13 +1507,14 @@ with aba_gestao:
                                 rev_val = higienizar_colaborador(rev_bruto, TODOS_NOMES)
                                 data_val = str(row.get('Data_Sessao', hist_sessao)).strip() if pd.notna(row.get('Data_Sessao')) else hist_sessao
                                 tipo_val = str(row.get('Tipo_Sessao', hist_tipo)).strip() if pd.notna(row.get('Tipo_Sessao')) else hist_tipo
-    
+
                                 if " " in data_val and "-" in data_val:
                                     try:
                                         data_val = datetime.strptime(data_val.split()[0], "%Y-%m-%d").strftime("%d/%m/%Y")
                                     except: pass
 
-                                if p_limpo and not processo_existe(p_limpo):
+                                # --- CORREÇÃO AQUI: passamos p_limpo E data_val ---
+                                if p_limpo and not processo_existe(p_limpo, data_val):
                                     data_historico = f"{data_val} 23:59:59"
                                     try:
                                         conn.client.table("processos").insert({
