@@ -1513,7 +1513,7 @@ with aba_gestao:
                                         data_val = datetime.strptime(data_val.split()[0], "%Y-%m-%d").strftime("%d/%m/%Y")
                                     except: pass
 
-                                # --- CORREÇÃO AQUI: passamos p_limpo E data_val ---
+                                # Substitua a linha do erro por esta (adicionamos , data_val):
                                 if p_limpo and not processo_existe(p_limpo, data_val):
                                     data_historico = f"{data_val} 23:59:59"
                                     try:
@@ -1536,7 +1536,8 @@ with aba_gestao:
                                 
                         elif hist_proc:
                             p_limpo, r_limpo = higienizar_dados(hist_proc, hist_rel)
-                            if not processo_existe(p_limpo):
+                            # CORREÇÃO AQUI (passando o hist_sessao):
+                            if not processo_existe(p_limpo, hist_sessao):
                                 try:
                                     conn.client.table("processos").insert({
                                         "numero_processo": p_limpo, "relator": r_limpo, "tipo_sessao": hist_tipo, 
