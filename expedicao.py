@@ -851,17 +851,23 @@ with aba_sessoes:
                         linha_antiga = df_exibicao.iloc[i].to_dict()
                         if linha_nova != linha_antiga:
                             
-                            # --- A TRAVA MESTRE DE SEGURANÇA ---
+                            # --- TRAVA MESTRE INTELIGENTE ---
                             if linha_nova.get('Despachado') == True and linha_antiga.get('Despachado') == False:
                                 if tipo_sessao_tb in ["Sessão Ordinária", "Sessão Ordinária Virtual"]:
-                                    if not tem_oficio_cadastrado(linha_nova['Processo']):
-                                        st.error(f"🚨 ERRO: O processo {linha_nova['Processo']} não possui nenhum ofício cadastrado!")
-                                        bloqueio_ativo = True
-                                        continue
-                                    if verificar_oficios_pendentes(linha_nova['Processo']):
-                                        st.error(f"🚨 ERRO: O processo {linha_nova['Processo']} possui ofícios pendentes. Despache os ofícios na Aba 2.5 primeiro!")
-                                        bloqueio_ativo = True
-                                        continue
+                                    # 1. Verifica se foi marcado como ISENTO
+                                    isento = conn.client.table("processos").select("precisa_correcao").eq("numero_processo", linha_nova['Processo']).execute().data
+                                    # Se 'precisa_correcao' estiver como 2, vamos chamar de "ISENTO DE OFÍCIOS"
+                                    if not (isento and isento[0].get('precisa_correcao') == 2):
+                                        
+                                        # 2. Se não for isento, faz a verificação padrão
+                                        if not tem_oficio_cadastrado(linha_nova['Processo']):
+                                            st.error(f"🚨 ERRO: Processo {linha_nova['Processo']} sem ofícios/memorandos. Cadastre na Aba 2.5 ou marque como ISENTO!")
+                                            bloqueio_ativo = True
+                                            continue
+                                        if verificar_oficios_pendentes(linha_nova['Processo']):
+                                            st.error(f"🚨 ERRO: Processo {linha_nova['Processo']} tem ofícios/memorandos pendentes. Despache-os na Aba 2.5 primeiro!")
+                                            bloqueio_ativo = True
+                                            continue
                             # -----------------------------------
                             
                             mudancas = {}
@@ -1009,17 +1015,30 @@ with aba_oficios:
                     time.sleep(1.5)
                     st.rerun()
             
-            # 2. Formulário Interativo de Cadastro (Autocomplete)
-            st.subheader("➕ 2. Cadastrar Novo Ofício")
+           # 2. Formulário Interativo de Cadastro
+            st.subheader("➕ 2. Cadastrar Novo Ofício ou Memorando")
+            
+            # Nova Categoria incluindo Memorando
             col_o1, col_o2 = st.columns(2)
-            with col_o1: cat_oficio = st.selectbox("Categoria do Destinatário:", ["Jurisdicionado", "Não Jurisdicionado"])
+            with col_o1: 
+                cat_oficio = st.selectbox("Categoria:", ["Jurisdicionado", "Não Jurisdicionado", "Memorando (Envio Interno)"])
             with col_o2: 
                 if cat_oficio == "Não Jurisdicionado":
                     tipo_nao_jur = st.selectbox("Especificação:", ["Representante", "Direto para Empresa"])
                 else:
                     tipo_nao_jur = ""
                     st.write("") # Espaçamento invisível para alinhar
-                    
+            
+            # Botão de Isenção (A grande solução para processos sem ofício)
+            if st.button("🚫 Isentar este processo de ofícios/memorandos", use_container_width=True):
+                # Usamos o código 2 para representar ISENTO
+                conn.client.table("processos").update({"precisa_correcao": 2}).eq("numero_processo", proc_selecionado).execute()
+                st.success("✅ Processo marcado como ISENTO. Já pode ser despachado!")
+                time.sleep(1)
+                st.rerun()
+
+            st.markdown("---")
+
             # O Cérebro do Autocomplete
             lista_dest = obter_lista_destinatarios(cat_oficio)
             opcoes_dest = ["-- Selecionar Existente --"] + lista_dest + ["➕ Cadastrar Novo Destinatário..."]
@@ -1029,21 +1048,25 @@ with aba_oficios:
             if dest_selecionado == "➕ Cadastrar Novo Destinatário...":
                 dest_final = st.text_input("Digite o nome oficial (O sistema vai aprender este nome para a próxima):")
                 
-            # Aqui estava o antigo selectbox de quem expediu, agora só precisamos pedir o número do ofício
-            num_oficio = st.text_input("Nº do Ofício (Ex: 125/2026):")
+            num_oficio = st.text_input("Nº do Ofício ou Memorando (Ex: 125/2026):")
             
-            # Aplicação da Regra Automática (Inversa)
+            # Aplicação da Regra Automática
             if cat_oficio == "Jurisdicionado":
                 fluxo_doc = "Original no Protocolo | Clone no Processo"
+            elif cat_oficio == "Memorando (Envio Interno)":
+                fluxo_doc = "Envio Interno (Via Única)"
             else:
                 fluxo_doc = "Original no Processo | Clone no Protocolo"
                 
             st.info(f"💡 **Regra de Vias Aplicada:** {fluxo_doc}")
             
-            if st.button("💾 Adicionar Ofício", type="primary", use_container_width=True):
+            if st.button("💾 Adicionar Ofício/Memorando", type="primary", use_container_width=True):
                 if dest_final and dest_final != "-- Selecionar Existente --" and num_oficio:
-                    # Envia a variável 'quem_expede_global' que foi definida lá no topo
+                    # Envia a variável 'quem_expede_global' definida nos filtros do topo
                     ok, m = adicionar_oficio(proc_selecionado, num_oficio, cat_oficio, tipo_nao_jur, dest_final, 1, fluxo_doc, quem_expede_global)
+                    # Reseta a isenção caso um ofício seja adicionado (processo volta a precisar de despacho)
+                    conn.client.table("processos").update({"precisa_correcao": 0}).eq("numero_processo", proc_selecionado).execute()
+                    
                     if ok: 
                         st.success(m)
                         time.sleep(1)
