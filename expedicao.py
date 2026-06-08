@@ -1583,258 +1583,258 @@ with aba_gestao:
                         except Exception as e: st.error(f"❌ Erro ao tentar resetar o banco: {e}")
 
         with sub_dados:
-    st.header("📈 Dashboard Analítico e Distribuição Operacional")
-    df_dados = carregar_dados_sqlite()
-    
-    if df_dados.empty or 'data_expedido' not in df_dados.columns: 
-        st.info("📊 O banco de dados está vazio.")
-    else:
-        # Conversão e tratamento de datas e tempos
-        for c in ['data_entrada', 'data_expedido', 'data_revisado', 'data_conclusao']:
-            df_dados[c + '_dt'] = pd.to_datetime(df_dados[c], format="%d/%m/%Y %H:%M:%S", errors='coerce').fillna(
-                                  pd.to_datetime(df_dados[c], format="%d/%m/%Y %H:%M", errors='coerce'))
-        
-        df_concluidos = df_dados[df_dados['despachado'] == 1].copy()
-        df_ativos = df_dados[df_dados['despachado'] == 0].copy()
-        df_tempo_real = df_concluidos[df_concluidos['data_entrada'] != df_concluidos['data_conclusao']].copy()
-        
-        if not df_tempo_real.empty:
-            df_tempo_real['min_exp'] = (df_tempo_real['data_expedido_dt'] - df_tempo_real['data_entrada_dt']).dt.total_seconds() / 60
-            df_tempo_real['min_rev'] = (df_tempo_real['data_revisado_dt'] - df_tempo_real['data_expedido_dt']).dt.total_seconds() / 60
-            df_tempo_real['min_total'] = (df_tempo_real['data_conclusao_dt'] - df_tempo_real['data_entrada_dt']).dt.total_seconds() / 60
-
-        def format_tempo(minutos):
-            if pd.isna(minutos) or minutos < 0: return "N/A"
-            return f"{int(minutos)} min" if int(minutos) < 60 else f"{int(minutos) // 60}h {int(minutos) % 60}m"
-
-        st.markdown("### Selecione o Perfil de Análise")
-        visao_selecionada = st.selectbox("Escolha a Visão:", ["Todo o Setor (Global)"] + TODOS_NOMES, label_visibility="collapsed")
-        st.markdown("---")
-
-        if visao_selecionada == "Todo o Setor (Global)":
-            st.subheader("🌐 Visão Macro (Histórico Completo)")
+            st.header("📈 Dashboard Analítico e Distribuição Operacional")
+            df_dados = carregar_dados_sqlite()
             
-            # --- CARD ROW 1: PROCESSOS GERAIS ---
-            col1, col2, col3, col4 = st.columns(4)
-            total_despachados = len(df_concluidos)
-            total_sessoes = df_concluidos['nome_sessao'].nunique()
-            media_proc_sessao = round(total_despachados / total_sessoes) if total_sessoes > 0 else 0
-            total_urgentes = len(df_concluidos[df_concluidos['urgente'] == 1])
-            col1.metric("📦 Total Despachados", total_despachados)
-            col2.metric("🏛️ Sessões Realizadas", total_sessoes)
-            col3.metric("⚖️ Média Proc./Sessão", media_proc_sessao)
-            col4.metric("🔥 Urgências Atendidas", total_urgentes)
-            
-            # --- CARD ROW 2: INTELIGÊNCIA DE OFÍCIOS ---
-            try:
-                df_oficios_analytics = pd.DataFrame(conn.client.table("oficios").select("*").execute().data)
-            except:
-                df_oficios_analytics = pd.DataFrame()
-
-            if not df_oficios_analytics.empty:
-                df_ofic_despachados = df_oficios_analytics[df_oficios_analytics['oficio_despachado'] == 1]
-                total_oficios = len(df_ofic_despachados)
-                proc_com_oficios = df_ofic_despachados['numero_processo'].nunique()
-                media_ofic_proc = round(total_oficios / proc_com_oficios, 1) if proc_com_oficios > 0 else 0
-                ofic_jur = len(df_ofic_despachados[df_ofic_despachados['categoria'] == 'Jurisdicionado'])
+            if df_dados.empty or 'data_expedido' not in df_dados.columns: 
+                st.info("📊 O banco de dados está vazio.")
+            else:
+                # Conversão e tratamento de datas e tempos
+                for c in ['data_entrada', 'data_expedido', 'data_revisado', 'data_conclusao']:
+                    df_dados[c + '_dt'] = pd.to_datetime(df_dados[c], format="%d/%m/%Y %H:%M:%S", errors='coerce').fillna(
+                                          pd.to_datetime(df_dados[c], format="%d/%m/%Y %H:%M", errors='coerce'))
                 
-                st.markdown("<br>", unsafe_allow_html=True)
-                col_of1, col_of2, col_of3, col_of4 = st.columns(4)
-                col_of1.metric("✉️ Ofícios Expedidos", total_oficios)
-                col_of2.metric("📊 Média Ofícios/Processo", media_ofic_proc)
-                col_of3.metric("🏛️ Ofic. Jurisdicionados", ofic_jur)
-                col_of4.metric("🏢 Ofic. Não Jurisdic.", total_oficios - ofic_jur)
-            
-            # --- MONITORAMENTO EM TEMPO REAL E RETRABALHO ---
-            st.markdown("---")
-            col_ret1, col_ret2 = st.columns([1, 1])
-            
-            with col_ret1:
-                st.markdown("#### 🚨 Retrabalho (Quarentena Ativa)")
-                if 'precisa_correcao' in df_dados.columns:
-                    df_erros_ativos = df_dados[(df_dados['precisa_correcao'] == 1) & (df_dados['despachado'] == 0)]
-                    total_erros_ativos = len(df_erros_ativos)
-                    if total_erros_ativos > 0:
-                        st.error(f"⚠️ Existem {total_erros_ativos} processo(s) na quarentena.")
-                        erros_por_user = df_erros_ativos['expedicao'].value_counts().reset_index()
-                        erros_por_user.columns = ['Expedidor', 'Pendências']
-                        st.dataframe(erros_por_user, hide_index=True, use_container_width=True)
-                    else:
-                        st.success("🎉 Zero processos na quarentena! Trabalho com 100% de precisão.")
-            
-            with col_ret2:
-                st.markdown("#### 📡 Radar Ativo (Mesa Agora)")
-                sessoes_stats = df_dados.groupby('nome_sessao')['despachado'].agg(['count', 'sum']).reset_index()
-                ativas_list = sessoes_stats[sessoes_stats['count'] > sessoes_stats['sum']]['nome_sessao'].tolist()
-                df_ativos_reais = df_dados[df_dados['nome_sessao'].isin(ativas_list) & (df_dados['despachado'] == 0)].copy()
-                
-                if not df_ativos_reais.empty:
-                    urg_pendentes = len(df_ativos_reais[df_ativos_reais['urgente'] == 1])
-                    st.warning(f"📋 Pauta Ativa com {len(df_ativos_reais)} processos em andamento.")
-                    st.markdown(f"**⏳ Aguardando Elaboração:** {len(df_ativos_reais[df_ativos_reais['expedido_ok'] == 0])}")
-                    st.markdown(f"**🔍 Aguardando Conferência:** {len(df_ativos_reais[(df_ativos_reais['expedido_ok'] == 1) & (df_ativos_reais['revisado_ok'] == 0)])}")
-                    st.markdown(f"**🚨 Urgentes pendentes:** {urg_pendentes}")
-                else:
-                    st.success("✨ Pauta limpa! Sem pendências urgentes ou ordinárias no radar.")
-
-            # =========================================================
-            # 🧠 ABAS INTERATIVAS DE INVESTIGAÇÃO DE DADOS (BI GLOBAL)
-            # =========================================================
-            st.markdown("---")
-            st.markdown("### 📊 Central de Análise de Comportamento e Desempenho")
-            
-            tab_sinergia, tab_cadencia, tab_urgencias, tab_score = st.tabs([
-                "🤝 Participação e Sinergia", 
-                "⏱️ Gargalos e Cadência", 
-                "🔥 Índice de Urgências", 
-                "⭐ Score de Elite"
-            ])
-            
-            with tab_sinergia:
-                st.markdown("#### 🤝 Volume de Participação Operacional e Matriz de Sinergia")
-                col_g1, col_g2 = st.columns(2)
-                with col_g1:
-                    st.markdown("##### 📦 Distribuição de Expedição") 
-                    exp_counts = df_concluidos['expedicao'].value_counts().reset_index()
-                    exp_counts.columns = ['Colaborador', 'Processos']
-                    if not exp_counts.empty:
-                        fig_exp = px.pie(exp_counts, values='Processos', names='Colaborador', hole=0.4)
-                        fig_exp.update_traces(textposition='inside', textinfo='percent+value')
-                        st.plotly_chart(fig_exp, use_container_width=True)
-                with col_g2:
-                    st.markdown("##### 🔍 Distribuição de Revisão") 
-                    rev_counts = df_concluidos['revisao'].value_counts().reset_index()
-                    rev_counts.columns = ['Colaborador', 'Processos']
-                    if not rev_counts.empty:
-                        fig_rev = px.pie(rev_counts, values='Processos', names='Colaborador', hole=0.4)
-                        fig_rev.update_traces(textposition='inside', textinfo='percent+value')
-                        st.plotly_chart(fig_rev, use_container_width=True)
-                
-                st.markdown("##### 📊 Matriz de Colaboração (Raio-X de Soft Skills)")
-                matriz = df_concluidos.groupby(['expedicao', 'revisao']).size().reset_index(name='Despachos Juntos')
-                if not matriz.empty:
-                    fig_matriz = px.density_heatmap(matriz, x='revisao', y='expedicao', z='Despachos Juntos', text_auto=True, color_continuous_scale='Viridis')
-                    fig_matriz.update_layout(xaxis_title="Quem Revisou", yaxis_title="Quem Expediu")
-                    st.plotly_chart(fig_matriz, use_container_width=True)
-
-            with tab_cadencia:
-                st.markdown("#### ⏱️ Análise de Gargalos Operacionais e Tempos Médios")
-                c_t1, c_t2, c_t3 = st.columns(3)
-                c_t1.metric("Média de Elaboração", format_tempo(df_tempo_real['min_exp'].mean()) if not df_tempo_real.empty else "N/A")
-                c_t2.metric("Média de Conferência", format_tempo(df_tempo_real['min_rev'].mean()) if not df_tempo_real.empty else "N/A")
-                c_t3.metric("Tempo de Ciclo Total", format_tempo(df_tempo_real['min_total'].mean()) if not df_tempo_real.empty else "N/A")
-                
-                st.markdown("<br>", unsafe_allow_html=True)
-                col_grg1, col_grg2 = st.columns(2)
-                with col_grg1:
-                    st.markdown("**Tempo Médio na Elaboração por Usuário (Minutos)**")
-                    t_exp = df_tempo_real[df_tempo_real['min_exp'] >= 0].groupby('expedicao')['min_exp'].mean().reset_index()
-                    t_exp.columns = ['Colaborador', 'Média (Min)']
-                    if not t_exp.empty:
-                        st.plotly_chart(px.bar(t_exp, x='Colaborador', y='Média (Min)', color='Média (Min)', color_continuous_scale='Reds'), use_container_width=True)
-                with col_grg2:
-                    st.markdown("**Tempo Médio na Revisão por Usuário (Minutos)**")
-                    t_rev = df_tempo_real[df_tempo_real['min_rev'] >= 0].groupby('revisao')['min_rev'].mean().reset_index()
-                    t_rev.columns = ['Colaborador', 'Média (Min)']
-                    if not t_rev.empty:
-                        st.plotly_chart(px.bar(t_rev, x='Colaborador', y='Média (Min)', color='Média (Min)', color_continuous_scale='Blues'), use_container_width=True)
-
-            with tab_urgencias:
-                st.markdown("#### 🚨 Distribuição Crítica e Índice de Urgentes")
-                urg_df = df_concluidos[df_concluidos['urgente'] == 1].groupby('expedicao').size().reset_index(name='Urgências Resolvidas')
-                if not urg_df.empty:
-                    fig_urg = px.pie(urg_df, values='Urgências Resolvidas', names='expedicao', hole=0.4, color_discrete_sequence=px.colors.sequential.YlOrRd_r)
-                    fig_urg.update_traces(textposition='inside', textinfo='percent+label+value')
-                    st.plotly_chart(fig_urg, use_container_width=True)
-                else:
-                    st.info("Nenhum processo urgente foi finalizado no período analisado.")
-
-            with tab_score:
-                st.markdown("#### ⭐ Score de Elite S.A.D.E. (Qualidade & Proatividade)")
-                st.write("Métrica de desempenho unificada: Velocidade setorial + bônus por urgências solucionadas - penalidades por erros atuais na quarentena.")
+                df_concluidos = df_dados[df_dados['despachado'] == 1].copy()
+                df_ativos = df_dados[df_dados['despachado'] == 0].copy()
+                df_tempo_real = df_concluidos[df_concluidos['data_entrada'] != df_concluidos['data_conclusao']].copy()
                 
                 if not df_tempo_real.empty:
-                    media_setor_exp = df_tempo_real['min_exp'].mean()
-                    scores_list = []
-                    
-                    for colab in TODOS_NOMES:
-                        df_colab = df_concluidos[df_concluidos['expedicao'] == colab]
-                        vol_total = len(df_colab)
-                        
-                        if vol_total > 0:
-                            df_colab_tempo = df_tempo_real[df_tempo_real['expedicao'] == colab]
-                            tempo_colab = df_colab_tempo['min_exp'].mean() if not df_colab_tempo.empty else 9999
-                            
-                            # 1. Componente Proatividade/Velocidade (Até 50 pts)
-                            score_vel = 50 if tempo_colab <= media_setor_exp else 30
-                            
-                            # 2. Componente de Carga Crítica (Até 30 pts)
-                            urg_colab = len(df_colab[df_colab['urgente'] == 1])
-                            score_urg = min((urg_colab / vol_total) * 100, 30)
-                            
-                            # 3. Penalidade de Qualidade em Tempo Real (Quarentena)
-                            erros_ativos = len(df_dados[(df_dados['expedicao'] == colab) & (df_dados['precisa_correcao'] == 1) & (df_dados['despachado'] == 0)])
-                            penalidade = erros_ativos * 15
-                            
-                            # Equação Final unificada
-                            nota = 20 + score_vel + score_urg - penalidade
-                            nota = max(0, min(100, round(nota, 1)))
-                            
-                            scores_list.append({'Colaborador': colab, 'Score Performance': nota, 'Erros em Aberto': erros_ativos})
-                    
-                    if scores_list:
-                        df_scores = pd.DataFrame(scores_list).sort_values(by='Score Performance', ascending=False)
-                        fig_score = px.bar(df_scores, x='Score Performance', y='Colaborador', orientation='h',
-                                           text='Score Performance', color='Score Performance', color_continuous_scale='RdYlGn')
-                        fig_score.update_layout(yaxis={'categoryorder':'total ascending'}, plot_bgcolor="rgba(0,0,0,0)")
-                        st.plotly_chart(fig_score, use_container_width=True)
-                        st.dataframe(df_scores.style.background_gradient(cmap='RdYlGn', subset=['Score Performance']), hide_index=True, use_container_width=True)
-                else:
-                    st.info("Dados de cadência insuficientes para calcular o Score de Elite neste momento.")
+                    df_tempo_real['min_exp'] = (df_tempo_real['data_expedido_dt'] - df_tempo_real['data_entrada_dt']).dt.total_seconds() / 60
+                    df_tempo_real['min_rev'] = (df_tempo_real['data_revisado_dt'] - df_tempo_real['data_expedido_dt']).dt.total_seconds() / 60
+                    df_tempo_real['min_total'] = (df_tempo_real['data_conclusao_dt'] - df_tempo_real['data_entrada_dt']).dt.total_seconds() / 60
 
-        else:
-            # ---------------------------------------------------------
-            # PERFIL OPERACIONAL INDIVIDUAL (MANTIDO INTEGRALMENTE)
-            # ---------------------------------------------------------
-            st.subheader(f"🔎 Perfil Operacional: {visao_selecionada}")
-            try: ausentes = obter_colaboradores_ausentes_hoje()
-            except: ausentes = []
-            
-            if visao_selecionada in ausentes: 
-                st.warning(f"📌 **Status:** Afastamento Legítimo Ativo.", icon="🌴")
-            else: 
-                st.info(f"📌 **Status no Dia de Hoje:** Ativo e Operacional.", icon="✅")
-                
-            df_user_exp = df_concluidos[df_concluidos['expedicao'] == visao_selecionada]
-            df_user_rev = df_concluidos[df_concluidos['revisao'] == visao_selecionada]
-            df_user_total = df_concluidos[(df_concluidos['expedicao'] == visao_selecionada) | (df_concluidos['revisao'] == visao_selecionada)]
-            
-            st.markdown("#### 📦 Resumo de Participação Histórica")
-            col_u1, col_u2, col_u3, col_u4 = st.columns(4)
-            col_u1.metric("Participações Totais", len(df_user_total))
-            col_u2.metric("Como Expedidor", len(df_user_exp))
-            col_u3.metric("Como Revisor", len(df_user_rev))
-            col_u4.metric("🔥 Urgências Salvas", len(df_user_total[df_user_total['urgente'] == 1]))
-            st.markdown("<br>", unsafe_allow_html=True)
-            
-            st.markdown("#### ⏱️ Qualidade e Cadência")
-            df_user_tempo_exp = df_tempo_real[df_tempo_real['expedicao'] == visao_selecionada] if not df_tempo_real.empty else pd.DataFrame()
-            df_user_tempo_rev = df_tempo_real[df_tempo_real['revisao'] == visao_selecionada] if not df_tempo_real.empty else pd.DataFrame()
-            
-            cu1, cu2, cu3 = st.columns(3)
-            cu1.metric("Tempo Médio de Elaboração", format_tempo(df_user_tempo_exp['min_exp'].mean()) if not df_user_tempo_exp.empty else "N/A")
-            cu2.metric("Tempo Médio de Conferência", format_tempo(df_user_tempo_rev['min_rev'].mean()) if not df_user_tempo_rev.empty else "N/A")
-            
-            if not df_user_total.empty:
-                parceiros = []
-                parceiros.extend(df_user_exp['revisao'].tolist())
-                parceiros.extend(df_user_rev['expedicao'].tolist())
-                if parceiros:
-                    dupla = pd.Series(parceiros).mode()[0]
-                    cu3.metric("🤝 Parceiro Mais Frequente", dupla)
-                else: cu3.metric("🤝 Parceiro Operacional", "N/A")
-            else: 
-                cu3.metric("🤝 Parceiro Operacional", "N/A")
+                def format_tempo(minutos):
+                    if pd.isna(minutos) or minutos < 0: return "N/A"
+                    return f"{int(minutos)} min" if int(minutos) < 60 else f"{int(minutos) // 60}h {int(minutos) % 60}m"
+
+                st.markdown("### Selecione o Perfil de Análise")
+                visao_selecionada = st.selectbox("Escolha a Visão:", ["Todo o Setor (Global)"] + TODOS_NOMES, label_visibility="collapsed")
+                st.markdown("---")
+
+                if visao_selecionada == "Todo o Setor (Global)":
+                    st.subheader("🌐 Visão Macro (Histórico Completo)")
+                    
+                    # --- CARD ROW 1: PROCESSOS GERAIS ---
+                    col1, col2, col3, col4 = st.columns(4)
+                    total_despachados = len(df_concluidos)
+                    total_sessoes = df_concluidos['nome_sessao'].nunique()
+                    media_proc_sessao = round(total_despachados / total_sessoes) if total_sessoes > 0 else 0
+                    total_urgentes = len(df_concluidos[df_concluidos['urgente'] == 1])
+                    col1.metric("📦 Total Despachados", total_despachados)
+                    col2.metric("🏛️ Sessões Realizadas", total_sessoes)
+                    col3.metric("⚖️ Média Proc./Sessão", media_proc_sessao)
+                    col4.metric("🔥 Urgências Atendidas", total_urgentes)
+                    
+                    # --- CARD ROW 2: INTELIGÊNCIA DE OFÍCIOS ---
+                    try:
+                        df_oficios_analytics = pd.DataFrame(conn.client.table("oficios").select("*").execute().data)
+                    except:
+                        df_oficios_analytics = pd.DataFrame()
+
+                    if not df_oficios_analytics.empty:
+                        df_ofic_despachados = df_oficios_analytics[df_oficios_analytics['oficio_despachado'] == 1]
+                        total_oficios = len(df_ofic_despachados)
+                        proc_com_oficios = df_ofic_despachados['numero_processo'].nunique()
+                        media_ofic_proc = round(total_oficios / proc_com_oficios, 1) if proc_com_oficios > 0 else 0
+                        ofic_jur = len(df_ofic_despachados[df_ofic_despachados['categoria'] == 'Jurisdicionado'])
+                        
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        col_of1, col_of2, col_of3, col_of4 = st.columns(4)
+                        col_of1.metric("✉️ Ofícios Expedidos", total_oficios)
+                        col_of2.metric("📊 Média Ofícios/Processo", media_ofic_proc)
+                        col_of3.metric("🏛️ Ofic. Jurisdicionados", ofic_jur)
+                        col_of4.metric("🏢 Ofic. Não Jurisdic.", total_oficios - ofic_jur)
+                    
+                    # --- MONITORAMENTO EM TEMPO REAL E RETRABALHO ---
+                    st.markdown("---")
+                    col_ret1, col_ret2 = st.columns([1, 1])
+                    
+                    with col_ret1:
+                        st.markdown("#### 🚨 Retrabalho (Quarentena Ativa)")
+                        if 'precisa_correcao' in df_dados.columns:
+                            df_erros_ativos = df_dados[(df_dados['precisa_correcao'] == 1) & (df_dados['despachado'] == 0)]
+                            total_erros_ativos = len(df_erros_ativos)
+                            if total_erros_ativos > 0:
+                                st.error(f"⚠️ Existem {total_erros_ativos} processo(s) na quarentena.")
+                                erros_por_user = df_erros_ativos['expedicao'].value_counts().reset_index()
+                                erros_por_user.columns = ['Expedidor', 'Pendências']
+                                st.dataframe(erros_por_user, hide_index=True, use_container_width=True)
+                            else:
+                                st.success("🎉 Zero processos na quarentena! Trabalho com 100% de precisão.")
+                    
+                    with col_ret2:
+                        st.markdown("#### 📡 Radar Ativo (Mesa Agora)")
+                        sessoes_stats = df_dados.groupby('nome_sessao')['despachado'].agg(['count', 'sum']).reset_index()
+                        ativas_list = sessoes_stats[sessoes_stats['count'] > sessoes_stats['sum']]['nome_sessao'].tolist()
+                        df_ativos_reais = df_dados[df_dados['nome_sessao'].isin(ativas_list) & (df_dados['despachado'] == 0)].copy()
+                        
+                        if not df_ativos_reais.empty:
+                            urg_pendentes = len(df_ativos_reais[df_ativos_reais['urgente'] == 1])
+                            st.warning(f"📋 Pauta Ativa com {len(df_ativos_reais)} processos em andamento.")
+                            st.markdown(f"**⏳ Aguardando Elaboração:** {len(df_ativos_reais[df_ativos_reais['expedido_ok'] == 0])}")
+                            st.markdown(f"**🔍 Aguardando Conferência:** {len(df_ativos_reais[(df_ativos_reais['expedido_ok'] == 1) & (df_ativos_reais['revisado_ok'] == 0)])}")
+                            st.markdown(f"**🚨 Urgentes pendentes:** {urg_pendentes}")
+                        else:
+                            st.success("✨ Pauta limpa! Sem pendências urgentes ou ordinárias no radar.")
+
+                    # =========================================================
+                    # 🧠 ABAS INTERATIVAS DE INVESTIGAÇÃO DE DADOS (BI GLOBAL)
+                    # =========================================================
+                    st.markdown("---")
+                    st.markdown("### 📊 Central de Análise de Comportamento e Desempenho")
+                    
+                    tab_sinergia, tab_cadencia, tab_urgencias, tab_score = st.tabs([
+                        "🤝 Participação e Sinergia", 
+                        "⏱️ Gargalos e Cadência", 
+                        "🔥 Índice de Urgências", 
+                        "⭐ Score de Elite"
+                    ])
+                    
+                    with tab_sinergia:
+                        st.markdown("#### 🤝 Volume de Participação Operacional e Matriz de Sinergia")
+                        col_g1, col_g2 = st.columns(2)
+                        with col_g1:
+                            st.markdown("##### 📦 Distribuição de Expedição") 
+                            exp_counts = df_concluidos['expedicao'].value_counts().reset_index()
+                            exp_counts.columns = ['Colaborador', 'Processos']
+                            if not exp_counts.empty:
+                                fig_exp = px.pie(exp_counts, values='Processos', names='Colaborador', hole=0.4)
+                                fig_exp.update_traces(textposition='inside', textinfo='percent+value')
+                                st.plotly_chart(fig_exp, use_container_width=True)
+                        with col_g2:
+                            st.markdown("##### 🔍 Distribuição de Revisão") 
+                            rev_counts = df_concluidos['revisao'].value_counts().reset_index()
+                            rev_counts.columns = ['Colaborador', 'Processos']
+                            if not rev_counts.empty:
+                                fig_rev = px.pie(rev_counts, values='Processos', names='Colaborador', hole=0.4)
+                                fig_rev.update_traces(textposition='inside', textinfo='percent+value')
+                                st.plotly_chart(fig_rev, use_container_width=True)
+                        
+                        st.markdown("##### 📊 Matriz de Colaboração (Raio-X de Soft Skills)")
+                        matriz = df_concluidos.groupby(['expedicao', 'revisao']).size().reset_index(name='Despachos Juntos')
+                        if not matriz.empty:
+                            fig_matriz = px.density_heatmap(matriz, x='revisao', y='expedicao', z='Despachos Juntos', text_auto=True, color_continuous_scale='Viridis')
+                            fig_matriz.update_layout(xaxis_title="Quem Revisou", yaxis_title="Quem Expediu")
+                            st.plotly_chart(fig_matriz, use_container_width=True)
+
+                    with tab_cadencia:
+                        st.markdown("#### ⏱️ Análise de Gargalos Operacionais e Tempos Médios")
+                        c_t1, c_t2, c_t3 = st.columns(3)
+                        c_t1.metric("Média de Elaboração", format_tempo(df_tempo_real['min_exp'].mean()) if not df_tempo_real.empty else "N/A")
+                        c_t2.metric("Média de Conferência", format_tempo(df_tempo_real['min_rev'].mean()) if not df_tempo_real.empty else "N/A")
+                        c_t3.metric("Tempo de Ciclo Total", format_tempo(df_tempo_real['min_total'].mean()) if not df_tempo_real.empty else "N/A")
+                        
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        col_grg1, col_grg2 = st.columns(2)
+                        with col_grg1:
+                            st.markdown("**Tempo Médio na Elaboração por Usuário (Minutos)**")
+                            t_exp = df_tempo_real[df_tempo_real['min_exp'] >= 0].groupby('expedicao')['min_exp'].mean().reset_index()
+                            t_exp.columns = ['Colaborador', 'Média (Min)']
+                            if not t_exp.empty:
+                                st.plotly_chart(px.bar(t_exp, x='Colaborador', y='Média (Min)', color='Média (Min)', color_continuous_scale='Reds'), use_container_width=True)
+                        with col_grg2:
+                            st.markdown("**Tempo Médio na Revisão por Usuário (Minutos)**")
+                            t_rev = df_tempo_real[df_tempo_real['min_rev'] >= 0].groupby('revisao')['min_rev'].mean().reset_index()
+                            t_rev.columns = ['Colaborador', 'Média (Min)']
+                            if not t_rev.empty:
+                                st.plotly_chart(px.bar(t_rev, x='Colaborador', y='Média (Min)', color='Média (Min)', color_continuous_scale='Blues'), use_container_width=True)
+
+                    with tab_urgencias:
+                        st.markdown("#### 🚨 Distribuição Crítica e Índice de Urgentes")
+                        urg_df = df_concluidos[df_concluidos['urgente'] == 1].groupby('expedicao').size().reset_index(name='Urgências Resolvidas')
+                        if not urg_df.empty:
+                            fig_urg = px.pie(urg_df, values='Urgências Resolvidas', names='expedicao', hole=0.4, color_discrete_sequence=px.colors.sequential.YlOrRd_r)
+                            fig_urg.update_traces(textposition='inside', textinfo='percent+label+value')
+                            st.plotly_chart(fig_urg, use_container_width=True)
+                        else:
+                            st.info("Nenhum processo urgente foi finalizado no período analisado.")
+
+                    with tab_score:
+                        st.markdown("#### ⭐ Score de Elite S.A.D.E. (Qualidade & Proatividade)")
+                        st.write("Métrica de desempenho unificada: Velocidade setorial + bônus por urgências solucionadas - penalidades por erros atuais na quarentena.")
+                        
+                        if not df_tempo_real.empty:
+                            media_setor_exp = df_tempo_real['min_exp'].mean()
+                            scores_list = []
+                            
+                            for colab in TODOS_NOMES:
+                                df_colab = df_concluidos[df_concluidos['expedicao'] == colab]
+                                vol_total = len(df_colab)
+                                
+                                if vol_total > 0:
+                                    df_colab_tempo = df_tempo_real[df_tempo_real['expedicao'] == colab]
+                                    tempo_colab = df_colab_tempo['min_exp'].mean() if not df_colab_tempo.empty else 9999
+                                    
+                                    # 1. Componente Proatividade/Velocidade (Até 50 pts)
+                                    score_vel = 50 if tempo_colab <= media_setor_exp else 30
+                                    
+                                    # 2. Componente de Carga Crítica (Até 30 pts)
+                                    urg_colab = len(df_colab[df_colab['urgente'] == 1])
+                                    score_urg = min((urg_colab / vol_total) * 100, 30)
+                                    
+                                    # 3. Penalidade de Qualidade em Tempo Real (Quarentena)
+                                    erros_ativos = len(df_dados[(df_dados['expedicao'] == colab) & (df_dados['precisa_correcao'] == 1) & (df_dados['despachado'] == 0)])
+                                    penalidade = erros_ativos * 15
+                                    
+                                    # Equação Final unificada
+                                    nota = 20 + score_vel + score_urg - penalidade
+                                    nota = max(0, min(100, round(nota, 1)))
+                                    
+                                    scores_list.append({'Colaborador': colab, 'Score Performance': nota, 'Erros em Aberto': erros_ativos})
+                            
+                            if scores_list:
+                                df_scores = pd.DataFrame(scores_list).sort_values(by='Score Performance', ascending=False)
+                                fig_score = px.bar(df_scores, x='Score Performance', y='Colaborador', orientation='h',
+                                                   text='Score Performance', color='Score Performance', color_continuous_scale='RdYlGn')
+                                fig_score.update_layout(yaxis={'categoryorder':'total ascending'}, plot_bgcolor="rgba(0,0,0,0)")
+                                st.plotly_chart(fig_score, use_container_width=True)
+                                st.dataframe(df_scores.style.background_gradient(cmap='RdYlGn', subset=['Score Performance']), hide_index=True, use_container_width=True)
+                        else:
+                            st.info("Dados de cadência insuficientes para calcular o Score de Elite neste momento.")
+
+                else:
+                    # ---------------------------------------------------------
+                    # PERFIL OPERACIONAL INDIVIDUAL (MANTIDO INTEGRALMENTE)
+                    # ---------------------------------------------------------
+                    st.subheader(f"🔎 Perfil Operacional: {visao_selecionada}")
+                    try: ausentes = obter_colaboradores_ausentes_hoje()
+                    except: ausentes = []
+                    
+                    if visao_selecionada in ausentes: 
+                        st.warning(f"📌 **Status:** Afastamento Legítimo Ativo.", icon="🌴")
+                    else: 
+                        st.info(f"📌 **Status no Dia de Hoje:** Ativo e Operacional.", icon="✅")
+                        
+                    df_user_exp = df_concluidos[df_concluidos['expedicao'] == visao_selecionada]
+                    df_user_rev = df_concluidos[df_concluidos['revisao'] == visao_selecionada]
+                    df_user_total = df_concluidos[(df_concluidos['expedicao'] == visao_selecionada) | (df_concluidos['revisao'] == visao_selecionada)]
+                    
+                    st.markdown("#### 📦 Resumo de Participação Histórica")
+                    col_u1, col_u2, col_u3, col_u4 = st.columns(4)
+                    col_u1.metric("Participações Totais", len(df_user_total))
+                    col_u2.metric("Como Expedidor", len(df_user_exp))
+                    col_u3.metric("Como Revisor", len(df_user_rev))
+                    col_u4.metric("🔥 Urgências Salvas", len(df_user_total[df_user_total['urgente'] == 1]))
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    
+                    st.markdown("#### ⏱️ Qualidade e Cadência")
+                    df_user_tempo_exp = df_tempo_real[df_tempo_real['expedicao'] == visao_selecionada] if not df_tempo_real.empty else pd.DataFrame()
+                    df_user_tempo_rev = df_tempo_real[df_tempo_real['revisao'] == visao_selecionada] if not df_tempo_real.empty else pd.DataFrame()
+                    
+                    cu1, cu2, cu3 = st.columns(3)
+                    cu1.metric("Tempo Médio de Elaboração", format_tempo(df_user_tempo_exp['min_exp'].mean()) if not df_user_tempo_exp.empty else "N/A")
+                    cu2.metric("Tempo Médio de Conferência", format_tempo(df_user_tempo_rev['min_rev'].mean()) if not df_user_tempo_rev.empty else "N/A")
+                    
+                    if not df_user_total.empty:
+                        parceiros = []
+                        parceiros.extend(df_user_exp['revisao'].tolist())
+                        parceiros.extend(df_user_rev['expedicao'].tolist())
+                        if parceiros:
+                            dupla = pd.Series(parceiros).mode()[0]
+                            cu3.metric("🤝 Parceiro Mais Frequente", dupla)
+                        else: cu3.metric("🤝 Parceiro Operacional", "N/A")
+                    else: 
+                        cu3.metric("🤝 Parceiro Operacional", "N/A")
 
         with sub_ferias:
             st.header("🌴 Painel de Férias e Afastamentos Operacionais")
