@@ -1102,37 +1102,67 @@ with aba_oficios:
             except: pass
 
 # ------------------------------------------
-# ABA 2.7: RELATÓRIO DE EXPEDIÇÃO INDIVIDUAL
+# ABA 2.7: RELATÓRIO DE EXPEDIÇÃO INDIVIDUAL (CORRIGIDO)
 # ------------------------------------------
-with aba_oficios_relatorio: # Lembre-se de adicionar 'aba_oficios_relatorio' na sua lista de st.tabs lá em cima
+with aba_oficios_relatorio:
     st.header("📄 Relatório de Expedição Individual")
     
     col_r1, col_r2 = st.columns([1, 2])
     with col_r1:
         colab_rel = st.selectbox("Selecione o Colaborador:", TODOS_NOMES, key="rel_colab")
-        if st.button("📋 Gerar Relatório de Produção"):
-            # Busca todos os ofícios expedidos pelo colaborador
-            df_prod = pd.DataFrame(conn.client.table("oficios").select("*").eq("quem_expediu", colab_rel).eq("oficio_despachado", 1).execute().data)
+        
+    if colab_rel:
+        # 1. Busca estritamente os processos ATIVOS (despachado=0) onde o usuário é o EXPEDIDOR
+        try:
+            dados_processos = conn.client.table("processos").select("numero_processo, precisa_correcao").eq("expedicao", colab_rel).eq("despachado", 0).execute().data
+            df_proc_ativos = pd.DataFrame(dados_processos)
+        except:
+            df_proc_ativos = pd.DataFrame()
             
-            if not df_prod.empty:
-                st.subheader(f"Produção de: {colab_rel}")
+        if not df_proc_ativos.empty:
+            lista_processos = df_proc_ativos['numero_processo'].unique().tolist()
+            
+            # 2. Busca os ofícios/memorandos que pertencem a ESSES processos ativos
+            try:
+                dados_oficios = conn.client.table("oficios").select("*").in_("numero_processo", lista_processos).execute().data
+                df_oficios_ativos = pd.DataFrame(dados_oficios)
+            except:
+                df_oficios_ativos = pd.DataFrame()
+            
+            st.subheader(f"📋 Checklist de Trabalho: {colab_rel}")
+            st.write("Abaixo estão seus processos ativos como Expedidor. Use para conferir e passar a limpo no Tribunal:")
+            
+            # Varre a lista de processos do colaborador
+            for proc in lista_processos:
+                # Descobre o status do processo (para ver se é isento)
+                status_proc = df_proc_ativos[df_proc_ativos['numero_processo'] == proc]['precisa_correcao'].values[0]
                 
-                # Agrupa por processo
-                for proc in df_prod['numero_processo'].unique():
-                    with st.expander(f"Processo: {proc}"):
-                        oficios_proc = df_prod[df_prod['numero_processo'] == proc]
+                with st.expander(f"📦 Processo: {proc}"):
+                    if status_proc == 2:
+                        st.success("🚫 Este processo foi marcado como ISENTO de ofícios/memorandos.")
+                    
+                    elif not df_oficios_ativos.empty and proc in df_oficios_ativos['numero_processo'].values:
+                        oficios_proc = df_oficios_ativos[df_oficios_ativos['numero_processo'] == proc]
                         
-                        # Exibe ofícios
-                        st.markdown("**✉️ Ofícios expedidos:**")
-                        for _, row in oficios_proc[oficios_proc['categoria'] != "Memorando (Envio Interno)"].iterrows():
-                            st.write(f"- {row['numero_oficio']} | Destino: {row['destinatario']} ({row['categoria']})")
+                        # Separa por categoria para organizar a mente do operador
+                        df_ofic = oficios_proc[oficios_proc['categoria'] != "Memorando (Envio Interno)"]
+                        df_memo = oficios_proc[oficios_proc['categoria'] == "Memorando (Envio Interno)"]
                         
-                        # Exibe memorandos
-                        st.markdown("**📝 Memorandos expedidos:**")
-                        for _, row in oficios_proc[oficios_proc['categoria'] == "Memorando (Envio Interno)"].iterrows():
-                            st.write(f"- {row['numero_oficio']} | Destino: {row['destinatario']}")
-            else:
-                st.info("Nenhum ofício/memorando registrado para este colaborador.")
+                        if not df_ofic.empty:
+                            st.markdown("**✉️ Ofícios Cadastrados:**")
+                            for _, row in df_ofic.iterrows():
+                                status_envio = "✅ Despachado no SADE" if row.get('oficio_despachado') == 1 else "⏳ Pendente de Envio"
+                                st.write(f"- Nº {row['numero_oficio']} | Destino: {row['destinatario']} ({row['categoria']}) -> *{status_envio}*")
+                        
+                        if not df_memo.empty:
+                            st.markdown("**📝 Memorandos Cadastrados:**")
+                            for _, row in df_memo.iterrows():
+                                status_envio = "✅ Despachado no SADE" if row.get('oficio_despachado') == 1 else "⏳ Pendente de Envio"
+                                st.write(f"- Nº {row['numero_oficio']} | Destino: {row['destinatario']} -> *{status_envio}*")
+                    else:
+                        st.info("⏳ Nenhum documento cadastrado para este processo ainda. Cadastre na Aba 2.5.")
+        else:
+            st.info(f"✨ Excelente! {colab_rel} não possui nenhum processo ativo como Expedidor no momento.")
 
 # ------------------------------------------
 # ABA 3: HISTÓRICO, EXCLUSÕES E AVISOS
