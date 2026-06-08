@@ -1467,6 +1467,56 @@ with aba_gestao:
                     col3.metric("⚖️ Média Proc./Sessão", media_proc_sessao)
                     col4.metric("🔥 Urgências Atendidas", total_urgentes)
                     st.markdown("<br>", unsafe_allow_html=True)
+                    # --- NOVO MÓDULO DE ANALYTICS: OFÍCIOS E ERROS ---
+                    st.markdown("---")
+                    st.markdown("### ✉️ Inteligência de Expedição (Ofícios e Correções)")
+                    
+                    try:
+                        df_oficios_analytics = pd.DataFrame(conn.client.table("oficios").select("*").execute().data)
+                    except:
+                        df_oficios_analytics = pd.DataFrame()
+
+                    if not df_oficios_analytics.empty:
+                        # Filtra apenas os que realmente foram despachados
+                        df_ofic_despachados = df_oficios_analytics[df_oficios_analytics['oficio_despachado'] == 1]
+                        total_oficios = len(df_ofic_despachados)
+                        proc_com_oficios = df_ofic_despachados['numero_processo'].nunique()
+                        media_ofic_proc = round(total_oficios / proc_com_oficios, 1) if proc_com_oficios > 0 else 0
+                        
+                        col_of1, col_of2, col_of3, col_of4 = st.columns(4)
+                        col_of1.metric("✉️ Ofícios Expedidos", total_oficios)
+                        col_of2.metric("📊 Média Ofícios/Processo", media_ofic_proc)
+                        
+                        ofic_jur = len(df_ofic_despachados[df_ofic_despachados['categoria'] == 'Jurisdicionado'])
+                        col_of3.metric("🏛️ Ofic. Jurisdicionados", ofic_jur)
+                        col_of4.metric("🏢 Ofic. Não Jurisdic.", total_oficios - ofic_jur)
+                        
+                        st.markdown("#### 🏆 Ranking de Emissão de Ofícios")
+                        ofic_counts = df_ofic_despachados['quem_expediu'].value_counts().reset_index()
+                        ofic_counts.columns = ['Colaborador', 'Ofícios Gerados']
+                        
+                        if not ofic_counts.empty:
+                            fig_ofic = px.bar(ofic_counts, x='Colaborador', y='Ofícios Gerados', text='Ofícios Gerados', color='Ofícios Gerados', color_continuous_scale='Blues')
+                            fig_ofic.update_traces(textposition='outside')
+                            fig_ofic.update_layout(margin=dict(l=0, r=0, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)")
+                            st.plotly_chart(fig_ofic, use_container_width=True)
+                    else:
+                        st.info("Nenhum dado de ofício registrado ainda para gerar estatísticas.")
+
+                    st.markdown("#### 🚨 Termômetro de Retrabalho (Quarentena Ativa)")
+                    if 'precisa_correcao' in df_dados.columns:
+                        df_erros_ativos = df_dados[df_dados['precisa_correcao'] == 1]
+                        total_erros_ativos = len(df_erros_ativos)
+                        
+                        if total_erros_ativos > 0:
+                            st.error(f"⚠️ Atualmente existem {total_erros_ativos} processo(s) travado(s) na quarentena aguardando correção.")
+                            erros_por_user = df_erros_ativos['expedicao'].value_counts().reset_index()
+                            erros_por_user.columns = ['Expedidor', 'Processos com Erro Ativos']
+                            st.dataframe(erros_por_user, hide_index=True)
+                        else:
+                            st.success("🎉 Zero processos na quarentena hoje! Equipe trabalhando com 100% de precisão.")
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    # -------------------------------------------------
                     st.markdown("### 🤝 Volume de Participação Operacional (Carga de Trabalho)")
                     col_g1, col_g2 = st.columns(2)
                     with col_g1:
