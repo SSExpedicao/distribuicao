@@ -512,6 +512,31 @@ with aba_inserir:
     st.header("Passo 1: Configurar a Sessão Atual")
     with st.container(border=True):
         tipo_sessao = st.selectbox("Destino (Tipo de Sessão)", ["Sessão Ordinária", "Sessão Ordinária Virtual", "Sessão Reservada", "Sessão Administrativa", "Urgente"])
+        
+        # --- INÍCIO DA CORREÇÃO DE AGRUPAMENTO DE SESSÕES ---
+        hoje = datetime.now().strftime("%d/%m/%Y")
+        sessoes_ativas = []
+        if not df_geral_status.empty:
+            # Puxa o nome de todas as sessões que estão em andamento no momento
+            sessoes_ativas = sorted(df_geral_status[df_geral_status['despachado'] == 0]['nome_sessao'].unique().tolist())
+            
+        modo_sessao = st.radio("Nome / Identificação da Sessão:", 
+                               ["Usar a data de hoje (Padrão)", 
+                                "Adicionar a uma Sessão Existente", 
+                                "Digitar nome manualmente"], horizontal=True)
+        
+        if modo_sessao == "Usar a data de hoje (Padrão)":
+            nome_sessao_atual = hoje
+        elif modo_sessao == "Adicionar a uma Sessão Existente":
+            if sessoes_ativas:
+                nome_sessao_atual = st.selectbox("Escolha a Sessão (Unifica os processos na mesma tabela):", sessoes_ativas)
+            else:
+                st.warning("Nenhuma sessão ativa encontrada. Usando a data de hoje.")
+                nome_sessao_atual = hoje
+        else:
+            nome_sessao_atual = st.text_input("Digite o nome exato (Ex: Sessão 125 - 10/06/2026):", value=hoje)
+        # --- FIM DA CORREÇÃO ---
+
         if tipo_sessao == "Urgente":
             st.info("🚨 **Modo Urgente:** Marca processos existentes como urgentes (funciona para todos os tipos).")
             expedidores_ativos, revisores_ativos = [], []
@@ -523,6 +548,7 @@ with aba_inserir:
 
     st.markdown("---")
     st.header("Passo 2: Inserir Processos")
+    # ... O resto do seu código de inserção continua igual a partir daqui ...
     modo_insercao = st.radio("Método de Inserção", ["Digitar um por vez (Manual)", "Importar Planilha (Em lote)"], horizontal=True)
 
     if modo_insercao == "Digitar um por vez (Manual)":
