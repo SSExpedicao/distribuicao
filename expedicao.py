@@ -1045,22 +1045,17 @@ with aba_gestao:
                                 p_val = str(row['Processo']).strip() if pd.notna(row.get('Processo')) else ""
                                 r_val = str(row.get('Relator', '')).strip() if pd.notna(row.get('Relator')) else ""
                                 p_limpo, r_limpo = higienizar_dados(p_val, r_val)
+                                exp_bruto = str(row.get('Expedidor', hist_exp)).strip() if pd.notna(row.get('Expedidor')) else hist_exp
+                                rev_bruto = str(row.get('Revisor', hist_rev)).strip() if pd.notna(row.get('Revisor')) else hist_rev
+                                exp_val = higienizar_colaborador(exp_bruto, TODOS_NOMES)
+                                rev_val = higienizar_colaborador(rev_bruto, TODOS_NOMES)
+                                data_val = str(row.get('Data_Sessao', hist_sessao)).strip() if pd.notna(row.get('Data_Sessao')) else hist_sessao
+                                tipo_val = str(row.get('Tipo_Sessao', hist_tipo)).strip() if pd.notna(row.get('Tipo_Sessao')) else hist_tipo
     
-    # 1. Pega o nome exatamente como veio da planilha (pode estar com erro)
-                               exp_bruto = str(row.get('Expedidor', hist_exp)).strip() if pd.notna(row.get('Expedidor')) else hist_exp
-                               rev_bruto = str(row.get('Revisor', hist_rev)).strip() if pd.notna(row.get('Revisor')) else hist_rev
-    
-    # 2. A MÁGICA ACONTECE AQUI: Passa no filtro para corrigir erros de digitação
-                               exp_val = higienizar_colaborador(exp_bruto, TODOS_NOMES)
-                               rev_val = higienizar_colaborador(rev_bruto, TODOS_NOMES)
-    
-                               data_val = str(row.get('Data_Sessao', hist_sessao)).strip() if pd.notna(row.get('Data_Sessao')) else hist_sessao
-                               tipo_val = str(row.get('Tipo_Sessao', hist_tipo)).strip() if pd.notna(row.get('Tipo_Sessao')) else hist_tipo
-    
-                               if " " in data_val and "-" in data_val:
-                                   try:
-                                       data_val = datetime.strptime(data_val.split()[0], "%Y-%m-%d").strftime("%d/%m/%Y")
-                                   except: pass
+                                if " " in data_val and "-" in data_val:
+                                    try:
+                                        data_val = datetime.strptime(data_val.split()[0], "%Y-%m-%d").strftime("%d/%m/%Y")
+                                    except: pass
 
                                 if p_limpo and not processo_existe(p_limpo):
                                     data_historico = f"{data_val} 23:59:59"
