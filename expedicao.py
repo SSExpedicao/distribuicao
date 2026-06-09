@@ -572,24 +572,43 @@ def adicionar_aviso(usuario_alvo, numero_processo, mensagem, duracao_horas=24):
     except Exception as e: return False, f"❌ Erro: {e}"
 
 def obter_avisos_pendentes():
+    # Pega a hora atual do servidor
     agora = datetime.now()
+    
     try:
-        # Puxa avisos ativos e ainda dentro do prazo
+        # Busca apenas os avisos ativos
         res = conn.client.table("avisos").select("*").eq("ativo", 1).execute().data
+        if not res: 
+            return pd.DataFrame()
+        
         avisos_validos = []
         for row in res:
-            expiracao = datetime.strptime(row['data_expiracao'], "%d/%m/%Y %H:%M:%S")
-            # Se ainda não expirou, mostra
-            if agora < expiracao:
-                # Se for individual, verifica se ainda está despachado ou não
+            try:
+                # Tenta converter a data salva no Supabase
+                expiracao = datetime.strptime(row['data_expiracao'], "%d/%m/%Y %H:%M:%S")
+                
+                # SE O AVISO JÁ EXPIROU, DESATIVA NO BANCO AUTOMATICAMENTE
+                if agora > expiracao:
+                    conn.client.table("avisos").update({"ativo": 0}).eq("id", row['id']).execute()
+                    continue
+                
+                # Se for aviso individual (tem processo), checa se o processo não foi despachado
                 if row['numero_processo']:
                     proc_check = conn.client.table("processos").select("despachado").eq("numero_processo", row['numero_processo']).execute().data
                     if proc_check and proc_check[0]['despachado'] == 0:
                         avisos_validos.append(row)
                 else:
+                    # Se for "Para todos", exibe
                     avisos_validos.append(row)
+                    
+            except Exception as e:
+                # Se der erro na data, não trava o sistema, apenas pula
+                continue
+                
         return pd.DataFrame(avisos_validos)
-    except: return pd.DataFrame()
+    except Exception as e:
+        st.sidebar.error(f"Erro ao carregar avisos: {e}")
+        return pd.DataFrame()
 
 def desativar_aviso(id_aviso):
     try: conn.client.table("avisos").update({"ativo": 0}).eq("id", int(id_aviso)).execute()
@@ -701,11 +720,22 @@ EQUIPE_EXPEDICAO, EQUIPE_REVISAO, TODOS_NOMES = carregar_equipes()
 
 st.title("⚖️ S.A.D.E. - Sistema de Automação de Distribuição e Expedição")
 
+# ==========================================
+# 3. LETREIRO DE AVISOS (GLOBAL)
+# ==========================================
 df_avisos = obter_avisos_pendentes()
+
+# DEBUG (Só aparece se houver avisos no banco mas não aparecerem no letreiro)
+# Descomente a linha abaixo para testar se o script está lendo o banco corretamente:
+# st.write(f"DEBUG: Avisos encontrados na memória: {len(df_avisos)}")
+
 if not df_avisos.empty:
     textos_aviso = []
     for _, row in df_avisos.iterrows():
-        textos_aviso.append(f"🚨 <b>{row['usuario']}</b>: Processo <b>{row['numero_processo']}</b> ({row['nome_sessao']}) ➔ {row['mensagem']}")
+        # Filtro: Mostra se for "Todos" ou se o expedidor for quem está logado
+        # Como o seu sistema não tem login obrigatório, vamos exibir para todos que virem o painel
+        textos_aviso.append(f"🚨 <b>{row['usuario']}</b>: Processo <b>{row['numero_processo'] if row['numero_processo'] else 'GERAL'}</b> ➔ {row['mensagem']}")
+        
     texto_marquee = " &nbsp;&nbsp;&nbsp;&nbsp; | &nbsp;&nbsp;&nbsp;&nbsp; ".join(textos_aviso)
     st.markdown(f"""
         <marquee behavior="scroll" direction="left" scrollamount="8" 
