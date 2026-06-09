@@ -1607,25 +1607,25 @@ with aba_gestao:
                 
                 if st.button("📢 Publicar no Letreiro", type="primary", use_container_width=True):
             # 1. Validação: Verifica se os campos obrigatórios estão preenchidos
-            if not msg:
-                st.warning("⚠️ Preencha a mensagem do aviso.")
-            elif tipo_aviso == "Para um Processo Específico" and not aviso_processo:
-                st.warning("⚠️ Preencha o número do processo.")
-            else:
+                    if not msg:
+                        st.warning("⚠️ Preencha a mensagem do aviso.")
+                    elif tipo_aviso == "Para um Processo Específico" and not aviso_processo:
+                        st.warning("⚠️ Preencha o número do processo.")
+                    else:
                 # 2. Se passou na validação, executa a lógica
-                proc_input = aviso_processo if tipo_aviso == "Para um Processo Específico" else None
-                avisado = "Todos" if tipo_aviso == "Para Todos" else "Individual"
+                        proc_input = aviso_processo if tipo_aviso == "Para um Processo Específico" else None
+                        avisado = "Todos" if tipo_aviso == "Para Todos" else "Individual"
                 
-                ok, msg_retorno = adicionar_aviso(avisado, proc_input, msg, duracao)
+                        ok, msg_retorno = adicionar_aviso(avisado, proc_input, msg, duracao)
                 
-                if ok:
-                    st.success(msg_retorno)
-                    time.sleep(1)
-                    st.rerun()
-                else: 
-                    st.error(msg_retorno)
+                    if ok:
+                        st.success(msg_retorno)
+                        time.sleep(1)
+                        st.rerun()
+                    else: 
+                        st.error(msg_retorno)
+                        
                 st.markdown("---")
-
                 st.subheader("📄 Relatório Gerencial Mensal/Anual")
                 col_m1, col_m2, col_m3 = st.columns([1, 1, 2])
                 meses_dict = {0: "🗓️ Anual", 1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril", 5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto", 9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"}
