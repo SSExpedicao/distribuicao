@@ -926,24 +926,37 @@ with aba_sessoes:
                         linha_antiga = df_exibicao.iloc[i].to_dict()
                         if linha_nova != linha_antiga:
                             
-                            # Trava de Ofícios antes do Despacho
+                            # =======================================================
+                            # A GRANDE TRAVA MESTRE ANTES DO DESPACHO FINAL
+                            # =======================================================
                             if linha_nova.get('Despachado') == True and linha_antiga.get('Despachado') == False:
-                                # Aqui lemos o tipo de sessão real do banco (ou da tela se for urgente)
+                                
+                                # TRAVA 1: O Revisor já deu o aval?
+                                if linha_nova.get('Status Revisão') != "✅ OK":
+                                    st.error(f"🚨 ERRO (Processo {linha_nova['Processo']}): Só é possível despachar após o Revisor dar o '✅ OK'!")
+                                    bloqueio_ativo = True
+                                    continue
+                                
+                                # TRAVA 2: Regra de Ofícios ou Isenção com Justificativa (Apenas Ordinárias)
                                 rito_avaliado = linha_nova.get('Rito Original', tipo_sessao_tb)
                                 if rito_avaliado in ["Sessão Ordinária", "Sessão Ordinária Virtual"]:
                                     isento = conn.client.table("processos").select("precisa_correcao").eq("numero_processo", linha_nova['Processo']).execute().data
+                                    
+                                    # Se "precisa_correcao" não for 2 (que é o nosso código para Isento)
                                     if not (isento and isento[0].get('precisa_correcao') == 2):
                                         if not tem_oficio_cadastrado(linha_nova['Processo']):
-                                            st.error(f"🚨 ERRO: Processo {linha_nova['Processo']} sem ofícios/memorandos. Cadastre na Aba 2.5 ou marque como ISENTO!")
+                                            st.error(f"🚨 ERRO (Processo {linha_nova['Processo']}): Faltam Ofícios. Cadastre-os ou isente com justificativa na Aba 2.5!")
                                             bloqueio_ativo = True
                                             continue
                                         if verificar_oficios_pendentes(linha_nova['Processo']):
-                                            st.error(f"🚨 ERRO: Processo {linha_nova['Processo']} tem ofícios/memorandos pendentes. Despache-os na Aba 2.5 primeiro!")
+                                            st.error(f"🚨 ERRO (Processo {linha_nova['Processo']}): Há ofícios pendentes. Conclua-os na Aba 2.5 primeiro!")
                                             bloqueio_ativo = True
                                             continue
+                            # =======================================================
                             
                             mudancas = {}
                             
+                            # Cérebro da Revisão Automática via Dropdown
                             if linha_nova['Status Revisão'] != linha_antiga['Status Revisão']:
                                 if linha_nova['Status Revisão'] == "❌ Corrigir":
                                     motivo = str(linha_nova.get('Motivo Devolução', '')).strip()
@@ -958,9 +971,10 @@ with aba_sessoes:
                                 elif linha_nova['Status Revisão'] == "✅ OK":
                                     mudancas['revisado_ok'] = 1
                                     mudancas['precisa_correcao'] = 0
-                                else:
+                                else: # Se voltar para Pendente
                                     mudancas['revisado_ok'] = 0
 
+                            # Demais mapeamentos simples
                             mapa_banco_simples = {'Expedição': 'expedicao', 'Revisor': 'revisao', 'Expedido': 'expedido_ok', 'Despachado': 'despachado', 'E-mail': 'enviado_email', 'Mensageria': 'enviado_mensageria', 'Recebido': 'recebido'}
                             for col_tela, col_banco in mapa_banco_simples.items():
                                 if col_tela in linha_nova and linha_nova[col_tela] != linha_antiga.get(col_tela):
@@ -976,7 +990,7 @@ with aba_sessoes:
                         time.sleep(1) 
                         st.rerun()
                     elif bloqueio_ativo:
-                        st.warning("⚠️ Algumas alterações foram canceladas. Verifique os erros apontados.")
+                        st.warning("⚠️ Algumas alterações foram canceladas pela Trava de Segurança. Verifique os erros apontados.")
                         
         # =======================================================
         # 2. TABELA DE QUARENTENA E DEVOLUÇÃO
