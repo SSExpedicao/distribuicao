@@ -1606,14 +1606,24 @@ with aba_gestao:
                         msg = st.text_input("Mensagem para o expedidor:", placeholder="Ex: Favor verificar ofício pendente...")
                 
                 if st.button("📢 Publicar no Letreiro", type="primary", use_container_width=True):
-                    proc_input = aviso_processo if tipo_aviso == "Para um Processo Específico" else None
-                    ok, msg_retorno = adicionar_aviso(avisado, proc_input, msg, duracao)
-                    if ok:
-                        st.success(msg_retorno)
-                        time.sleep(1)
-                        st.rerun()
-                    else: st.error(msg_retorno)
-                    else: st.warning("⚠️ Preencha o número do processo e a mensagem.")
+            # 1. Validação: Verifica se os campos obrigatórios estão preenchidos
+            if not msg:
+                st.warning("⚠️ Preencha a mensagem do aviso.")
+            elif tipo_aviso == "Para um Processo Específico" and not aviso_processo:
+                st.warning("⚠️ Preencha o número do processo.")
+            else:
+                # 2. Se passou na validação, executa a lógica
+                proc_input = aviso_processo if tipo_aviso == "Para um Processo Específico" else None
+                avisado = "Todos" if tipo_aviso == "Para Todos" else "Individual"
+                
+                ok, msg_retorno = adicionar_aviso(avisado, proc_input, msg, duracao)
+                
+                if ok:
+                    st.success(msg_retorno)
+                    time.sleep(1)
+                    st.rerun()
+                else: 
+                    st.error(msg_retorno)
                 st.markdown("---")
 
                 st.subheader("📄 Relatório Gerencial Mensal/Anual")
