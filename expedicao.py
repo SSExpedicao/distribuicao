@@ -574,12 +574,13 @@ def adicionar_aviso(usuario_alvo, numero_processo, mensagem, duracao_horas=24):
 def obter_avisos_pendentes():
     agora = datetime.now()
     try:
+        # Busca avisos ativos
         res = conn.client.table("avisos").select("*").eq("ativo", 1).execute().data
         if not res: return pd.DataFrame()
         
         avisos_validos = []
         for row in res:
-            # 1. Verifica Expiração
+            # 1. Validação de Data (Protegida)
             data_exp = row.get('data_expiracao')
             valido = True
             if data_exp:
@@ -587,31 +588,25 @@ def obter_avisos_pendentes():
                     expiracao = datetime.strptime(data_exp, "%d/%m/%Y %H:%M:%S")
                     if agora > expiracao: valido = False
                 except: pass
-            
             if not valido: continue
 
-            # 2. Verifica se é aviso de processo
+            # 2. Validação de Processo (Ajustada para pegar qualquer registro aberto)
             proc_alvo = row.get('numero_processo')
-            
             if proc_alvo and proc_alvo.strip() != "":
-                # Tenta buscar o processo (removendo espaços extras para garantir)
                 proc_limpo = proc_alvo.strip()
-                proc_check = conn.client.table("processos").select("despachado").eq("numero_processo", proc_limpo).execute().data
+                # Busca todos os registros deste processo
+                todos_regs = conn.client.table("processos").select("despachado").eq("numero_processo", proc_limpo).execute().data
                 
-                # Se encontrou o processo E ele não está despachado, mostra
-                if proc_check:
-                    if proc_check[0].get('despachado', 0) == 0:
-                        avisos_validos.append(row)
-                    else:
-                        # Processo já despachado, desativa o aviso
-                        conn.client.table("avisos").update({"ativo": 0}).eq("id", row['id']).execute()
+                # Verifica se EXISTE ALGUM que ainda não foi despachado
+                processo_aberto = any(p.get('despachado', 1) == 0 for p in todos_regs)
+                
+                if processo_aberto:
+                    avisos_validos.append(row)
                 else:
-                    # PROCESSO NÃO ENCONTRADO NO BANCO:
-                    # Se você quer ver o erro, descomente a linha abaixo (só por um momento):
-                    # st.warning(f"Aviso do processo {proc_limpo} ignorado: Processo não encontrado na base atual.")
-                    pass
+                    # Desativa aviso porque o processo foi concluído em todas as sessões
+                    conn.client.table("avisos").update({"ativo": 0}).eq("id", row['id']).execute()
             else:
-                # É aviso "Para Todos", exibe direto
+                # Aviso Geral
                 avisos_validos.append(row)
         
         return pd.DataFrame(avisos_validos)
