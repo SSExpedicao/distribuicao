@@ -108,22 +108,6 @@ def carregar_equipes():
         st.error(f"Erro ao tentar ler a equipe no Supabase: {e}")
         return [], [], []
 
-def adicionar_membro_equipe(nome):
-    try:
-        conn.client.table("equipe").insert({"nome": nome}).execute()
-        return True, "✅ Colaborador adicionado com sucesso!"
-    except Exception as e:
-        return False, f"❌ Erro ao adicionar: {e}"
-        
-def gerenciar_usuario(acao, nome_atual, novo_nome=None, expedicao=0, revisao=0):
-    try:
-        if acao == 'adicionar': conn.client.table("equipe").insert({"nome": nome_atual, "expedicao": expedicao, "revisao": revisao}).execute()
-        elif acao == 'remover': conn.client.table("equipe").delete().eq("nome", nome_atual).execute()
-        elif acao == 'substituir': conn.client.table("equipe").update({"nome": novo_nome, "expedicao": expedicao, "revisao": revisao}).eq("nome", nome_atual).execute()
-        elif acao == 'editar': conn.client.table("equipe").update({"expedicao": expedicao, "revisao": revisao}).eq("nome", nome_atual).execute()
-        return True, "✅ Operação realizada com sucesso!"
-    except Exception as e: return False, f"❌ Erro no banco de dados: {e}"
-
 def renomear_sessao(nome_antigo, novo_nome, tipo_sessao_alvo):
     try:
         conn.client.table("processos").update({"nome_sessao": novo_nome}).eq("nome_sessao", nome_antigo).eq("tipo_sessao", tipo_sessao_alvo).execute()
