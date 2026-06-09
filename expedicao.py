@@ -823,29 +823,58 @@ with aba_sessoes:
     def exibir_tabela_interativa(df_filtrado, key_prefix, data_sessao, tipo_sessao_tb):
         titulo_placeholder = st.empty()
         
+        # Garante que as colunas de quarentena existam para não dar erro
         if 'precisa_correcao' not in df_filtrado.columns: df_filtrado['precisa_correcao'] = 0
         if 'motivo_correcao' not in df_filtrado.columns: df_filtrado['motivo_correcao'] = ""
         
+        # DIVISÃO DA TELA: Normais vs Quarentena
         df_normais = df_filtrado[df_filtrado['precisa_correcao'] == 0].copy()
         df_quarentena = df_filtrado[df_filtrado['precisa_correcao'] == 1].copy()
 
+        # =======================================================
+        # 1. TABELA PRINCIPAL (MESA DE TRABALHO)
+        # =======================================================
         if not df_normais.empty:
             cols_base = ['id', 'urgente', 'numero_processo', 'relator', 'expedicao', 'expedido_ok', 'revisao', 'revisado_ok']
             if tipo_sessao_tb == "Sessão Reservada": cols_base.extend(['enviado_email', 'enviado_mensageria', 'recebido'])
             cols_base.append('despachado')
 
             df_exibicao = df_normais[cols_base].copy()
-            bool_cols = ['expedido_ok', 'revisado_ok', 'despachado']
-            if tipo_sessao_tb == "Sessão Reservada": bool_cols.extend(['enviado_email', 'enviado_mensageria', 'recebido'])
-            df_exibicao[bool_cols] = df_exibicao[bool_cols].astype(bool)
+            
+            # TRADUÇÃO DO BANCO PARA A INTERFACE
+            df_exibicao['expedido_ok'] = df_exibicao['expedido_ok'].astype(bool)
+            df_exibicao['despachado'] = df_exibicao['despachado'].astype(bool)
+            
+            # Nova Lógica do Dropdown de Revisão
+            def traduzir_revisao(val):
+                return "✅ OK" if val in [1, 1.0, True, '1'] else "⏳ Pendente"
+            df_exibicao['Status Revisão'] = df_exibicao['revisado_ok'].apply(traduzir_revisao)
+            df_exibicao['Motivo Devolução'] = "" # Espaço em branco para digitar o erro
+            
+            # Removemos a antiga coluna de checkbox
+            cols_drop = ['revisado_ok']
+            
+            if tipo_sessao_tb == "Sessão Reservada": 
+                bool_cols = ['enviado_email', 'enviado_mensageria', 'recebido']
+                df_exibicao[bool_cols] = df_exibicao[bool_cols].astype(bool)
 
-            rename_dict = {'numero_processo': 'Processo', 'urgente': 'urgente_flag', 'relator': 'Relator', 'expedicao': 'Expedição', 'expedido_ok': 'Expedido', 'revisao': 'Revisão', 'revisado_ok': 'Revisado', 'despachado': 'Despachado'}
+            rename_dict = {'numero_processo': 'Processo', 'urgente': 'urgente_flag', 'relator': 'Relator', 'expedicao': 'Expedição', 'expedido_ok': 'Expedido', 'revisao': 'Revisor', 'despachado': 'Despachado'}
             if tipo_sessao_tb == "Sessão Reservada": rename_dict.update({'enviado_email': 'E-mail', 'enviado_mensageria': 'Mensageria', 'recebido': 'Recebido'})
 
-            df_exibicao = df_exibicao.rename(columns=rename_dict)
+            df_exibicao = df_exibicao.rename(columns=rename_dict).drop(columns=cols_drop)
             styled_df = df_exibicao.style.apply(color_urgentes, axis=1)
 
-            cfg_colunas = {"id": None, "urgente_flag": None, "Processo": st.column_config.TextColumn(disabled=True), "Relator": st.column_config.TextColumn(disabled=True), "Expedição": st.column_config.SelectboxColumn("Expedição", options=TODOS_NOMES, required=True), "Revisão": st.column_config.SelectboxColumn("Revisão", options=TODOS_NOMES, required=True)}
+            cfg_colunas = {
+                "id": None, 
+                "urgente_flag": None, 
+                "Processo": st.column_config.TextColumn(disabled=True), 
+                "Relator": st.column_config.TextColumn(disabled=True), 
+                "Expedição": st.column_config.SelectboxColumn("Expedição", options=TODOS_NOMES, required=True), 
+                "Revisor": st.column_config.SelectboxColumn("Revisor", options=TODOS_NOMES, required=True),
+                # A NOVA CONFIGURAÇÃO DE DROPDOWN E JUSTIFICATIVA:
+                "Status Revisão": st.column_config.SelectboxColumn("Ação do Revisor", options=["⏳ Pendente", "✅ OK", "❌ Corrigir"], required=True),
+                "Motivo Devolução": st.column_config.TextColumn("Motivo (Só se Corrigir)")
+            }
             if tipo_sessao_tb == "Sessão Reservada": cfg_colunas.update({"E-mail": st.column_config.CheckboxColumn("E-mail"), "Mensageria": st.column_config.CheckboxColumn("Mensageria"), "Recebido": st.column_config.CheckboxColumn("Recebido")})
 
             pendentes = len(df_exibicao[df_exibicao['Despachado'] == False])
@@ -859,13 +888,13 @@ with aba_sessoes:
                 if submit_button:
                     alteracoes_feitas = 0
                     bloqueio_ativo = False
-                    mapa_banco = {'Expedição': 'expedicao', 'Revisão': 'revisao', 'Expedido': 'expedido_ok', 'Revisado': 'revisado_ok', 'Despachado': 'despachado', 'E-mail': 'enviado_email', 'Mensageria': 'enviado_mensageria', 'Recebido': 'recebido'}
                     
                     for i in range(len(edited_df)):
                         linha_nova = edited_df.iloc[i].to_dict()
                         linha_antiga = df_exibicao.iloc[i].to_dict()
                         if linha_nova != linha_antiga:
                             
+                            # Trava de Ofícios antes do Despacho
                             if linha_nova.get('Despachado') == True and linha_antiga.get('Despachado') == False:
                                 if tipo_sessao_tb in ["Sessão Ordinária", "Sessão Ordinária Virtual"]:
                                     isento = conn.client.table("processos").select("precisa_correcao").eq("numero_processo", linha_nova['Processo']).execute().data
@@ -880,11 +909,34 @@ with aba_sessoes:
                                             continue
                             
                             mudancas = {}
-                            for col_tela, col_banco in mapa_banco.items():
+                            
+                            # --- O CÉREBRO DA NOVA REVISÃO AUTOMÁTICA ---
+                            if linha_nova['Status Revisão'] != linha_antiga['Status Revisão']:
+                                if linha_nova['Status Revisão'] == "❌ Corrigir":
+                                    motivo = str(linha_nova.get('Motivo Devolução', '')).strip()
+                                    if not motivo:
+                                        st.error(f"🚨 Processo {linha_nova['Processo']}: Você marcou para corrigir, mas esqueceu de digitar o 'Motivo'!")
+                                        bloqueio_ativo = True
+                                        continue
+                                    else:
+                                        # Joga para a quarentena
+                                        mudancas['precisa_correcao'] = 1
+                                        mudancas['motivo_correcao'] = motivo
+                                        mudancas['revisado_ok'] = 0
+                                elif linha_nova['Status Revisão'] == "✅ OK":
+                                    # Limpa a quarentena caso estivesse e marca como revisado
+                                    mudancas['revisado_ok'] = 1
+                                    mudancas['precisa_correcao'] = 0
+                                else: # Se ele voltar a ação para "Pendente"
+                                    mudancas['revisado_ok'] = 0
+
+                            # Mapeamentos normais (Expedidor, Email, Despacho)
+                            mapa_banco_simples = {'Expedição': 'expedicao', 'Revisor': 'revisao', 'Expedido': 'expedido_ok', 'Despachado': 'despachado', 'E-mail': 'enviado_email', 'Mensageria': 'enviado_mensageria', 'Recebido': 'recebido'}
+                            for col_tela, col_banco in mapa_banco_simples.items():
                                 if col_tela in linha_nova and linha_nova[col_tela] != linha_antiga.get(col_tela):
                                     val = linha_nova[col_tela]
-                                    if col_tela in ['Expedido', 'Revisado', 'Despachado', 'E-mail', 'Mensageria', 'Recebido']: mudancas[col_banco] = 1 if val else 0
-                                    else: mudancas[col_banco] = val
+                                    mudancas[col_banco] = 1 if val else 0 if isinstance(val, bool) else val
+
                             if mudancas:
                                 atualizar_processo(int(linha_nova['id']), mudancas)
                                 alteracoes_feitas += 1
@@ -894,28 +946,56 @@ with aba_sessoes:
                         time.sleep(1) 
                         st.rerun()
                     elif bloqueio_ativo:
-                        st.warning("⚠️ Algumas alterações foram desfeitas pela Trava de Segurança.")
+                        st.warning("⚠️ Algumas alterações foram canceladas. Verifique os erros apontados.")
                         
+        # =======================================================
+        # 2. TABELA DE QUARENTENA E DEVOLUÇÃO (NOVA VERSÃO INTERATIVA)
+        # =======================================================
         st.markdown("<br>", unsafe_allow_html=True)
         if not df_quarentena.empty:
-            st.error("🚨 PROCESSOS EM QUARENTENA (Aguardando Correção na Aba de Ofícios)")
-            df_q_exib = df_quarentena[['numero_processo', 'relator', 'motivo_correcao', 'expedicao']].rename(columns={'numero_processo':'Processo', 'relator':'Relator', 'motivo_correcao':'Motivo do Erro', 'expedicao':'Expedidor (Responsável)'})
-            st.dataframe(df_q_exib, hide_index=True, use_container_width=True)
+            st.error("🚨 PROCESSOS EM QUARENTENA (Revisor encontrou erros que precisam ser arrumados)")
             
-        with st.expander("❌ Ocorreu um erro? Devolver processo para Correção (Enviar para Quarentena)"):
-            col_q1, col_q2, col_q3 = st.columns([2, 4, 2])
-            with col_q1: p_quar = st.selectbox("Selecione o Processo:", df_filtrado['numero_processo'].tolist(), key=f"q_proc_{data_sessao}")
-            with col_q2: m_quar = st.text_input("Qual o Erro? (Ex: Falta Ofício Sec. de Turismo):", key=f"q_mot_{data_sessao}")
-            with col_q3: 
-                st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("Devolver Processo", type="primary", use_container_width=True, key=f"q_btn_{data_sessao}"):
-                    if m_quar:
-                        conn.client.table("processos").update({"precisa_correcao": 1, "motivo_correcao": m_quar}).eq("numero_processo", p_quar).eq("despachado", 0).execute()
-                        st.success("✅ Processo enviado para a Quarentena!")
-                        time.sleep(1)
+            # Prepara os dados para o Expedidor interagir
+            df_q_exib = df_quarentena[['id', 'numero_processo', 'relator', 'expedicao', 'revisao', 'motivo_correcao']].copy()
+            df_q_exib['Ação do Expedidor'] = False # Cria o Checkbox
+            
+            df_q_exib = df_q_exib.rename(columns={'numero_processo':'Processo', 'relator':'Relator', 'expedicao':'Expedidor', 'revisao': 'Revisor', 'motivo_correcao':'Motivo Apontado'})
+            
+            with st.form(key=f"form_quarentena_{key_prefix}_{data_sessao}"):
+                q_edited = st.data_editor(
+                    df_q_exib, 
+                    hide_index=True, 
+                    use_container_width=True,
+                    column_config={
+                        "id": None,
+                        "Processo": st.column_config.TextColumn(disabled=True),
+                        "Relator": st.column_config.TextColumn(disabled=True),
+                        "Expedidor": st.column_config.TextColumn(disabled=True),
+                        "Revisor": st.column_config.TextColumn(disabled=True),
+                        "Motivo Apontado": st.column_config.TextColumn(disabled=True),
+                        "Ação do Expedidor": st.column_config.CheckboxColumn("✅ Já arrumei. Devolver p/ Revisor!")
+                    }
+                )
+                
+                if st.form_submit_button("🔄 Confirmar Correções", type="primary"):
+                    q_alterados = 0
+                    for i in range(len(q_edited)):
+                        if q_edited.iloc[i]['Ação do Expedidor'] == True:
+                            id_proc = int(q_edited.iloc[i]['id'])
+                            
+                            # Tira da quarentena e reseta a revisão (precisa ser revisado de novo)
+                            conn.client.table("processos").update({
+                                "precisa_correcao": 0, 
+                                "motivo_correcao": "", 
+                                "revisado_ok": 0 
+                            }).eq("id", id_proc).execute()
+                            q_alterados += 1
+                            
+                    if q_alterados > 0:
+                        st.success(f"✅ {q_alterados} processo(s) devolvido(s) para a fila de revisão!")
+                        time.sleep(1.5)
                         st.rerun()
-                    else:
-                        st.warning("⚠️ Escreva o motivo do erro para o Expedidor saber o que arrumar.")
+
         st.markdown("---")
 
     with sub_aba_ord:
