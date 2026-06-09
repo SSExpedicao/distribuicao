@@ -767,6 +767,9 @@ with aba_inserir:
             with col3: expedidores_ativos = st.multiselect("👥 Quem fará a Expedição nesta sessão?", opcoes_expedicao, default=opcoes_expedicao)
             with col4: revisores_ativos = st.multiselect("👥 Quem fará a Revisão nesta sessão?", opcoes_revisao, default=opcoes_revisao)
 
+    # ------------------------------------------
+    # ABA 1: INSERÇÃO E DISTRIBUIÇÃO
+    # ------------------------------------------
     st.markdown("---")
     st.header("Passo 2: Inserir Processos")
     modo_insercao = st.radio("Método de Inserção", ["Digitar um por vez (Manual)", "Importar Planilha (Em lote)"], horizontal=True)
@@ -787,6 +790,30 @@ with aba_inserir:
                     elif novo_processo and novo_relator:
                         ok, msg = salvar_novo_processo(novo_processo, novo_relator, tipo_sessao, nome_sessao_atual, expedidores_ativos, revisores_ativos)
                         st.success(msg) if ok else st.error(msg)
+
+    elif modo_insercao == "Importar Planilha (Em lote)":
+        st.info("💡 **Dica:** Para importar vários processos de uma vez, baixe a planilha modelo, preencha com seus dados e faça o upload abaixo.")
+        df_modelo = pd.DataFrame({"Processo": ["12345/2026", "67890/2026"], "Relator": ["Conselheiro A", "Conselheiro B"]})
+        csv_modelo = df_modelo.to_csv(index=False).encode('utf-8')
+        st.download_button(label="📥 Baixar Planilha Modelo (CSV)", data=csv_modelo, file_name="modelo_importacao.csv", mime="text/csv", type="secondary")
+
+        arquivo_upload = st.file_uploader("Arraste sua planilha preenchida (.csv ou .xlsx)", type=["csv", "xlsx"])
+        if arquivo_upload is not None:
+            df_upload = pd.read_csv(arquivo_upload, encoding='utf-8-sig') if arquivo_upload.name.endswith('.csv') else pd.read_excel(arquivo_upload)
+            st.dataframe(df_upload.head(3))
+            if st.button("🚀 Iniciar Importação", type="primary"):
+                barra_progresso = st.progress(0)
+                sucessos = 0
+                for index, row in df_upload.iterrows():
+                    processo_val = str(row['Processo']).strip() if pd.notna(row.get('Processo')) else ""
+                    if tipo_sessao == "Urgente": 
+                        ok, msg = marcar_urgente(processo_val)
+                    else:
+                        relator_val = str(row.get('Relator', '')).strip() if pd.notna(row.get('Relator')) else ""
+                        ok, msg = salvar_novo_processo(processo_val, relator_val, tipo_sessao, nome_sessao_atual, expedidores_ativos, revisores_ativos)
+                    if ok: sucessos += 1
+                    barra_progresso.progress((index + 1) / len(df_upload))
+                st.success(f"🎉 Operação Concluída! {sucessos} processos inseridos.")
 
     st.markdown("---")
     st.header("🛠️ Ferramentas de Manutenção da Pauta")
