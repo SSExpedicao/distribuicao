@@ -542,36 +542,53 @@ def restaurar_backup(df_backup):
     except Exception as e: 
         return False, f"❌ Erro ao tentar restaurar: {e}"
 
-def adicionar_aviso(usuario, numero_processo, mensagem):
-    try:
-        res = conn.client.table("processos").select("id").eq("numero_processo", numero_processo).eq("despachado", 0).execute().data
-        if not res: return False, f"❌ Processo '{numero_processo}' não está ativo em nenhuma sessão no momento."
+def adicionar_aviso(usuario_alvo, numero_processo, mensagem, duracao_horas=24):
+    agora = datetime.now()
+    expiracao = agora + pd.Timedelta(hours=duracao_horas)
+    agora_str = agora.strftime("%d/%m/%Y %H:%M:%S")
+    expiracao_str = expiracao.strftime("%d/%m/%Y %H:%M:%S")
+    
+    # Se for "Para Todos", o processo é None
+    proc_val = numero_processo if numero_processo and usuario_alvo != "Todos" else None
+    
+    # Validação se for individual
+    if usuario_alvo != "Todos" and proc_val:
+        res = conn.client.table("processos").select("expedicao, despachado").eq("numero_processo", proc_val).eq("despachado", 0).execute().data
+        if not res:
+            return False, f"❌ Processo '{proc_val}' não encontrado ou já foi despachado."
+        # Localiza automaticamente o expedidor
+        usuario_alvo = res[0]['expedicao']
         
-        agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-        conn.client.table("avisos").insert({"usuario": usuario, "numero_processo": numero_processo, "mensagem": mensagem, "data_criacao": agora, "ativo": 1}).execute()
-        return True, "✅ Aviso publicado no letreiro!"
+    try:
+        conn.client.table("avisos").insert({
+            "usuario": usuario_alvo, 
+            "numero_processo": proc_val, 
+            "mensagem": mensagem, 
+            "data_criacao": agora_str, 
+            "data_expiracao": expiracao_str,
+            "ativo": 1
+        }).execute()
+        return True, "✅ Aviso publicado!"
     except Exception as e: return False, f"❌ Erro: {e}"
 
 def obter_avisos_pendentes():
-    hoje = datetime.now().strftime("%d/%m/%Y")
+    agora = datetime.now()
     try:
-        df_av = pd.DataFrame(conn.client.table("avisos").select("*").eq("ativo", 1).execute().data)
-        df_proc = pd.DataFrame(conn.client.table("processos").select("numero_processo, nome_sessao, despachado").execute().data)
-        if df_av.empty: return pd.DataFrame()
-        if df_proc.empty: df_proc = pd.DataFrame(columns=['numero_processo', 'nome_sessao', 'despachado'])
-        
-        if not df_proc.empty:
-            df_proc = df_proc.sort_values(by='despachado', ascending=True).drop_duplicates(subset=['numero_processo'], keep='first')
-            
-        df_avisos = pd.merge(df_av, df_proc, on='numero_processo', how='left')
-        df_avisos = df_avisos[(df_avisos['numero_processo'] == '') | (df_avisos['despachado'] == 0)]
-        linhas_validas = []
-        for index, row in df_avisos.iterrows():
-            data_aviso = row['data_criacao'].split()[0]
-            if row['usuario'] == 'Todos':
-                if data_aviso == hoje: linhas_validas.append(row)
-            else: linhas_validas.append(row)
-        return pd.DataFrame(linhas_validas) if linhas_validas else pd.DataFrame(columns=df_avisos.columns)
+        # Puxa avisos ativos e ainda dentro do prazo
+        res = conn.client.table("avisos").select("*").eq("ativo", 1).execute().data
+        avisos_validos = []
+        for row in res:
+            expiracao = datetime.strptime(row['data_expiracao'], "%d/%m/%Y %H:%M:%S")
+            # Se ainda não expirou, mostra
+            if agora < expiracao:
+                # Se for individual, verifica se ainda está despachado ou não
+                if row['numero_processo']:
+                    proc_check = conn.client.table("processos").select("despachado").eq("numero_processo", row['numero_processo']).execute().data
+                    if proc_check and proc_check[0]['despachado'] == 0:
+                        avisos_validos.append(row)
+                else:
+                    avisos_validos.append(row)
+        return pd.DataFrame(avisos_validos)
     except: return pd.DataFrame()
 
 def desativar_aviso(id_aviso):
@@ -1569,18 +1586,33 @@ with aba_gestao:
             st.markdown("---")
             with st.expander("⚙️ Área Administrativa Avançada (Equipe e Banco de Dados)"):
                 st.subheader("📢 Mural de Avisos (Letreiro)")
-                col_av1, col_av2, col_av3 = st.columns([1, 1, 2])
-                with col_av1: aviso_usuario = st.selectbox("Para quem?", ["Todos"] + TODOS_NOMES, key="aviso_usr")
-                with col_av2: aviso_processo = st.text_input("Nº do Processo Ativo", key="aviso_proc")
-                with col_av3: aviso_msg = st.text_input("Mensagem", placeholder="Ex: Tratar com urgência...", key="aviso_msg")
+                
+                # Escolha o tipo de aviso
+                tipo_aviso = st.radio("Destinatário do Aviso:", ["Para Todos", "Para um Processo Específico"], horizontal=True)
+                
+                col_av1, col_av2 = st.columns([1, 2])
+                
+                if tipo_aviso == "Para Todos":
+                    avisado = "Todos"
+                    with col_av1:
+                        duracao = st.number_input("Duração (Horas):", min_value=1, value=24)
+                    with col_av2:
+                        msg = st.text_input("Mensagem para todos:", placeholder="Ex: Informamos que o sistema ficará lento às 14h...")
+                else:
+                    duracao = 0 # Não se aplica
+                    with col_av1:
+                        aviso_processo = st.text_input("Nº do Processo:")
+                    with col_av2:
+                        msg = st.text_input("Mensagem para o expedidor:", placeholder="Ex: Favor verificar ofício pendente...")
+                
                 if st.button("📢 Publicar no Letreiro", type="primary", use_container_width=True):
-                    if aviso_processo and aviso_msg:
-                        ok, msg = adicionar_aviso(aviso_usuario, aviso_processo, aviso_msg)
-                        if ok:
-                            st.success(msg)
-                            time.sleep(1)
-                            st.rerun()
-                        else: st.error(msg)
+                    proc_input = aviso_processo if tipo_aviso == "Para um Processo Específico" else None
+                    ok, msg_retorno = adicionar_aviso(avisado, proc_input, msg, duracao)
+                    if ok:
+                        st.success(msg_retorno)
+                        time.sleep(1)
+                        st.rerun()
+                    else: st.error(msg_retorno)
                     else: st.warning("⚠️ Preencha o número do processo e a mensagem.")
                 st.markdown("---")
 
