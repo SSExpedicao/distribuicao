@@ -16,7 +16,11 @@ st.set_page_config(page_title="Sistema de Sessões", layout="wide")
 # ==========================================
 # 2. BACKEND: CONEXÃO COM A NUVEM SUPABASE
 # ==========================================
-conn = st.connection("supabase", type=SupabaseConnection)
+try:
+    conn = st.connection("supabase", type=SupabaseConnection)
+except Exception as e:
+    st.error(f"Erro crítico: Não foi possível conectar ao Supabase. Verifique seu secrets.toml. Detalhe: {e}")
+    st.stop()
 
 def normalizar_texto(texto):
     """Remove acentos, espaços extras e deixa tudo minúsculo para comparação."""
@@ -33,27 +37,19 @@ def higienizar_colaborador(nome_digitado, lista_oficial_nomes):
     nome_norm = normalizar_texto(nome_digitado)
     
     # 1. Tenta correspondência exata primeiro (ignorando acentos e maiúsculas)
-    # Ex: Digitou "andre" ou " ANDRÉ " -> Mapeia para "André"
     for nome_oficial in lista_oficial_nomes:
         if nome_norm == normalizar_texto(nome_oficial):
             return nome_oficial
             
     # 2. Se não achou exato, usa Inteligência de Similaridade (erros de digitação)
-    # Cria uma lista das versões "limpas" dos nomes oficiais
     lista_norm = [normalizar_texto(n) for n in lista_oficial_nomes]
-    
-    # Busca nomes que tenham pelo menos 75% de semelhança com o que foi digitado
-    # Ex: "Andte" ou "Eliane" (no lugar de Elaine)
     matches = difflib.get_close_matches(nome_norm, lista_norm, n=1, cutoff=0.75)
     
     if matches:
-        # Achou um erro de digitação! Puxa o nome oficial correspondente.
         indice = lista_norm.index(matches[0])
         return lista_oficial_nomes[indice]
         
-    # 3. É UM NOME TOTALMENTE NOVO (Ex: Douglas)
-    # Se não parece com ninguém da equipe, o sistema aceita como um cara novo
-    # e padroniza a primeira letra em maiúscula (Title Case)
+    # 3. É UM NOME TOTALMENTE NOVO
     return str(nome_digitado).strip().title()
 
 def higienizar_dados(processo, relator=""):
@@ -86,8 +82,8 @@ def init_db():
                 {"nome": "Maurício", "expedicao": 1, "revisao": 1}
             ]
             conn.client.table("equipe").insert(iniciais).execute()
-    except: 
-        pass
+    except Exception as e:
+        st.sidebar.error(f"Aviso: Erro ao iniciar banco de dados (Equipe). {e}")
 
 def carregar_equipes():
     try:
@@ -139,7 +135,8 @@ def apagar_sessao_especifica(tipo_sessao, nome_sessao, motivo):
             for proc in processos_sessao:
                 conn.client.table("processos_excluidos").insert({"numero_processo": proc['numero_processo'], "relator": proc['relator'], "data_exclusao": agora, "motivo": motivo}).execute()
         conn.client.table("processos").delete().eq("tipo_sessao", tipo_sessao).eq("nome_sessao", nome_sessao).execute()
-    except: pass
+    except Exception as e:
+        st.error(f"Erro ao apagar sessão: {e}")
 
 def carregar_excluidos():
     try: 
@@ -150,7 +147,6 @@ def carregar_excluidos():
     
 def processo_existe(numero_processo, nome_sessao):
     try:
-        # Agora o sistema verifica se o processo existe NAQUELA SESSÃO ESPECÍFICA, e não no banco todo.
         res = conn.client.table("processos").select("id", count="exact").eq("numero_processo", numero_processo).eq("nome_sessao", nome_sessao).execute()
         return res.count > 0
     except: return False
@@ -158,11 +154,9 @@ def processo_existe(numero_processo, nome_sessao):
 def marcar_urgente(numero_processo):
     numero_processo, _ = higienizar_dados(numero_processo)
     try:
-        # Busca o processo, mas APENAS as versões que estão em andamento (despachado = 0)
         res = conn.client.table("processos").select("id").eq("numero_processo", numero_processo).eq("despachado", 0).execute().data
         if not res: return False, f"❌ Processo {numero_processo} não encontrado nas sessões ativas. Insira-o na sua pauta atual primeiro."
         
-        # Se achar, marca todas as entradas ativas como urgentes
         for p in res:
             conn.client.table("processos").update({"urgente": 1}).eq("id", p['id']).execute()
         return True, f"🚨 Processo {numero_processo} destacado como URGENTE!"
@@ -177,14 +171,14 @@ def atualizar_processo(id_processo, mudancas):
         if col_banco == 'expedido_ok': payload["data_expedido"] = agora if val == 1 else None
         elif col_banco == 'revisado_ok': payload["data_revisado"] = agora if val == 1 else None
         elif col_banco == 'despachado': payload["data_conclusao"] = agora if val == 1 else None
-    try: conn.client.table("processos").update(payload).eq("id", id_processo).execute()
-    except: pass
+    try: 
+        conn.client.table("processos").update(payload).eq("id", id_processo).execute()
+    except Exception as e: 
+        st.toast(f"Falha ao atualizar banco: {e}")
 
 def obter_expedidor(opcoes, nome_sessao):
     if len(opcoes) == 1: return opcoes[0]
     try:
-        # REGRA 1: MEMÓRIA DE CARGA GLOBAL
-        # O algoritmo olha para a mesa global para ver quem trabalhou mais no total
         res = conn.client.table("processos").select("expedicao").execute().data
         contagem = {nome: 0 for nome in opcoes}
         for row in res:
@@ -192,9 +186,7 @@ def obter_expedidor(opcoes, nome_sessao):
             if exp in contagem:
                 contagem[exp] += 1
         
-        # Acha a menor carga de trabalho entre os presentes
         menor_carga = min(contagem.values())
-        # Filtra todos os que estão empatados com a menor carga para não favorecer ordem alfabética
         empatados = [nome for nome, carga in contagem.items() if carga == menor_carga]
         
         import random
@@ -204,23 +196,19 @@ def obter_expedidor(opcoes, nome_sessao):
         return random.choice(opcoes)
 
 def obter_revisor(expedidor, nome_sessao, opcoes):
-    # Regra Básica: Ninguém pode revisar o próprio processo
     opcoes_validas = [opt for opt in opcoes if opt != expedidor]
-    if not opcoes_validas: return expedidor # Contingência (Sessão só com a Jessyca, por exemplo)
-    if len(opcoes_validas) == 1: return opcoes_validas[0] # Contingência (Só sobrou 1 pessoa)
+    if not opcoes_validas: return expedidor 
+    if len(opcoes_validas) == 1: return opcoes_validas[0] 
     
     try:
         res_sessao = conn.client.table("processos").select("expedicao, revisao").eq("nome_sessao", nome_sessao).execute().data
         
-        # 1. CONSISTÊNCIA DE FLUXO (Se eu já mandei pra alguém hoje, continuo mandando pra ele)
         for row in res_sessao:
             e = row.get('expedicao')
             r = row.get('revisao')
             if e == expedidor and r in opcoes_validas:
                 return r
                 
-        # 2. REGRA ANTI-CASAL (Se chegou aqui, é o 1º processo do expedidor na sessão)
-        # Vamos descobrir quem já está mandando processo para o nosso Expedidor
         mandam_para_mim = set()
         for row in res_sessao:
             e = row.get('expedicao')
@@ -228,16 +216,11 @@ def obter_revisor(expedidor, nome_sessao, opcoes):
             if r == expedidor and e:
                 mandam_para_mim.add(e)
         
-        # Tira os "casais" das opções válidas para forçar o cruzamento
         opcoes_anti_casal = [opt for opt in opcoes_validas if opt not in mandam_para_mim]
-        
-        # Se por acaso todo mundo estiver bloqueado (ex: só tem 2 pessoas trabalhando hoje),
-        # o sistema derruba a regra anti-casal para não travar a pauta.
         candidatos = opcoes_anti_casal if opcoes_anti_casal else opcoes_validas
         
         if len(candidatos) == 1: return candidatos[0]
         
-        # 3. RODÍZIO HISTÓRICO GLOBAL (Quem me ajudou menos na vida inteira?)
         res_hist = conn.client.table("processos").select("revisao").eq("expedicao", expedidor).execute().data
         historico_parcerias = {nome: 0 for nome in candidatos}
         
@@ -275,7 +258,6 @@ def gerar_relatorio_gerencial(mes, ano):
         df_dados = carregar_dados_sqlite()
         df_afastamentos = carregar_afastamentos()
         
-        # Puxa os ofícios despachados para o cruzamento de dados
         try:
             df_oficios_banco = pd.DataFrame(conn.client.table("oficios").select("*").eq("oficio_despachado", 1).execute().data)
         except:
@@ -352,7 +334,7 @@ def gerar_relatorio_gerencial(mes, ano):
         else:
             linhas.append(" -> Indicadores de tempo real indisponíveis para o intervalo selecionado.\n")
             
-        # 4. CONTROLE DE OFÍCIOS (MÓDULO NOVO INTEGRADO)
+        # 4. CONTROLE DE OFÍCIOS
         linhas.append("4. CONTROLE E PRODUTIVIDADE DE OFÍCIOS")
         linhas.append("----------------------------------------------------")
         if not df_oficios_banco.empty and not df_filtrado.empty:
@@ -420,35 +402,29 @@ def gerar_relatorio_gerencial(mes, ano):
 def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, expedidores_selecionados, revisores_selecionados):
     numero_processo, relator = higienizar_dados(numero_processo, relator)
     
-    # Atualizamos a trava de segurança para olhar apenas para a sessão atual
     if processo_existe(numero_processo, nome_sessao): 
         return False, f"❌ O processo já existe nesta mesma sessão ({nome_sessao})."
     
-    # 1. Puxa a carga global APENAS para os membros que foram SELECIONADOS
     res_global = conn.client.table("processos").select("expedicao, revisao").in_("expedicao", expedidores_selecionados).execute().data
     
-    # 2. Conta quanto cada um dos SELECIONADOS tem no total (Histórico Geral)
     contagem_exp = {nome: 0 for nome in expedidores_selecionados}
     for row in res_global:
         exp = row.get('expedicao')
         if exp in contagem_exp: contagem_exp[exp] += 1
     
-    # Escolhe o expedidor com MENOS processos entre os SELECIONADOS
     responsavel_expedicao = min(contagem_exp, key=contagem_exp.get)
     
-    # 3. Agora para o Revisor: 
-    # Deve estar na lista de SELECIONADOS e ser diferente do expedidor escolhido
     candidatos_revisores = [nome for nome in revisores_selecionados if nome != responsavel_expedicao]
+    if not candidatos_revisores: 
+        responsavel_revisao = responsavel_expedicao
+    else:
+        res_rev_global = conn.client.table("processos").select("revisao").in_("revisao", candidatos_revisores).execute().data
+        contagem_rev = {nome: 0 for nome in candidatos_revisores}
+        for row in res_rev_global:
+            rev = row.get('revisao')
+            if rev in contagem_rev: contagem_rev[rev] += 1
+        responsavel_revisao = min(contagem_rev, key=contagem_rev.get)
     
-    res_rev_global = conn.client.table("processos").select("revisao").in_("revisao", candidatos_revisores).execute().data
-    contagem_rev = {nome: 0 for nome in candidatos_revisores}
-    for row in res_rev_global:
-        rev = row.get('revisao')
-        if rev in contagem_rev: contagem_rev[rev] += 1
-    
-    responsavel_revisao = min(contagem_rev, key=contagem_rev.get)
-    
-    # Inserção
     data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     conn.client.table("processos").insert({
         "numero_processo": numero_processo, "relator": relator, "tipo_sessao": tipo_sessao, 
@@ -459,31 +435,22 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
     return True, f"✅ Distribuído! Exp: {responsavel_expedicao} | Rev: {responsavel_revisao}"
 
 def buscar_todos_paginado(nome_tabela, coluna_eq=None, valor_eq=None):
-    """
-    Faz requisições em lotes (páginas) para burlar o limite padrão de 1000 linhas do Supabase.
-    Garante que o histórico seja ilimitado.
-    """
     todos_dados = []
     inicio = 0
     tamanho_lote = 1000
 
     while True:
         query = conn.client.table(nome_tabela).select("*")
-        
-        # Aplica o filtro se ele existir (ex: puxar só "Sessão Ordinária")
         if coluna_eq and valor_eq:
             query = query.eq(coluna_eq, valor_eq)
 
-        # .range(inicio, fim) é o que faz a mágica da paginação no Supabase
         resposta = query.range(inicio, inicio + tamanho_lote - 1).execute()
 
-        # Se não vier nada, quebra o loop
         if not resposta.data:
             break
 
         todos_dados.extend(resposta.data)
 
-        # Se veio um lote menor que 1000, significa que era a última página
         if len(resposta.data) < tamanho_lote:
             break
 
@@ -494,34 +461,26 @@ def buscar_todos_paginado(nome_tabela, coluna_eq=None, valor_eq=None):
 def carregar_dados_sqlite(tipo_sessao=None):
     try:
         if tipo_sessao:
-            # Puxa tudo paginado filtrando pelo tipo de sessão
             dados = buscar_todos_paginado("processos", "tipo_sessao", tipo_sessao)
         else:
-            # Puxa o banco inteiro paginado
             dados = buscar_todos_paginado("processos")
         return pd.DataFrame(dados)
-    except: 
+    except Exception as e: 
+        st.error(f"Aviso: Erro ao carregar dados do banco: {e}")
         return pd.DataFrame()
 
 def restaurar_backup(df_backup):
     try:
-        # 1. Apaga tudo antes de restaurar
         conn.client.table("processos").delete().neq("numero_processo", "vazio").execute()
-        
-        # 2. Converte campos vazios (NaN) para None para o Supabase aceitar
         df_backup = df_backup.astype(object).where(pd.notna(df_backup), None)
-        
         records = df_backup.to_dict(orient="records")
         
-        # 3. Limpeza Blindada: Remove campos que são calculados ou do Supabase
-        # O sistema só deve enviar para o Supabase as colunas que realmente existem na tabela
         for r in records:
             colunas_para_remover = ['id', 'created_at', 'chave_sessao', 'data_entrada_dt', 'data_expedido_dt', 'data_revisado_dt', 'data_conclusao_dt', 'status_num', 'pendente_flag']
             for col in colunas_para_remover:
                 if col in r:
                     del r[col]
             
-        # 4. Envia para o banco
         conn.client.table("processos").insert(records).execute()
         return True, "✅ Dados restaurados com sucesso!"
     except Exception as e: 
@@ -529,9 +488,8 @@ def restaurar_backup(df_backup):
 
 def adicionar_aviso(usuario, numero_processo, mensagem):
     try:
-        # Verifica se existe pelo menos uma entrada desse processo que ainda NÃO foi despachada
         res = conn.client.table("processos").select("id").eq("numero_processo", numero_processo).eq("despachado", 0).execute().data
-        if not res: return False, f"❌ Processo '{numero_processo}' não está ativo em nenhuma sessão no momento (ou já foi concluído)."
+        if not res: return False, f"❌ Processo '{numero_processo}' não está ativo em nenhuma sessão no momento."
         
         agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         conn.client.table("avisos").insert({"usuario": usuario, "numero_processo": numero_processo, "mensagem": mensagem, "data_criacao": agora, "ativo": 1}).execute()
@@ -546,8 +504,6 @@ def obter_avisos_pendentes():
         if df_av.empty: return pd.DataFrame()
         if df_proc.empty: df_proc = pd.DataFrame(columns=['numero_processo', 'nome_sessao', 'despachado'])
         
-        # CORREÇÃO PARA MÚLTIPLOS RITOS: Ordena para colocar as versões ativas (0) no topo
-        # e remove duplicados, mantendo apenas a instância em andamento para o cruzamento.
         if not df_proc.empty:
             df_proc = df_proc.sort_values(by='despachado', ascending=True).drop_duplicates(subset=['numero_processo'], keep='first')
             
@@ -574,8 +530,6 @@ def carregar_historico_avisos():
         if df_av.empty: return pd.DataFrame(columns=['numero_processo', 'usuario', 'mensagem', 'data_criacao', 'ativo', 'despachado', 'proc_existe', 'status'])
         df_proc['proc_existe'] = df_proc['numero_processo'] if not df_proc.empty else None
         
-        # CORREÇÃO PARA MÚLTIPLOS RITOS: Evita que o histórico de avisos multiplique as linhas
-        # se o processo tiver passado várias vezes pelo banco de dados.
         if not df_proc.empty:
             df_proc = df_proc.sort_values(by='despachado', ascending=True).drop_duplicates(subset=['numero_processo'], keep='first')
             
@@ -630,13 +584,11 @@ def adicionar_oficio(numero_processo, numero_oficio, categoria, tipo_nao_jurisdi
 def liberar_processo_chefia(numero_processo, justificativa, usuario="Chefia"):
     agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     try:
-        # 1. Verifica se o processo está pendente no Painel Ativo
         res = conn.client.table("processos").select("id").eq("numero_processo", numero_processo).eq("despachado", 0).execute().data
         if not res: return False, f"❌ O processo {numero_processo} não foi encontrado nas sessões ativas ou já foi despachado."
         
         id_proc = res[0]['id']
         
-        # 2. Salva a digital da chefia na auditoria
         conn.client.table("auditoria_chefia").insert({
             "numero_processo": numero_processo,
             "justificativa": justificativa,
@@ -644,7 +596,6 @@ def liberar_processo_chefia(numero_processo, justificativa, usuario="Chefia"):
             "data_liberacao": agora
         }).execute()
         
-        # 3. Força a finalização do processo passando por cima das travas
         conn.client.table("processos").update({
             "expedido_ok": 1,
             "revisado_ok": 1,
@@ -656,6 +607,7 @@ def liberar_processo_chefia(numero_processo, justificativa, usuario="Chefia"):
         return True, f"✅ Processo {numero_processo} forçado para o histórico com sucesso!"
     except Exception as e:
         return False, f"❌ Erro interno: {e}"
+
 def tem_oficio_cadastrado(numero_processo):
     try:
         res = conn.client.table("oficios").select("id", count="exact").eq("numero_processo", numero_processo).execute()
@@ -664,9 +616,8 @@ def tem_oficio_cadastrado(numero_processo):
 
 def verificar_oficios_pendentes(numero_processo):
     try:
-        # Busca ofícios ligados a este processo que AINDA NÃO foram despachados (0)
         res = conn.client.table("oficios").select("id", count="exact").eq("numero_processo", numero_processo).eq("oficio_despachado", 0).execute()
-        return res.count > 0 # Retorna True se tiver alguma pendência
+        return res.count > 0 
     except: return False
         
 # ==========================================
@@ -691,7 +642,6 @@ if not df_avisos.empty:
         </marquee>
     """, unsafe_allow_html=True)
 
-# GESTÃO DE SESSÃO (CONTROLE DE SENHA DA CHEFIA)
 if 'gestor_autenticado' not in st.session_state:
     st.session_state.gestor_autenticado = False
 
@@ -699,13 +649,12 @@ aba_inserir, aba_sessoes, aba_oficios, aba_oficios_relatorio, aba_historico, aba
     "📥 1. Inserir Novos",
     "🗂️ 2. Painel Ativo",
     "✉️ 2.5. Controle de Ofícios",
-    "📄 2.7. Relatório de Expedição", # <-- Nova Aba adicionada
+    "📄 2.7. Relatório de Expedição",
     "🗄️ 3. Histórico",
     "⚙️ 4. Gestão Administrativa (Restrito)",
     "❓ 5. Ajuda & Glossário"
 ])
 
-# VARIÁVEIS ESSENCIAIS 
 nome_sessao_atual = datetime.now().strftime("%d/%m/%Y")
 df_geral_status = carregar_dados_sqlite()
 sessoes_finalizadas = []
@@ -739,11 +688,9 @@ with aba_inserir:
     with st.container(border=True):
         tipo_sessao = st.selectbox("Destino (Tipo de Sessão)", ["Sessão Ordinária", "Sessão Ordinária Virtual", "Sessão Reservada", "Sessão Administrativa", "Urgente"])
         
-        # --- INÍCIO DA CORREÇÃO DE AGRUPAMENTO DE SESSÕES ---
         hoje = datetime.now().strftime("%d/%m/%Y")
         sessoes_ativas = []
         if not df_geral_status.empty:
-            # Puxa o nome de todas as sessões que estão em andamento no momento
             sessoes_ativas = sorted(df_geral_status[df_geral_status['despachado'] == 0]['nome_sessao'].unique().tolist())
             
         modo_sessao = st.radio("Nome / Identificação da Sessão:", 
@@ -761,7 +708,6 @@ with aba_inserir:
                 nome_sessao_atual = hoje
         else:
             nome_sessao_atual = st.text_input("Digite o nome exato (Ex: Sessão 125 - 10/06/2026):", value=hoje)
-        # --- FIM DA CORREÇÃO ---
 
         if tipo_sessao == "Urgente":
             st.info("🚨 **Modo Urgente:** Marca processos existentes como urgentes (funciona para todos os tipos).")
@@ -774,7 +720,6 @@ with aba_inserir:
 
     st.markdown("---")
     st.header("Passo 2: Inserir Processos")
-    # ... O resto do seu código de inserção continua igual a partir daqui ...
     modo_insercao = st.radio("Método de Inserção", ["Digitar um por vez (Manual)", "Importar Planilha (Em lote)"], horizontal=True)
 
     if modo_insercao == "Digitar um por vez (Manual)":
@@ -824,7 +769,6 @@ def color_urgentes(row): return ['color: #ff4b4b; font-weight: bold'] * len(row)
 # ABA 2: PAINEL DAS SESSÕES ATIVAS
 # ------------------------------------------
 with aba_sessoes:
-    # --- NOVO FILTRO INTELIGENTE E SAUDAÇÃO ---
     col_saudacao, col_filtro_p = st.columns([2, 1])
     with col_saudacao:
         st.markdown("### 💼 Minha Mesa de Trabalho")
@@ -836,26 +780,21 @@ with aba_sessoes:
             label_visibility="collapsed"
         )
     
-    # Mensagem personalizada baseada na seleção
     if colab_painel != "👁️ Ver Todos os Processos do Setor":
         st.markdown(f"👋 **Bom trabalho, {colab_painel}!** Exibindo estritamente as demandas onde você é o Expedidor ou o Revisor.")
     
     st.markdown("---")
     
-    # Cria as sub-abas logo abaixo do filtro
     sub_aba_ord, sub_aba_ordv, sub_aba_res, sub_aba_adm = st.tabs(["🏛️ Ordinária", "💻 Ordinária Virtual", "🔒 Reservada", "📁 Administrativa"])
     def exibir_tabela_interativa(df_filtrado, key_prefix, data_sessao, tipo_sessao_tb):
         titulo_placeholder = st.empty()
         
-        # Garante que as colunas de quarentena existam para não dar erro
         if 'precisa_correcao' not in df_filtrado.columns: df_filtrado['precisa_correcao'] = 0
         if 'motivo_correcao' not in df_filtrado.columns: df_filtrado['motivo_correcao'] = ""
         
-        # DIVISÃO DA TELA: Normais vs Quarentena
         df_normais = df_filtrado[df_filtrado['precisa_correcao'] == 0].copy()
         df_quarentena = df_filtrado[df_filtrado['precisa_correcao'] == 1].copy()
 
-        # ------------------- 1. TABELA PRINCIPAL -------------------
         if not df_normais.empty:
             cols_base = ['id', 'urgente', 'numero_processo', 'relator', 'expedicao', 'expedido_ok', 'revisao', 'revisado_ok']
             if tipo_sessao_tb == "Sessão Reservada": cols_base.extend(['enviado_email', 'enviado_mensageria', 'recebido'])
@@ -893,15 +832,10 @@ with aba_sessoes:
                         linha_antiga = df_exibicao.iloc[i].to_dict()
                         if linha_nova != linha_antiga:
                             
-                            # --- TRAVA MESTRE INTELIGENTE ---
                             if linha_nova.get('Despachado') == True and linha_antiga.get('Despachado') == False:
                                 if tipo_sessao_tb in ["Sessão Ordinária", "Sessão Ordinária Virtual"]:
-                                    # 1. Verifica se foi marcado como ISENTO
                                     isento = conn.client.table("processos").select("precisa_correcao").eq("numero_processo", linha_nova['Processo']).execute().data
-                                    # Se 'precisa_correcao' estiver como 2, vamos chamar de "ISENTO DE OFÍCIOS"
                                     if not (isento and isento[0].get('precisa_correcao') == 2):
-                                        
-                                        # 2. Se não for isento, faz a verificação padrão
                                         if not tem_oficio_cadastrado(linha_nova['Processo']):
                                             st.error(f"🚨 ERRO: Processo {linha_nova['Processo']} sem ofícios/memorandos. Cadastre na Aba 2.5 ou marque como ISENTO!")
                                             bloqueio_ativo = True
@@ -910,7 +844,6 @@ with aba_sessoes:
                                             st.error(f"🚨 ERRO: Processo {linha_nova['Processo']} tem ofícios/memorandos pendentes. Despache-os na Aba 2.5 primeiro!")
                                             bloqueio_ativo = True
                                             continue
-                            # -----------------------------------
                             
                             mudancas = {}
                             for col_tela, col_banco in mapa_banco.items():
@@ -929,14 +862,12 @@ with aba_sessoes:
                     elif bloqueio_ativo:
                         st.warning("⚠️ Algumas alterações foram desfeitas pela Trava de Segurança.")
                         
-        # ------------------- 2. TABELA DE QUARENTENA E DEVOLUÇÃO -------------------
         st.markdown("<br>", unsafe_allow_html=True)
         if not df_quarentena.empty:
             st.error("🚨 PROCESSOS EM QUARENTENA (Aguardando Correção na Aba de Ofícios)")
             df_q_exib = df_quarentena[['numero_processo', 'relator', 'motivo_correcao', 'expedicao']].rename(columns={'numero_processo':'Processo', 'relator':'Relator', 'motivo_correcao':'Motivo do Erro', 'expedicao':'Expedidor (Responsável)'})
             st.dataframe(df_q_exib, hide_index=True, use_container_width=True)
             
-        # Botão do Revisor
         with st.expander("❌ Ocorreu um erro? Devolver processo para Correção (Enviar para Quarentena)"):
             col_q1, col_q2, col_q3 = st.columns([2, 4, 2])
             with col_q1: p_quar = st.selectbox("Selecione o Processo:", df_filtrado['numero_processo'].tolist(), key=f"q_proc_{data_sessao}")
@@ -956,11 +887,9 @@ with aba_sessoes:
     with sub_aba_ord:
         df_ord = carregar_dados_sqlite("Sessão Ordinária")
         if not df_ord.empty:
-            # Aplica o filtro se o usuário selecionar um nome específico
             if colab_painel != "👁️ Ver Todos os Processos do Setor":
                 df_ord = df_ord[(df_ord['expedicao'] == colab_painel) | (df_ord['revisao'] == colab_painel)]
             
-            # Descobre quais sessões ativas realmente têm processos desse colaborador
             sessoes_com_processos = [data for data in df_ord['nome_sessao'].unique() if f"Sessão Ordinária | {str(data).strip()}" not in sessoes_finalizadas]
             
             if sessoes_com_processos:
@@ -1017,13 +946,10 @@ with aba_sessoes:
 with aba_oficios:
     st.header("✉️ Controle e Expedição de Ofícios")
     
-    # --- BLINDAGEM CONTRA BANCO VAZIO ---
     if df_geral_status.empty or 'despachado' not in df_geral_status.columns or 'tipo_sessao' not in df_geral_status.columns:
-        df_ativos_base = pd.DataFrame() # Cria tabela vazia e evita o KeyError
+        df_ativos_base = pd.DataFrame() 
     else:
-        # Puxa os dados brutos (apenas ativos de Ord/Virtual)
         df_ativos_base = df_geral_status[(df_geral_status['despachado'] == 0) & (df_geral_status['tipo_sessao'].isin(['Sessão Ordinária', 'Sessão Ordinária Virtual']))].copy()
-    # ------------------------------------
     
     if df_ativos_base.empty:
         st.success("✨ Pauta limpa! Nenhum processo aguardando ofícios no momento.")
@@ -1037,7 +963,6 @@ with aba_oficios:
         with col_f2:
             quem_expede_global = st.selectbox("Quem está expedindo?", TODOS_NOMES)
             
-        # Filtra o dataframe com base na sessão escolhida no primeiro filtro
         df_ativos_filtrado = df_ativos_base[df_ativos_base['tipo_sessao'] == tipo_sessao_filtro]
         
         with col_f3:
@@ -1049,10 +974,7 @@ with aba_oficios:
                 
         st.markdown("---")
 
-        # Só abre o restante da tela se o usuário conseguir selecionar um processo válido
         if proc_selecionado:
-            
-            # Alerta de Quarentena e Botão de Liberação
             proc_data = df_ativos_filtrado[df_ativos_filtrado['numero_processo'] == proc_selecionado].iloc[0]
             if proc_data.get('precisa_correcao') == 1:
                 st.error(f"🚨 PROCESSO EM QUARENTENA | Motivo apontado pelo Revisor: **{proc_data.get('motivo_correcao')}**")
@@ -1062,10 +984,8 @@ with aba_oficios:
                     time.sleep(1.5)
                     st.rerun()
             
-           # 2. Formulário Interativo de Cadastro
             st.subheader("➕ 2. Cadastrar Novo Ofício ou Memorando")
             
-            # Nova Categoria incluindo Memorando
             col_o1, col_o2 = st.columns(2)
             with col_o1: 
                 cat_oficio = st.selectbox("Categoria:", ["Jurisdicionado", "Não Jurisdicionado", "Memorando (Envio Interno)"])
@@ -1074,11 +994,9 @@ with aba_oficios:
                     tipo_nao_jur = st.selectbox("Especificação:", ["Representante", "Direto para Empresa"])
                 else:
                     tipo_nao_jur = ""
-                    st.write("") # Espaçamento invisível para alinhar
+                    st.write("") 
             
-            # Botão de Isenção (A grande solução para processos sem ofício)
             if st.button("🚫 Isentar este processo de ofícios/memorandos", use_container_width=True):
-                # Usamos o código 2 para representar ISENTO
                 conn.client.table("processos").update({"precisa_correcao": 2}).eq("numero_processo", proc_selecionado).execute()
                 st.success("✅ Processo marcado como ISENTO. Já pode ser despachado!")
                 time.sleep(1)
@@ -1086,7 +1004,6 @@ with aba_oficios:
 
             st.markdown("---")
 
-            # O Cérebro do Autocomplete
             lista_dest = obter_lista_destinatarios(cat_oficio)
             opcoes_dest = ["-- Selecionar Existente --"] + lista_dest + ["➕ Cadastrar Novo Destinatário..."]
             dest_selecionado = st.selectbox("Nome do Destinatário (Busca Automática):", opcoes_dest)
@@ -1097,7 +1014,6 @@ with aba_oficios:
                 
             num_oficio = st.text_input("Nº do Ofício ou Memorando (Ex: 125/2026):")
             
-            # Aplicação da Regra Automática
             if cat_oficio == "Jurisdicionado":
                 fluxo_doc = "Original no Protocolo | Clone no Processo"
             elif cat_oficio == "Memorando (Envio Interno)":
@@ -1109,9 +1025,7 @@ with aba_oficios:
             
             if st.button("💾 Adicionar Ofício/Memorando", type="primary", use_container_width=True):
                 if dest_final and dest_final != "-- Selecionar Existente --" and num_oficio:
-                    # Envia a variável 'quem_expede_global' definida nos filtros do topo
                     ok, m = adicionar_oficio(proc_selecionado, num_oficio, cat_oficio, tipo_nao_jur, dest_final, 1, fluxo_doc, quem_expede_global)
-                    # Reseta a isenção caso um ofício seja adicionado (processo volta a precisar de despacho)
                     conn.client.table("processos").update({"precisa_correcao": 0}).eq("numero_processo", proc_selecionado).execute()
                     
                     if ok: 
@@ -1124,7 +1038,6 @@ with aba_oficios:
                     
             st.markdown("---")
             
-            # 3. Painel de Baixa dos Ofícios (Checkbox)
             st.subheader("📋 3. Ofícios Gerados para este Processo")
             try:
                 df_oficios = pd.DataFrame(conn.client.table("oficios").select("id, numero_oficio, destinatario, fluxo_documento, oficio_despachado").eq("numero_processo", proc_selecionado).execute().data)
@@ -1166,30 +1079,26 @@ with aba_oficios:
 # ------------------------------------------
 # ABA 2.7: RELATÓRIO DE EXPEDIÇÃO INDIVIDUAL
 # ------------------------------------------
-with aba_oficios_relatorio: # Lembre-se de adicionar 'aba_oficios_relatorio' na sua lista de st.tabs lá em cima
+with aba_oficios_relatorio: 
     st.header("📄 Relatório de Expedição Individual")
     
     col_r1, col_r2 = st.columns([1, 2])
     with col_r1:
         colab_rel = st.selectbox("Selecione o Colaborador:", TODOS_NOMES, key="rel_colab")
         if st.button("📋 Gerar Relatório de Produção"):
-            # Busca todos os ofícios expedidos pelo colaborador
             df_prod = pd.DataFrame(conn.client.table("oficios").select("*").eq("quem_expediu", colab_rel).eq("oficio_despachado", 1).execute().data)
             
             if not df_prod.empty:
                 st.subheader(f"Produção de: {colab_rel}")
                 
-                # Agrupa por processo
                 for proc in df_prod['numero_processo'].unique():
                     with st.expander(f"Processo: {proc}"):
                         oficios_proc = df_prod[df_prod['numero_processo'] == proc]
                         
-                        # Exibe ofícios
                         st.markdown("**✉️ Ofícios expedidos:**")
                         for _, row in oficios_proc[oficios_proc['categoria'] != "Memorando (Envio Interno)"].iterrows():
                             st.write(f"- {row['numero_oficio']} | Destino: {row['destinatario']} ({row['categoria']})")
                         
-                        # Exibe memorandos
                         st.markdown("**📝 Memorandos expedidos:**")
                         for _, row in oficios_proc[oficios_proc['categoria'] == "Memorando (Envio Interno)"].iterrows():
                             st.write(f"- {row['numero_oficio']} | Destino: {row['destinatario']}")
@@ -1211,18 +1120,15 @@ with aba_historico:
             df_historico_display = df_historico_display.rename(columns={'numero_processo': 'Processo', 'urgente': 'urgente_flag', 'relator': 'Conselheiro', 'expedicao': 'Expedidor', 'revisao': 'Revisor', 'data_conclusao': 'Data/Hora Conclusão', 'tipo_sessao': 'Tipo de Sessão', 'nome_sessao': 'Data da Sessão'})
             
             with st.expander("🔎 Filtros de Busca Avançada", expanded=True):
-                # Mudamos para 5 colunas para caber o novo filtro
                 col_f1, col_t1, col_f2, col_f3, col_f4 = st.columns(5)
                 
                 with col_f1:
                     datas_unicas = sorted(df_historico_display['Data da Sessão'].unique(), reverse=True)
                     filtro_sessao = st.multiselect("📅 Data da Sessão", options=datas_unicas)
                 
-                # --- NOVO FILTRO DE TIPO DE SESSÃO AQUI ---
                 with col_t1:
                     tipos_unicos = sorted(df_historico_display['Tipo de Sessão'].dropna().unique())
                     filtro_tipo = st.multiselect("📌 Tipo de Sessão", options=tipos_unicos)
-                # ------------------------------------------
                 
                 with col_f2:
                     filtro_usuario = st.multiselect("👥 Colaborador", options=TODOS_NOMES)
@@ -1231,13 +1137,9 @@ with aba_historico:
                 with col_f4:
                     filtro_relator = st.text_input("⚖️ Relator", placeholder="Nome...")
 
-            # Atualizando a lógica de cruzamento para incluir o novo filtro
             df_filtrado_hist = df_historico_display.copy()
             if filtro_sessao: df_filtrado_hist = df_filtrado_hist[df_filtrado_hist['Data da Sessão'].isin(filtro_sessao)]
-            
-            # --- ATIVANDO A BUSCA DO NOVO FILTRO ---
             if filtro_tipo: df_filtrado_hist = df_filtrado_hist[df_filtrado_hist['Tipo de Sessão'].isin(filtro_tipo)]
-            
             if filtro_usuario: df_filtrado_hist = df_filtrado_hist[df_filtrado_hist['Expedidor'].isin(filtro_usuario) | df_filtrado_hist['Revisor'].isin(filtro_usuario)]
             if filtro_processo: df_filtrado_hist = df_filtrado_hist[df_filtrado_hist['Processo'].astype(str).str.contains(filtro_processo, case=False, na=False)]
             if filtro_relator: df_filtrado_hist = df_filtrado_hist[df_filtrado_hist['Conselheiro'].astype(str).str.contains(filtro_relator, case=False, na=False)]
@@ -1312,7 +1214,6 @@ with aba_gestao:
         sub_controle, sub_dados, sub_ferias = st.tabs(["📊 4.1. Controle de Banco de Dados", "📈 4.2. Analytics e Desempenho", "🌴 4.3. Afastamentos da Equipe"])
         
         with sub_controle:
-            # --- NOVO: MÓDULO DE LIBERAÇÃO FORÇADA PELA CHEFIA ---
             st.subheader("🔑 Liberação Extraordinária de Processo")
             st.write("Force o despacho de um processo travado (ignora regras de ofícios e revisões). Esta ação ficará gravada na Auditoria da Chefia.")
             col_lib1, col_lib2, col_lib3 = st.columns([2, 4, 2])
@@ -1334,9 +1235,7 @@ with aba_gestao:
                     else:
                         st.warning("⚠️ Preencha o número do processo e a justificativa para auditoria.")
             st.markdown("---")
-            # -----------------------------------------------------
             
-            # (O restante do código que já existia no sub_controle continua normal daqui para baixo)
             if not df_geral_status.empty:
                 data_selecionada = st.selectbox("📅 Data da Sessão (OKs):", sorted(df_geral_status['nome_sessao'].unique(), reverse=True), key="chave_data_oks_gestao")
                 df_filtrado = df_geral_status[df_geral_status['nome_sessao'] == data_selecionada]
@@ -1537,7 +1436,7 @@ with aba_gestao:
                                     df_up = pd.read_excel(arquivo_hist)
                                 
                                 barra = st.progress(0)
-                                lote_insercao = [] # 📦 CRIAMOS A CAIXA PARA O BULK INSERT
+                                lote_insercao = [] 
                                 
                                 for index, row in df_up.iterrows():
                                     p_val = str(row['Processo']).strip() if pd.notna(row.get('Processo')) else ""
@@ -1557,7 +1456,6 @@ with aba_gestao:
                                     if p_limpo and not processo_existe(p_limpo, data_val):
                                         data_historico = f"{data_val} 23:59:59"
                                         
-                                        # Em vez de bater no banco, guardamos na caixa:
                                         lote_insercao.append({
                                             "numero_processo": p_limpo, 
                                             "relator": r_limpo, 
@@ -1568,13 +1466,11 @@ with aba_gestao:
                                             "data_entrada": data_historico, "data_expedido": data_historico, "data_revisado": data_historico, "data_conclusao": data_historico,
                                             "expedido_ok": 1, "revisado_ok": 1, "despachado": 1, "urgente": 0,
                                             "enviado_email": 0, "enviado_mensageria": 0, "recebido": 0,
-                                            "precisa_correcao": 0, "motivo_correcao": "" # BLINDAGEM: Garante que não vá pro Painel Ativo
+                                            "precisa_correcao": 0, "motivo_correcao": ""
                                         })
                                     barra.progress((index + 1) / len(df_up))
                                 
-                                # ENVIAMOS A CAIXA FECHADA PARA A NUVEM
                                 if lote_insercao:
-                                    # Dividimos em blocos de 100 para o Supabase não engasgar
                                     for i in range(0, len(lote_insercao), 100):
                                         conn.client.table("processos").insert(lote_insercao[i:i+100]).execute()
                                     
@@ -1597,7 +1493,7 @@ with aba_gestao:
                                         "data_entrada": agora, "data_expedido": agora, "data_revisado": agora, "data_conclusao": agora,
                                         "expedido_ok": 1, "revisado_ok": 1, "despachado": 1, "urgente": 0,
                                         "enviado_email": 0, "enviado_mensageria": 0, "recebido": 0,
-                                        "precisa_correcao": 0, "motivo_correcao": "" # BLINDAGEM AQUI TAMBÉM
+                                        "precisa_correcao": 0, "motivo_correcao": ""
                                     }).execute()
                                     st.success(f"🎉 Processo {p_limpo} enviado para o Histórico!")
                                     time.sleep(2)
@@ -1606,14 +1502,6 @@ with aba_gestao:
                                     st.error(f"Erro: {e}")
                             else: st.error("❌ Este processo já existe no sistema.")
                         
-                        if sucessos > 0:
-                            st.success(f"🎉 {sucessos} processos recuperados e enviados direto para o Histórico da pauta '{hist_sessao}'!")
-                            time.sleep(2)
-                            st.rerun()
-                        else:
-                            st.warning("⚠️ Nenhum processo novo foi inserido.")
-
-                               
                 st.subheader("🧹 MODO LIMPEZA: Apagar Banco de Dados")
                 st.write("Escolha se deseja apagar apenas os processos de um período específico ou resetar todo o sistema.")
                 tipo_limpeza = st.radio("Selecione a ação:", ["Limpar por Período", "Modo Nuclear (Zerar Tudo)"], horizontal=True)
@@ -1668,19 +1556,14 @@ with aba_gestao:
                 df_concluidos = df_dados[df_dados['despachado'] == 1].copy()
                 df_tempo_real = df_concluidos[df_concluidos['data_entrada'] != df_concluidos['data_conclusao']].copy()
 
-                # --- BLOCO BLINDADO DE CÁLCULOS ---
-                # Criamos as colunas com valor 0 por padrão para evitar erros
                 df_tempo_real['min_exp'] = 0.0
                 df_tempo_real['min_rev'] = 0.0
                 df_tempo_real['min_total'] = 0.0
 
                 if not df_tempo_real.empty:
-                    # Só fazemos o cálculo se o DataFrame não estiver vazio
-                    # E garantimos que as colunas são do tipo datetime
                     df_tempo_real['min_exp'] = (pd.to_datetime(df_tempo_real['data_expedido_dt']) - pd.to_datetime(df_tempo_real['data_entrada_dt'])).dt.total_seconds() / 60
                     df_tempo_real['min_rev'] = (pd.to_datetime(df_tempo_real['data_revisado_dt']) - pd.to_datetime(df_tempo_real['data_expedido_dt'])).dt.total_seconds() / 60
                     df_tempo_real['min_total'] = (pd.to_datetime(df_tempo_real['data_conclusao_dt']) - pd.to_datetime(df_tempo_real['data_entrada_dt'])).dt.total_seconds() / 60
-                # ----------------------------------
 
                 def format_tempo(minutos):
                     if pd.isna(minutos) or minutos < 0: return "N/A"
@@ -1702,7 +1585,6 @@ with aba_gestao:
                     col3.metric("⚖️ Média Proc./Sessão", media_proc_sessao)
                     col4.metric("🔥 Urgências Atendidas", total_urgentes)
                     st.markdown("<br>", unsafe_allow_html=True)
-                    # --- NOVO MÓDULO DE ANALYTICS: OFÍCIOS E ERROS ---
                     st.markdown("---")
                     st.markdown("### ✉️ Inteligência de Expedição (Ofícios e Correções)")
                     
@@ -1712,7 +1594,6 @@ with aba_gestao:
                         df_oficios_analytics = pd.DataFrame()
 
                     if not df_oficios_analytics.empty:
-                        # Filtra apenas os que realmente foram despachados
                         df_ofic_despachados = df_oficios_analytics[df_oficios_analytics['oficio_despachado'] == 1]
                         total_oficios = len(df_ofic_despachados)
                         proc_com_oficios = df_ofic_despachados['numero_processo'].nunique()
@@ -1751,7 +1632,6 @@ with aba_gestao:
                         else:
                             st.success("🎉 Zero processos na quarentena hoje! Equipe trabalhando com 100% de precisão.")
                     st.markdown("<br>", unsafe_allow_html=True)
-                    # -------------------------------------------------
                     st.markdown("### 🤝 Volume de Participação Operacional (Carga de Trabalho)")
                     col_g1, col_g2 = st.columns(2)
                     with col_g1:
