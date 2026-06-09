@@ -852,7 +852,11 @@ with aba_sessoes:
         # 1. TABELA PRINCIPAL (MESA DE TRABALHO)
         # =======================================================
         if not df_normais.empty:
-            cols_base = ['id', 'urgente', 'numero_processo', 'relator', 'expedicao', 'expedido_ok', 'revisao', 'revisado_ok']
+            # --- COLUNA DINÂMICA DE ORIGEM ---
+            cols_base = ['id', 'urgente', 'numero_processo', 'relator']
+            if tipo_sessao_tb == "Urgente": cols_base.append('tipo_sessao')
+            cols_base.extend(['expedicao', 'expedido_ok', 'revisao', 'revisado_ok'])
+            
             if tipo_sessao_tb == "Sessão Reservada": cols_base.extend(['enviado_email', 'enviado_mensageria', 'recebido'])
             cols_base.append('despachado')
 
@@ -868,11 +872,14 @@ with aba_sessoes:
             # Remove a antiga coluna bool de revisão
             df_exibicao = df_exibicao.drop(columns=['revisado_ok'])
             
-            # --- AJUSTE DA ORDEM DAS COLUNAS (Ação do Revisor antes de Despachado) ---
-            final_cols = ['id', 'urgente', 'numero_processo', 'relator', 'expedicao', 'expedido_ok', 'revisao', 'Status Revisão', 'Motivo Devolução']
+            # --- AJUSTE DA ORDEM DAS COLUNAS ---
+            final_cols = ['id', 'urgente', 'numero_processo', 'relator']
+            if tipo_sessao_tb == "Urgente": final_cols.append('tipo_sessao')
+            final_cols.extend(['expedicao', 'expedido_ok', 'revisao', 'Status Revisão', 'Motivo Devolução'])
+            
             if tipo_sessao_tb == "Sessão Reservada": 
                 final_cols.extend(['enviado_email', 'enviado_mensageria', 'recebido'])
-            final_cols.append('despachado') # Despachado cravado na última posição
+            final_cols.append('despachado') 
             
             df_exibicao = df_exibicao[final_cols]
             # ------------------------------------------------------------------------
@@ -881,7 +888,7 @@ with aba_sessoes:
                 bool_cols = ['enviado_email', 'enviado_mensageria', 'recebido']
                 df_exibicao[bool_cols] = df_exibicao[bool_cols].astype(bool)
 
-            rename_dict = {'numero_processo': 'Processo', 'urgente': 'urgente_flag', 'relator': 'Relator', 'expedicao': 'Expedição', 'expedido_ok': 'Expedido', 'revisao': 'Revisor', 'despachado': 'Despachado'}
+            rename_dict = {'numero_processo': 'Processo', 'urgente': 'urgente_flag', 'relator': 'Relator', 'tipo_sessao': 'Rito Original', 'expedicao': 'Expedição', 'expedido_ok': 'Expedido', 'revisao': 'Revisor', 'despachado': 'Despachado'}
             if tipo_sessao_tb == "Sessão Reservada": rename_dict.update({'enviado_email': 'E-mail', 'enviado_mensageria': 'Mensageria', 'recebido': 'Recebido'})
 
             df_exibicao = df_exibicao.rename(columns=rename_dict)
@@ -897,6 +904,8 @@ with aba_sessoes:
                 "Status Revisão": st.column_config.SelectboxColumn("Ação do Revisor", options=["⏳ Pendente", "✅ OK", "❌ Corrigir"], required=True),
                 "Motivo Devolução": st.column_config.TextColumn("Motivo (Só se Corrigir)")
             }
+            # Se for a aba urgente, trava a coluna de Origem para ninguém editar
+            if tipo_sessao_tb == "Urgente": cfg_colunas["Rito Original"] = st.column_config.TextColumn("Rito Original", disabled=True)
             if tipo_sessao_tb == "Sessão Reservada": cfg_colunas.update({"E-mail": st.column_config.CheckboxColumn("E-mail"), "Mensageria": st.column_config.CheckboxColumn("Mensageria"), "Recebido": st.column_config.CheckboxColumn("Recebido")})
 
             pendentes = len(df_exibicao[df_exibicao['Despachado'] == False])
@@ -918,7 +927,9 @@ with aba_sessoes:
                             
                             # Trava de Ofícios antes do Despacho
                             if linha_nova.get('Despachado') == True and linha_antiga.get('Despachado') == False:
-                                if tipo_sessao_tb in ["Sessão Ordinária", "Sessão Ordinária Virtual"]:
+                                # Aqui lemos o tipo de sessão real do banco (ou da tela se for urgente)
+                                rito_avaliado = linha_nova.get('Rito Original', tipo_sessao_tb)
+                                if rito_avaliado in ["Sessão Ordinária", "Sessão Ordinária Virtual"]:
                                     isento = conn.client.table("processos").select("precisa_correcao").eq("numero_processo", linha_nova['Processo']).execute().data
                                     if not (isento and isento[0].get('precisa_correcao') == 2):
                                         if not tem_oficio_cadastrado(linha_nova['Processo']):
@@ -932,7 +943,6 @@ with aba_sessoes:
                             
                             mudancas = {}
                             
-                            # Cérebro da Revisão Automática via Dropdown
                             if linha_nova['Status Revisão'] != linha_antiga['Status Revisão']:
                                 if linha_nova['Status Revisão'] == "❌ Corrigir":
                                     motivo = str(linha_nova.get('Motivo Devolução', '')).strip()
@@ -950,7 +960,6 @@ with aba_sessoes:
                                 else:
                                     mudancas['revisado_ok'] = 0
 
-                            # Demais mapeamentos simples
                             mapa_banco_simples = {'Expedição': 'expedicao', 'Revisor': 'revisao', 'Expedido': 'expedido_ok', 'Despachado': 'despachado', 'E-mail': 'enviado_email', 'Mensageria': 'enviado_mensageria', 'Recebido': 'recebido'}
                             for col_tela, col_banco in mapa_banco_simples.items():
                                 if col_tela in linha_nova and linha_nova[col_tela] != linha_antiga.get(col_tela):
@@ -1020,8 +1029,8 @@ with aba_sessoes:
         df_urg = carregar_dados_sqlite() # Carrega banco amplo
         
         if not df_urg.empty and 'urgente' in df_urg.columns:
-            # FILTRA APENAS OS ATIVOS QUE SÃO URGENTES
-            df_urg = df_urg[(df_urg['urgente'] == 1) & (df_urg['despachado'] == 0)]
+            # FILTRA OS URGENTES E IGNORA OS ADMINISTRATIVOS (EXCLUSIVOS DA CHEFIA)
+            df_urg = df_urg[(df_urg['urgente'] == 1) & (df_urg['despachado'] == 0) & (df_urg['tipo_sessao'] != "Sessão Administrativa")]
             
             if colab_painel != "👁️ Ver Todos os Processos do Setor":
                 df_urg = df_urg[(df_urg['expedicao'] == colab_painel) | (df_urg['revisao'] == colab_painel)]
@@ -1033,7 +1042,6 @@ with aba_sessoes:
                     exibir_tabela_interativa(df_urg[df_urg['nome_sessao'] == data], "urg", data, "Urgente")
             else:
                 st.success("✨ Nenhuma pauta crítica ou urgência pendente no momento!")
-
     with sub_aba_ord:
         df_ord = carregar_dados_sqlite("Sessão Ordinária")
         if not df_ord.empty:
