@@ -22,6 +22,28 @@ except Exception as e:
     st.error(f"Erro crítico: Não foi possível conectar ao Supabase. Verifique seu secrets.toml. Detalhe: {e}")
     st.stop()
 
+# --- DEBUG DO LETREIRO (COLOQUE NO TOPO DO SCRIPT) ---
+st.markdown("### 🔍 Debug do Letreiro")
+try:
+    res_raw = conn.client.table("avisos").select("*").eq("ativo", 1).execute().data
+    st.write(f"Total de avisos ativos no banco: {len(res_raw)}")
+    
+    agora = datetime.now()
+    st.write(f"Hora atual do servidor: {agora}")
+    
+    for row in res_raw:
+        # Exibe o que ele está lendo do banco
+        st.write(f"Aviso: '{row['mensagem']}' | Expira em: {row['data_expiracao']}")
+        
+        # Faz o teste de comparação manualmente
+        try:
+            expiracao = datetime.strptime(row['data_expiracao'], "%d/%m/%Y %H:%M:%S")
+            st.write(f"-> Comparação: {agora} < {expiracao} é {agora < expiracao}")
+        except Exception as e:
+            st.error(f"Erro na data: {e}")
+except Exception as e:
+    st.error(f"Erro ao ler banco: {e}")
+
 def normalizar_texto(texto):
     """Remove acentos, espaços extras e deixa tudo minúsculo para comparação."""
     if not texto or str(texto).strip() == "": return ""
@@ -572,42 +594,22 @@ def adicionar_aviso(usuario_alvo, numero_processo, mensagem, duracao_horas=24):
     except Exception as e: return False, f"❌ Erro: {e}"
 
 def obter_avisos_pendentes():
-    # Pega a hora atual do servidor
-    agora = datetime.now()
-    
     try:
-        # Busca apenas os avisos ativos
+        # Busca avisos ativos e ignora a data de expiração por um momento
         res = conn.client.table("avisos").select("*").eq("ativo", 1).execute().data
-        if not res: 
-            return pd.DataFrame()
+        if not res: return pd.DataFrame()
         
         avisos_validos = []
         for row in res:
-            try:
-                # Tenta converter a data salva no Supabase
-                expiracao = datetime.strptime(row['data_expiracao'], "%d/%m/%Y %H:%M:%S")
-                
-                # SE O AVISO JÁ EXPIROU, DESATIVA NO BANCO AUTOMATICAMENTE
-                if agora > expiracao:
-                    conn.client.table("avisos").update({"ativo": 0}).eq("id", row['id']).execute()
-                    continue
-                
-                # Se for aviso individual (tem processo), checa se o processo não foi despachado
-                if row['numero_processo']:
-                    proc_check = conn.client.table("processos").select("despachado").eq("numero_processo", row['numero_processo']).execute().data
-                    if proc_check and proc_check[0]['despachado'] == 0:
-                        avisos_validos.append(row)
-                else:
-                    # Se for "Para todos", exibe
+            # Apenas verifica se o processo foi despachado (se houver processo)
+            if row.get('numero_processo'):
+                proc_check = conn.client.table("processos").select("despachado").eq("numero_processo", row['numero_processo']).execute().data
+                if proc_check and proc_check[0]['despachado'] == 0:
                     avisos_validos.append(row)
-                    
-            except Exception as e:
-                # Se der erro na data, não trava o sistema, apenas pula
-                continue
-                
+            else:
+                avisos_validos.append(row)
         return pd.DataFrame(avisos_validos)
     except Exception as e:
-        st.sidebar.error(f"Erro ao carregar avisos: {e}")
         return pd.DataFrame()
 
 def desativar_aviso(id_aviso):
