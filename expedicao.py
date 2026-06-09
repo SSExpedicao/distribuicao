@@ -896,17 +896,29 @@ with aba_sessoes:
             # A SOLUÇÃO DA BRECHA: Identifica se a Mesa está em modo Global (Leitura)
             # ------------------------------------------------------------------------
             painel_atual = st.session_state.get('filtro_colab_painel_ativo', "👁️ Ver Todos os Processos do Setor")
-            modo_leitura = (painel_atual == "👁️ Ver Todos os Processos do Setor")
-
+            # --- LÓGICA DE SUPER-PODER DA CHEFIA ---
+            # Verifica quem é o chefe atual no banco
+            equipe_data = conn.client.table("equipe").select("nome, cargo").execute().data
+            chefes = [row['nome'] for row in equipe_data if row.get('cargo') == "Chefia"]
+            
+            # O modo de edição é liberado se for a chefia OU se o colaborador selecionado for o responsável
+            e_chefia = (painel_atual in chefes)
+            
+            # Bloqueia a edição apenas se não for chefia E estiver em modo global
+            modo_leitura = (painel_atual == "👁️ Ver Todos os Processos do Setor" and not e_chefia)
+            
+            # --- AJUSTE DAS TRAVAS ---
+            # Se for chefia, desabilitamos as travas de ofício e revisão
+            # Usaremos 'e_chefia' para decidir se permitimos o despacho sem ofício
+            
             cfg_colunas = {
                 "id": None, 
                 "urgente_flag": None, 
                 "Processo": st.column_config.TextColumn(disabled=True), 
                 "Relator": st.column_config.TextColumn(disabled=True), 
                 "Expedição": st.column_config.SelectboxColumn("Expedição", options=TODOS_NOMES, disabled=modo_leitura, required=True), 
-                "Expedido": st.column_config.CheckboxColumn("Expedido", disabled=True),
+                "Expedido": st.column_config.CheckboxColumn("Expedido", disabled=modo_leitura),
                 "Revisor": st.column_config.SelectboxColumn("Revisor", options=TODOS_NOMES, disabled=modo_leitura, required=True),
-                # Bloqueia o dropdown de revisão e a justificativa se estiver no modo global
                 "Status Revisão": st.column_config.SelectboxColumn("Ação do Revisor", options=["⏳ Pendente", "✅ OK", "❌ Corrigir"], disabled=modo_leitura, required=True),
                 "Motivo Devolução": st.column_config.TextColumn("Motivo (Só se Corrigir)", disabled=modo_leitura),
                 "Despachado": st.column_config.CheckboxColumn("Despachado", disabled=modo_leitura)
@@ -935,33 +947,31 @@ with aba_sessoes:
                         linha_antiga = df_exibicao.iloc[i].to_dict()
                         if linha_nova != linha_antiga:
                             
-                            # TRAVA DE SEGURANÇA INTERNA: Só o próprio Revisor mexe na caixinha dele
-                            if linha_nova['Status Revisão'] != linha_antiga['Status Revisão']:
-                                if colab_painel != linha_nova['Revisor']:
-                                    st.error(f"🚨 ERRO (Processo {linha_nova['Processo']}): Apenas o Revisor designado ({linha_nova['Revisor']}) pode alterar o Status de Revisão!")
-                                    bloqueio_ativo = True
-                                    continue
-                            
-                            # TRAVA MESTRE ANTES DO DESPACHO FINAL
-                            if linha_nova.get('Despachado') == True and linha_antiga.get('Despachado') == False:
-                                if linha_nova.get('Status Revisão') != "✅ OK":
-                                    st.error(f"🚨 ERRO (Processo {linha_nova['Processo']}): Só é possível despachar após o Revisor dar o '✅ OK'!")
-                                    bloqueio_ativo = True
-                                    continue
+                            # A CHEFIA PULA AS TRAVAS!
+                            if not e_chefia:
+                                # TRAVA: Quem pode mudar a revisão?
+                                if linha_nova['Status Revisão'] != linha_antiga['Status Revisão']:
+                                    if colab_painel != "👁️ Ver Todos os Processos do Setor" and colab_painel != linha_nova['Revisor']:
+                                        st.error(f"🚨 ERRO: Apenas o Revisor ({linha_nova['Revisor']}) pode alterar o Status!")
+                                        bloqueio_ativo = True
+                                        continue
                                 
-                                rito_avaliado = linha_nova.get('Rito Original', tipo_sessao_tb)
-                                if rito_avaliado in ["Sessão Ordinária", "Sessão Ordinária Virtual"]:
-                                    isento = conn.client.table("processos").select("precisa_correcao").eq("numero_processo", linha_nova['Processo']).execute().data
-                                    if not (isento and isento[0].get('precisa_correcao') == 2):
-                                        if not tem_oficio_cadastrado(linha_nova['Processo']):
-                                            st.error(f"🚨 ERRO (Processo {linha_nova['Processo']}): Faltam Ofícios. Cadastre-os ou isente com justificativa na Aba 2.5!")
-                                            bloqueio_ativo = True
-                                            continue
-                                        if verificar_oficios_pendentes(linha_nova['Processo']):
-                                            st.error(f"🚨 ERRO (Processo {linha_nova['Processo']}): Há ofícios pendentes. Conclua-os na Aba 2.5 primeiro!")
-                                            bloqueio_ativo = True
-                                            continue
-                            
+                                # TRAVA MESTRE: Ofícios e OK do Revisor
+                                if linha_nova.get('Despachado') == True and linha_antiga.get('Despachado') == False:
+                                    if linha_nova.get('Status Revisão') != "✅ OK":
+                                        st.error(f"🚨 ERRO: Só é possível despachar após o '✅ OK' do Revisor!")
+                                        bloqueio_ativo = True
+                                        continue
+                                    
+                                    rito_avaliado = linha_nova.get('Rito Original', tipo_sessao_tb)
+                                    if rito_avaliado in ["Sessão Ordinária", "Sessão Ordinária Virtual"]:
+                                        isento = conn.client.table("processos").select("precisa_correcao").eq("numero_processo", linha_nova['Processo']).execute().data
+                                        if not (isento and isento[0].get('precisa_correcao') == 2):
+                                            if not tem_oficio_cadastrado(linha_nova['Processo']) or verificar_oficios_pendentes(linha_nova['Processo']):
+                                                st.error(f"🚨 ERRO: Processo {linha_nova['Processo']} pendente de ofícios!")
+                                                bloqueio_ativo = True
+                                                continue
+                                                        
                             mudancas = {}
                             
                             if linha_nova['Status Revisão'] != linha_antiga['Status Revisão']:
