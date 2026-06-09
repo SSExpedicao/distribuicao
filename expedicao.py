@@ -841,19 +841,25 @@ with aba_sessoes:
 
             df_exibicao = df_normais[cols_base].copy()
             
-            # TRADUÇÃO DO BANCO PARA A INTERFACE
+            # TRADUÇÃO E CRIAÇÃO DAS NOVAS COLUNAS
             df_exibicao['expedido_ok'] = df_exibicao['expedido_ok'].astype(bool)
             df_exibicao['despachado'] = df_exibicao['despachado'].astype(bool)
             
-            # Nova Lógica do Dropdown de Revisão
-            def traduzir_revisao(val):
-                return "✅ OK" if val in [1, 1.0, True, '1'] else "⏳ Pendente"
-            df_exibicao['Status Revisão'] = df_exibicao['revisado_ok'].apply(traduzir_revisao)
-            df_exibicao['Motivo Devolução'] = "" # Espaço em branco para digitar o erro
+            df_exibicao['Status Revisão'] = df_exibicao['revisado_ok'].apply(lambda val: "✅ OK" if val in [1, 1.0, True, '1'] else "⏳ Pendente")
+            df_exibicao['Motivo Devolução'] = "" 
             
-            # Removemos a antiga coluna de checkbox
-            cols_drop = ['revisado_ok']
+            # Remove a antiga coluna bool de revisão
+            df_exibicao = df_exibicao.drop(columns=['revisado_ok'])
             
+            # --- AJUSTE DA ORDEM DAS COLUNAS (Ação do Revisor antes de Despachado) ---
+            final_cols = ['id', 'urgente', 'numero_processo', 'relator', 'expedicao', 'expedido_ok', 'revisao', 'Status Revisão', 'Motivo Devolução']
+            if tipo_sessao_tb == "Sessão Reservada": 
+                final_cols.extend(['enviado_email', 'enviado_mensageria', 'recebido'])
+            final_cols.append('despachado') # Despachado cravado na última posição
+            
+            df_exibicao = df_exibicao[final_cols]
+            # ------------------------------------------------------------------------
+
             if tipo_sessao_tb == "Sessão Reservada": 
                 bool_cols = ['enviado_email', 'enviado_mensageria', 'recebido']
                 df_exibicao[bool_cols] = df_exibicao[bool_cols].astype(bool)
@@ -861,7 +867,7 @@ with aba_sessoes:
             rename_dict = {'numero_processo': 'Processo', 'urgente': 'urgente_flag', 'relator': 'Relator', 'expedicao': 'Expedição', 'expedido_ok': 'Expedido', 'revisao': 'Revisor', 'despachado': 'Despachado'}
             if tipo_sessao_tb == "Sessão Reservada": rename_dict.update({'enviado_email': 'E-mail', 'enviado_mensageria': 'Mensageria', 'recebido': 'Recebido'})
 
-            df_exibicao = df_exibicao.rename(columns=rename_dict).drop(columns=cols_drop)
+            df_exibicao = df_exibicao.rename(columns=rename_dict)
             styled_df = df_exibicao.style.apply(color_urgentes, axis=1)
 
             cfg_colunas = {
@@ -871,7 +877,6 @@ with aba_sessoes:
                 "Relator": st.column_config.TextColumn(disabled=True), 
                 "Expedição": st.column_config.SelectboxColumn("Expedição", options=TODOS_NOMES, required=True), 
                 "Revisor": st.column_config.SelectboxColumn("Revisor", options=TODOS_NOMES, required=True),
-                # A NOVA CONFIGURAÇÃO DE DROPDOWN E JUSTIFICATIVA:
                 "Status Revisão": st.column_config.SelectboxColumn("Ação do Revisor", options=["⏳ Pendente", "✅ OK", "❌ Corrigir"], required=True),
                 "Motivo Devolução": st.column_config.TextColumn("Motivo (Só se Corrigir)")
             }
@@ -910,7 +915,7 @@ with aba_sessoes:
                             
                             mudancas = {}
                             
-                            # --- O CÉREBRO DA NOVA REVISÃO AUTOMÁTICA ---
+                            # Cérebro da Revisão Automática via Dropdown
                             if linha_nova['Status Revisão'] != linha_antiga['Status Revisão']:
                                 if linha_nova['Status Revisão'] == "❌ Corrigir":
                                     motivo = str(linha_nova.get('Motivo Devolução', '')).strip()
@@ -919,18 +924,16 @@ with aba_sessoes:
                                         bloqueio_ativo = True
                                         continue
                                     else:
-                                        # Joga para a quarentena
                                         mudancas['precisa_correcao'] = 1
                                         mudancas['motivo_correcao'] = motivo
                                         mudancas['revisado_ok'] = 0
                                 elif linha_nova['Status Revisão'] == "✅ OK":
-                                    # Limpa a quarentena caso estivesse e marca como revisado
                                     mudancas['revisado_ok'] = 1
                                     mudancas['precisa_correcao'] = 0
-                                else: # Se ele voltar a ação para "Pendente"
+                                else:
                                     mudancas['revisado_ok'] = 0
 
-                            # Mapeamentos normais (Expedidor, Email, Despacho)
+                            # Demais mapeamentos simples
                             mapa_banco_simples = {'Expedição': 'expedicao', 'Revisor': 'revisao', 'Expedido': 'expedido_ok', 'Despachado': 'despachado', 'E-mail': 'enviado_email', 'Mensageria': 'enviado_mensageria', 'Recebido': 'recebido'}
                             for col_tela, col_banco in mapa_banco_simples.items():
                                 if col_tela in linha_nova and linha_nova[col_tela] != linha_antiga.get(col_tela):
@@ -949,16 +952,14 @@ with aba_sessoes:
                         st.warning("⚠️ Algumas alterações foram canceladas. Verifique os erros apontados.")
                         
         # =======================================================
-        # 2. TABELA DE QUARENTENA E DEVOLUÇÃO (NOVA VERSÃO INTERATIVA)
+        # 2. TABELA DE QUARENTENA E DEVOLUÇÃO
         # =======================================================
         st.markdown("<br>", unsafe_allow_html=True)
         if not df_quarentena.empty:
             st.error("🚨 PROCESSOS EM QUARENTENA (Revisor encontrou erros que precisam ser arrumados)")
             
-            # Prepara os dados para o Expedidor interagir
             df_q_exib = df_quarentena[['id', 'numero_processo', 'relator', 'expedicao', 'revisao', 'motivo_correcao']].copy()
-            df_q_exib['Ação do Expedidor'] = False # Cria o Checkbox
-            
+            df_q_exib['Ação do Expedidor'] = False 
             df_q_exib = df_q_exib.rename(columns={'numero_processo':'Processo', 'relator':'Relator', 'expedicao':'Expedidor', 'revisao': 'Revisor', 'motivo_correcao':'Motivo Apontado'})
             
             with st.form(key=f"form_quarentena_{key_prefix}_{data_sessao}"):
@@ -983,7 +984,6 @@ with aba_sessoes:
                         if q_edited.iloc[i]['Ação do Expedidor'] == True:
                             id_proc = int(q_edited.iloc[i]['id'])
                             
-                            # Tira da quarentena e reseta a revisão (precisa ser revisado de novo)
                             conn.client.table("processos").update({
                                 "precisa_correcao": 0, 
                                 "motivo_correcao": "", 
