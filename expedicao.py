@@ -1057,6 +1057,13 @@ with aba_sessoes:
 
         st.markdown("---")
 
+         # Identifica quem são os chefes antes de abrir as abas
+    equipe_data = conn.client.table("equipe").select("nome, cargo").execute().data
+    lista_chefes = [row['nome'] for row in equipe_data if row.get('cargo') == "Chefia"]
+    
+    # Isso define se o usuário logado tem poderes totais
+    e_chefia = (colab_painel in lista_chefes)
+    
     with sub_aba_urg:
         st.subheader("🚨 Painel Unificado de Demandas Urgentes")
         df_urg = carregar_dados_sqlite() # Carrega banco amplo
@@ -1065,8 +1072,9 @@ with aba_sessoes:
             # FILTRA OS URGENTES E IGNORA OS ADMINISTRATIVOS (EXCLUSIVOS DA CHEFIA)
             df_urg = df_urg[(df_urg['urgente'] == 1) & (df_urg['despachado'] == 0) & (df_urg['tipo_sessao'] != "Sessão Administrativa")]
             
-            if colab_painel != "👁️ Ver Todos os Processos do Setor":
-                df_urg = df_urg[(df_urg['expedicao'] == colab_painel) | (df_urg['revisao'] == colab_painel)]
+            # A lógica mudou: Agora só filtra se não for o modo "Ver Todos" E não for Chefia
+        if colab_painel != "👁️ Ver Todos os Processos do Setor" and not e_chefia:
+    df_ord = df_ord[(df_ord['expedicao'] == colab_painel) | (df_ord['revisao'] == colab_painel)]
                 
             sessoes_com_urgentes = sorted(df_urg['nome_sessao'].unique().tolist())
             
@@ -1081,8 +1089,9 @@ with aba_sessoes:
             # BLINDAGEM: Retira os urgentes da pauta comum
             df_ord = df_ord[df_ord['urgente'] == 0]
             
-            if colab_painel != "👁️ Ver Todos os Processos do Setor":
-                df_ord = df_ord[(df_ord['expedicao'] == colab_painel) | (df_ord['revisao'] == colab_painel)]
+            # A lógica mudou: Agora só filtra se não for o modo "Ver Todos" E não for Chefia
+        if colab_painel != "👁️ Ver Todos os Processos do Setor" and not e_chefia:
+    df_ord = df_ord[(df_ord['expedicao'] == colab_painel) | (df_ord['revisao'] == colab_painel)]
             
             sessoes_com_processos = [data for data in df_ord['nome_sessao'].unique() if f"Sessão Ordinária | {str(data).strip()}" not in sessoes_finalizadas]
             
@@ -1098,8 +1107,10 @@ with aba_sessoes:
             # BLINDAGEM: Retira os urgentes da pauta comum
             df_ordv = df_ordv[df_ordv['urgente'] == 0]
             
-            if colab_painel != "👁️ Ver Todos os Processos do Setor":
-                df_ordv = df_ordv[(df_ordv['expedicao'] == colab_painel) | (df_ordv['revisao'] == colab_painel)]
+            # A lógica mudou: Agora só filtra se não for o modo "Ver Todos" E não for Chefia
+# A lógica mudou: Agora só filtra se não for o modo "Ver Todos" E não for Chefia
+        if colab_painel != "👁️ Ver Todos os Processos do Setor" and not e_chefia:
+    df_ord = df_ord[(df_ord['expedicao'] == colab_painel) | (df_ord['revisao'] == colab_painel)]
                 
             sessoes_com_processos = [data for data in df_ordv['nome_sessao'].unique() if f"Sessão Ordinária Virtual | {str(data).strip()}" not in sessoes_finalizadas]
             
@@ -1115,8 +1126,9 @@ with aba_sessoes:
             # BLINDAGEM: Retira os urgentes da pauta comum
             df_res = df_res[df_res['urgente'] == 0]
             
-            if colab_painel != "👁️ Ver Todos os Processos do Setor":
-                df_res = df_res[(df_res['expedicao'] == colab_painel) | (df_res['revisao'] == colab_painel)]
+            # A lógica mudou: Agora só filtra se não for o modo "Ver Todos" E não for Chefia
+        if colab_painel != "👁️ Ver Todos os Processos do Setor" and not e_chefia:
+    df_ord = df_ord[(df_ord['expedicao'] == colab_painel) | (df_ord['revisao'] == colab_painel)]
                 
             sessoes_com_processos = [data for data in df_res['nome_sessao'].unique() if f"Sessão Reservada | {str(data).strip()}" not in sessoes_finalizadas]
             
@@ -1132,8 +1144,9 @@ with aba_sessoes:
             # BLINDAGEM: Retira os urgentes da pauta comum
             df_adm = df_adm[df_adm['urgente'] == 0]
             
-            if colab_painel != "👁️ Ver Todos os Processos do Setor":
-                df_adm = df_adm[(df_adm['expedicao'] == colab_painel) | (df_adm['revisao'] == colab_painel)]
+            # A lógica mudou: Agora só filtra se não for o modo "Ver Todos" E não for Chefia
+        if colab_painel != "👁️ Ver Todos os Processos do Setor" and not e_chefia:
+    df_ord = df_ord[(df_ord['expedicao'] == colab_painel) | (df_ord['revisao'] == colab_painel)]
                 
             sessoes_com_processos = [data for data in df_adm['nome_sessao'].unique() if f"Sessão Administrativa | {str(data).strip()}" not in sessoes_finalizadas]
             
