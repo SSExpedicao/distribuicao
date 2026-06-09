@@ -852,7 +852,6 @@ with aba_sessoes:
         # 1. TABELA PRINCIPAL (MESA DE TRABALHO)
         # =======================================================
         if not df_normais.empty:
-            # --- COLUNA DINÂMICA DE ORIGEM ---
             cols_base = ['id', 'urgente', 'numero_processo', 'relator']
             if tipo_sessao_tb == "Urgente": cols_base.append('tipo_sessao')
             cols_base.extend(['expedicao', 'expedido_ok', 'revisao', 'revisado_ok'])
@@ -882,7 +881,6 @@ with aba_sessoes:
             final_cols.append('despachado') 
             
             df_exibicao = df_exibicao[final_cols]
-            # ------------------------------------------------------------------------
 
             if tipo_sessao_tb == "Sessão Reservada": 
                 bool_cols = ['enviado_email', 'enviado_mensageria', 'recebido']
@@ -894,30 +892,41 @@ with aba_sessoes:
             df_exibicao = df_exibicao.rename(columns=rename_dict)
             styled_df = df_exibicao.style.apply(color_urgentes, axis=1)
 
+            # ------------------------------------------------------------------------
+            # A SOLUÇÃO DA BRECHA: Identifica se a Mesa está em modo Global (Leitura)
+            # ------------------------------------------------------------------------
+            painel_atual = st.session_state.get('filtro_colab_painel_ativo', "👁️ Ver Todos os Processos do Setor")
+            modo_leitura = (painel_atual == "👁️ Ver Todos os Processos do Setor")
+
             cfg_colunas = {
                 "id": None, 
                 "urgente_flag": None, 
                 "Processo": st.column_config.TextColumn(disabled=True), 
                 "Relator": st.column_config.TextColumn(disabled=True), 
-                "Expedição": st.column_config.SelectboxColumn("Expedição", options=TODOS_NOMES, required=True), 
-                "Expedido": st.column_config.CheckboxColumn("Expedido", disabled=True), # TRAVADO! A automação cuida disso
-                "Revisor": st.column_config.SelectboxColumn("Revisor", options=TODOS_NOMES, required=True),
-                "Status Revisão": st.column_config.SelectboxColumn("Ação do Revisor", options=["⏳ Pendente", "✅ OK", "❌ Corrigir"], required=True),
-                "Motivo Devolução": st.column_config.TextColumn("Motivo (Só se Corrigir)")
+                "Expedição": st.column_config.SelectboxColumn("Expedição", options=TODOS_NOMES, disabled=modo_leitura, required=True), 
+                "Expedido": st.column_config.CheckboxColumn("Expedido", disabled=True),
+                "Revisor": st.column_config.SelectboxColumn("Revisor", options=TODOS_NOMES, disabled=modo_leitura, required=True),
+                # Bloqueia o dropdown de revisão e a justificativa se estiver no modo global
+                "Status Revisão": st.column_config.SelectboxColumn("Ação do Revisor", options=["⏳ Pendente", "✅ OK", "❌ Corrigir"], disabled=modo_leitura, required=True),
+                "Motivo Devolução": st.column_config.TextColumn("Motivo (Só se Corrigir)", disabled=modo_leitura),
+                "Despachado": st.column_config.CheckboxColumn("Despachado", disabled=modo_leitura)
             }
-            # Se for a aba urgente, trava a coluna de Origem para ninguém editar
             if tipo_sessao_tb == "Urgente": cfg_colunas["Rito Original"] = st.column_config.TextColumn("Rito Original", disabled=True)
-            if tipo_sessao_tb == "Sessão Reservada": cfg_colunas.update({"E-mail": st.column_config.CheckboxColumn("E-mail"), "Mensageria": st.column_config.CheckboxColumn("Mensageria"), "Recebido": st.column_config.CheckboxColumn("Recebido")})
+            if tipo_sessao_tb == "Sessão Reservada": cfg_colunas.update({"E-mail": st.column_config.CheckboxColumn("E-mail", disabled=modo_leitura), "Mensageria": st.column_config.CheckboxColumn("Mensageria", disabled=modo_leitura), "Recebido": st.column_config.CheckboxColumn("Recebido", disabled=modo_leitura)})
 
             pendentes = len(df_exibicao[df_exibicao['Despachado'] == False])
             if pendentes > 0: titulo_placeholder.markdown(f"##### 📅 {data_sessao} | ⏳ {pendentes} Pendentes", unsafe_allow_html=True)
             else: titulo_placeholder.markdown(f"##### 📅 {data_sessao} | ✅ Concluído!", unsafe_allow_html=True)
 
+            # Alerta amigável avisando que a mesa global é apenas para consulta
+            if modo_leitura:
+                st.info("💡 **Mesa em Modo Leitura (Setor Global):** Para avaliar, revisar ou despachar um processo, selecione o seu nome no filtro do topo da página.")
+
             with st.form(key=f"form_{key_prefix}_{data_sessao}"):
                 edited_df = st.data_editor(styled_df, column_config=cfg_colunas, hide_index=True, use_container_width=True, key=f"{key_prefix}_{data_sessao}")
-                submit_button = st.form_submit_button("💾 Salvar Alterações desta Sessão", type="primary")
+                submit_button = st.form_submit_button("💾 Salvar Alterações desta Sessão", type="primary", disabled=modo_leitura)
 
-                if submit_button:
+                if submit_button and not modo_leitura:
                     alteracoes_feitas = 0
                     bloqueio_ativo = False
                     
@@ -926,23 +935,23 @@ with aba_sessoes:
                         linha_antiga = df_exibicao.iloc[i].to_dict()
                         if linha_nova != linha_antiga:
                             
-                            # =======================================================
-                            # A GRANDE TRAVA MESTRE ANTES DO DESPACHO FINAL
-                            # =======================================================
+                            # TRAVA DE SEGURANÇA INTERNA: Só o próprio Revisor mexe na caixinha dele
+                            if linha_nova['Status Revisão'] != linha_antiga['Status Revisão']:
+                                if colab_painel != linha_nova['Revisor']:
+                                    st.error(f"🚨 ERRO (Processo {linha_nova['Processo']}): Apenas o Revisor designado ({linha_nova['Revisor']}) pode alterar o Status de Revisão!")
+                                    bloqueio_ativo = True
+                                    continue
+                            
+                            # TRAVA MESTRE ANTES DO DESPACHO FINAL
                             if linha_nova.get('Despachado') == True and linha_antiga.get('Despachado') == False:
-                                
-                                # TRAVA 1: O Revisor já deu o aval?
                                 if linha_nova.get('Status Revisão') != "✅ OK":
                                     st.error(f"🚨 ERRO (Processo {linha_nova['Processo']}): Só é possível despachar após o Revisor dar o '✅ OK'!")
                                     bloqueio_ativo = True
                                     continue
                                 
-                                # TRAVA 2: Regra de Ofícios ou Isenção com Justificativa (Apenas Ordinárias)
                                 rito_avaliado = linha_nova.get('Rito Original', tipo_sessao_tb)
                                 if rito_avaliado in ["Sessão Ordinária", "Sessão Ordinária Virtual"]:
                                     isento = conn.client.table("processos").select("precisa_correcao").eq("numero_processo", linha_nova['Processo']).execute().data
-                                    
-                                    # Se "precisa_correcao" não for 2 (que é o nosso código para Isento)
                                     if not (isento and isento[0].get('precisa_correcao') == 2):
                                         if not tem_oficio_cadastrado(linha_nova['Processo']):
                                             st.error(f"🚨 ERRO (Processo {linha_nova['Processo']}): Faltam Ofícios. Cadastre-os ou isente com justificativa na Aba 2.5!")
@@ -952,11 +961,9 @@ with aba_sessoes:
                                             st.error(f"🚨 ERRO (Processo {linha_nova['Processo']}): Há ofícios pendentes. Conclua-os na Aba 2.5 primeiro!")
                                             bloqueio_ativo = True
                                             continue
-                            # =======================================================
                             
                             mudancas = {}
                             
-                            # Cérebro da Revisão Automática via Dropdown
                             if linha_nova['Status Revisão'] != linha_antiga['Status Revisão']:
                                 if linha_nova['Status Revisão'] == "❌ Corrigir":
                                     motivo = str(linha_nova.get('Motivo Devolução', '')).strip()
@@ -971,13 +978,12 @@ with aba_sessoes:
                                 elif linha_nova['Status Revisão'] == "✅ OK":
                                     mudancas['revisado_ok'] = 1
                                     mudancas['precisa_correcao'] = 0
-                                else: # Se voltar para Pendente
+                                else:
                                     mudancas['revisado_ok'] = 0
 
-                            # Demais mapeamentos simples
                             mapa_banco_simples = {'Expedição': 'expedicao', 'Revisor': 'revisao', 'Expedido': 'expedido_ok', 'Despachado': 'despachado', 'E-mail': 'enviado_email', 'Mensageria': 'enviado_mensageria', 'Recebido': 'recebido'}
                             for col_tela, col_banco in mapa_banco_simples.items():
-                                if col_tela in linha_nova and linha_nova[col_tela] != linha_antiga.get(col_tela):
+                                if col_tela in línea_nova and linha_nova[col_tela] != linha_antiga.get(col_tela):
                                     val = linha_nova[col_tela]
                                     mudancas[col_banco] = 1 if val else 0 if isinstance(val, bool) else val
 
@@ -990,7 +996,7 @@ with aba_sessoes:
                         time.sleep(1) 
                         st.rerun()
                     elif bloqueio_ativo:
-                        st.warning("⚠️ Algumas alterações foram canceladas pela Trava de Segurança. Verifique os erros apontados.")
+                        st.warning("⚠️ Algumas alterações foram canceladas pela Trava de Segurança.")
                         
         # =======================================================
         # 2. TABELA DE QUARENTENA E DEVOLUÇÃO
@@ -1000,10 +1006,12 @@ with aba_sessoes:
             st.error("🚨 PROCESSOS EM QUARENTENA (Revisor encontrou erros que precisam ser arrumados)")
             
             df_q_exib = df_quarentena[['id', 'numero_processo', 'relator', 'expedicao', 'revisao', 'motivo_correcao']].copy()
+            # Se estiver na mesa global, o Expedidor também não pode dar baixa na quarentena por aqui
             df_q_exib['Ação do Expedidor'] = False 
             df_q_exib = df_q_exib.rename(columns={'numero_processo':'Processo', 'relator':'Relator', 'expedicao':'Expedidor', 'revisao': 'Revisor', 'motivo_correcao':'Motivo Apontado'})
             
             with st.form(key=f"form_quarentena_{key_prefix}_{data_sessao}"):
+                # Usa a variável 'modo_leitura' para desativar o checkbox caso seja a pauta global
                 q_edited = st.data_editor(
                     df_q_exib, 
                     hide_index=True, 
@@ -1015,11 +1023,11 @@ with aba_sessoes:
                         "Expedidor": st.column_config.TextColumn(disabled=True),
                         "Revisor": st.column_config.TextColumn(disabled=True),
                         "Motivo Apontado": st.column_config.TextColumn(disabled=True),
-                        "Ação do Expedidor": st.column_config.CheckboxColumn("✅ Já arrumei. Devolver p/ Revisor!")
+                        "Ação do Expedidor": st.column_config.CheckboxColumn("✅ Já arrumei. Devolver p/ Revisor!", disabled=modo_leitura)
                     }
                 )
                 
-                if st.form_submit_button("🔄 Confirmar Correções", type="primary"):
+                if st.form_submit_button("🔄 Confirmar Correções", type="primary", disabled=modo_leitura):
                     q_alterados = 0
                     for i in range(len(q_edited)):
                         if q_edited.iloc[i]['Ação do Expedidor'] == True:
