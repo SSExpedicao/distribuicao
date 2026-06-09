@@ -22,28 +22,6 @@ except Exception as e:
     st.error(f"Erro crítico: Não foi possível conectar ao Supabase. Verifique seu secrets.toml. Detalhe: {e}")
     st.stop()
 
-# --- DEBUG DO LETREIRO (COLOQUE NO TOPO DO SCRIPT) ---
-st.markdown("### 🔍 Debug do Letreiro")
-try:
-    res_raw = conn.client.table("avisos").select("*").eq("ativo", 1).execute().data
-    st.write(f"Total de avisos ativos no banco: {len(res_raw)}")
-    
-    agora = datetime.now()
-    st.write(f"Hora atual do servidor: {agora}")
-    
-    for row in res_raw:
-        # Exibe o que ele está lendo do banco
-        st.write(f"Aviso: '{row['mensagem']}' | Expira em: {row['data_expiracao']}")
-        
-        # Faz o teste de comparação manualmente
-        try:
-            expiracao = datetime.strptime(row['data_expiracao'], "%d/%m/%Y %H:%M:%S")
-            st.write(f"-> Comparação: {agora} < {expiracao} é {agora < expiracao}")
-        except Exception as e:
-            st.error(f"Erro na data: {e}")
-except Exception as e:
-    st.error(f"Erro ao ler banco: {e}")
-
 def normalizar_texto(texto):
     """Remove acentos, espaços extras e deixa tudo minúsculo para comparação."""
     if not texto or str(texto).strip() == "": return ""
@@ -594,20 +572,37 @@ def adicionar_aviso(usuario_alvo, numero_processo, mensagem, duracao_horas=24):
     except Exception as e: return False, f"❌ Erro: {e}"
 
 def obter_avisos_pendentes():
+    agora = datetime.now()
     try:
-        # Busca avisos ativos e ignora a data de expiração por um momento
         res = conn.client.table("avisos").select("*").eq("ativo", 1).execute().data
         if not res: return pd.DataFrame()
         
         avisos_validos = []
         for row in res:
-            # Apenas verifica se o processo foi despachado (se houver processo)
-            if row.get('numero_processo'):
-                proc_check = conn.client.table("processos").select("despachado").eq("numero_processo", row['numero_processo']).execute().data
-                if proc_check and proc_check[0]['despachado'] == 0:
+            # 1. Verifica se tem data de expiração
+            data_exp = row.get('data_expiracao')
+            
+            # 2. Lógica de validade
+            valido = True # Assume que é válido
+            
+            if data_exp is not None:
+                try:
+                    expiracao = datetime.strptime(data_exp, "%d/%m/%Y %H:%M:%S")
+                    if agora > expiracao:
+                        valido = False # Expirou
+                except:
+                    valido = True # Se a data estiver corrompida, mantém ativo por segurança
+            
+            # 3. Adiciona na lista se for válido
+            if valido:
+                # Se for individual, checa o despacho
+                if row.get('numero_processo'):
+                    proc_check = conn.client.table("processos").select("despachado").eq("numero_processo", row['numero_processo']).execute().data
+                    if proc_check and proc_check[0].get('despachado', 0) == 0:
+                        avisos_validos.append(row)
+                else:
                     avisos_validos.append(row)
-            else:
-                avisos_validos.append(row)
+        
         return pd.DataFrame(avisos_validos)
     except Exception as e:
         return pd.DataFrame()
