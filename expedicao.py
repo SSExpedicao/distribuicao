@@ -767,18 +767,15 @@ with aba_inserir:
             with col3: expedidores_ativos = st.multiselect("👥 Quem fará a Expedição nesta sessão?", opcoes_expedicao, default=opcoes_expedicao)
             with col4: revisores_ativos = st.multiselect("👥 Quem fará a Revisão nesta sessão?", opcoes_revisao, default=opcoes_revisao)
 
-    # ------------------------------------------
-    # ABA 1: INSERÇÃO E DISTRIBUIÇÃO
-    # ------------------------------------------
-    st.markdown("---")
-    st.header("Passo 2: Inserir Processos")
-    modo_insercao = st.radio("Método de Inserção", ["Digitar um por vez (Manual)", "Importar Planilha (Em lote)"], horizontal=True)
+       st.markdown("---")
+       st.header("Passo 2: Inserir Processos")
+       modo_insercao = st.radio("Método de Inserção", ["Digitar um por vez (Manual)", "Importar Planilha (Em lote)"], horizontal=True)
 
-    if modo_insercao == "Digitar um por vez (Manual)":
-        with st.form("form_novo_processo", clear_on_submit=True):
-            col_p, col_r = st.columns(2)
-            with col_p: novo_processo = st.text_input("Número do Processo")
-            if tipo_sessao != "Urgente":
+       if modo_insercao == "Digitar um por vez (Manual)":
+          with st.form("form_novo_processo", clear_on_submit=True):
+             col_p, col_r = st.columns(2)
+             with col_p: novo_processo = st.text_input("Número do Processo")
+             if tipo_sessao != "Urgente":
                 with col_r: novo_relator = st.text_input("Nome do Relator")
             if st.form_submit_button("Verificar e Processar", type="primary"):
                 if tipo_sessao == "Urgente":
@@ -791,7 +788,7 @@ with aba_inserir:
                         ok, msg = salvar_novo_processo(novo_processo, novo_relator, tipo_sessao, nome_sessao_atual, expedidores_ativos, revisores_ativos)
                         st.success(msg) if ok else st.error(msg)
 
-    elif modo_insercao == "Importar Planilha (Em lote)":
+        elif modo_insercao == "Importar Planilha (Em lote)":
         st.info("💡 **Dica:** Para importar vários processos de uma vez, baixe a planilha modelo, preencha com seus dados e faça o upload abaixo.")
         df_modelo = pd.DataFrame({"Processo": ["12345/2026", "67890/2026"], "Relator": ["Conselheiro A", "Conselheiro B"]})
         csv_modelo = df_modelo.to_csv(index=False).encode('utf-8')
