@@ -900,6 +900,7 @@ with aba_sessoes:
                 "Processo": st.column_config.TextColumn(disabled=True), 
                 "Relator": st.column_config.TextColumn(disabled=True), 
                 "Expedição": st.column_config.SelectboxColumn("Expedição", options=TODOS_NOMES, required=True), 
+                "Expedido": st.column_config.CheckboxColumn("Expedido", disabled=True), # TRAVADO! A automação cuida disso
                 "Revisor": st.column_config.SelectboxColumn("Revisor", options=TODOS_NOMES, required=True),
                 "Status Revisão": st.column_config.SelectboxColumn("Ação do Revisor", options=["⏳ Pendente", "✅ OK", "❌ Corrigir"], required=True),
                 "Motivo Devolução": st.column_config.TextColumn("Motivo (Só se Corrigir)")
@@ -1124,22 +1125,23 @@ with aba_oficios:
     if df_ativos_base.empty:
         st.success("✨ Pauta limpa! Nenhum processo aguardando ofícios no momento.")
     else:
-        st.subheader("🔍 1. Filtros de Seleção da Mesa")
+        st.subheader("🔍 1. Minha Mesa de Trabalho")
         col_f1, col_f2, col_f3 = st.columns(3)
         
         with col_f1:
             tipo_sessao_filtro = st.selectbox("Qual a Sessão?", ["Sessão Ordinária", "Sessão Ordinária Virtual"])
             
         with col_f2:
-            quem_expede_global = st.selectbox("Quem está expedindo?", TODOS_NOMES)
+            quem_expede_global = st.selectbox("Identifique-se (Quem está expedindo?):", TODOS_NOMES)
             
-        df_ativos_filtrado = df_ativos_base[df_ativos_base['tipo_sessao'] == tipo_sessao_filtro]
+        # O SEGREDO DO FILTRO INDIVIDUAL ESTÁ AQUI:
+        df_ativos_filtrado = df_ativos_base[(df_ativos_base['tipo_sessao'] == tipo_sessao_filtro) & (df_ativos_base['expedicao'] == quem_expede_global)]
         
         with col_f3:
             if not df_ativos_filtrado.empty:
-                proc_selecionado = st.selectbox("Nº do Processo:", df_ativos_filtrado['numero_processo'].tolist())
+                proc_selecionado = st.selectbox("Meus Processos Pendentes:", df_ativos_filtrado['numero_processo'].tolist())
             else:
-                st.info("Nenhum processo pendente nesta sessão.")
+                st.info("Nenhum processo pendente na sua fila.")
                 proc_selecionado = None
                 
         st.markdown("---")
@@ -1165,14 +1167,6 @@ with aba_oficios:
                 else:
                     tipo_nao_jur = ""
                     st.write("") 
-            
-            if st.button("🚫 Isentar este processo de ofícios/memorandos", use_container_width=True):
-                conn.client.table("processos").update({"precisa_correcao": 2}).eq("numero_processo", proc_selecionado).execute()
-                st.success("✅ Processo marcado como ISENTO. Já pode ser despachado!")
-                time.sleep(1)
-                st.rerun()
-
-            st.markdown("---")
 
             lista_dest = obter_lista_destinatarios(cat_oficio)
             opcoes_dest = ["-- Selecionar Existente --"] + lista_dest + ["➕ Cadastrar Novo Destinatário..."]
@@ -1196,10 +1190,17 @@ with aba_oficios:
             if st.button("💾 Adicionar Ofício/Memorando", type="primary", use_container_width=True):
                 if dest_final and dest_final != "-- Selecionar Existente --" and num_oficio:
                     ok, m = adicionar_oficio(proc_selecionado, num_oficio, cat_oficio, tipo_nao_jur, dest_final, 1, fluxo_doc, quem_expede_global)
-                    conn.client.table("processos").update({"precisa_correcao": 0}).eq("numero_processo", proc_selecionado).execute()
+                    
+                    # AUTOMAÇÃO: Marca o processo como EXPEDIDO automaticamente no banco
+                    agora_str = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                    conn.client.table("processos").update({
+                        "precisa_correcao": 0, 
+                        "expedido_ok": 1,
+                        "data_expedido": agora_str
+                    }).eq("numero_processo", proc_selecionado).execute()
                     
                     if ok: 
-                        st.success(m)
+                        st.success("Ofício gravado e etapa de Expedição concluída!")
                         time.sleep(1)
                         st.rerun()
                     else: st.error(m)
@@ -1207,8 +1208,31 @@ with aba_oficios:
                     st.warning("⚠️ Preencha o Destinatário e o Número do Ofício.")
                     
             st.markdown("---")
+
+            # -----------------------------------------------------
+            # NOVO MÓDULO: ISENÇÃO COM JUSTIFICATIVA OBRIGATÓRIA
+            # -----------------------------------------------------
+            st.subheader("🚫 3. Isenção de Ofícios (Casos Especiais)")
+            col_is1, col_is2 = st.columns([2, 1])
+            with col_is1:
+                motivo_isencao = st.selectbox("Selecione a Justificativa:", ["Comunicação", "Acórdão", "Pedido de Vista", "Despacho Singular", "Sustentação Oral", "SERCON"])
+            with col_is2:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("🚫 Aplicar Isenção e Expedir", use_container_width=True):
+                    agora_str = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                    conn.client.table("processos").update({
+                        "precisa_correcao": 2, 
+                        "motivo_correcao": f"ISENTO: {motivo_isencao}",
+                        "expedido_ok": 1,
+                        "data_expedido": agora_str
+                    }).eq("numero_processo", proc_selecionado).execute()
+                    st.success(f"✅ Processo ISENTO ({motivo_isencao}) e marcado como EXPEDIDO automaticamente!")
+                    time.sleep(1.5)
+                    st.rerun()
+
+            st.markdown("---")
             
-            st.subheader("📋 3. Ofícios Gerados para este Processo")
+            st.subheader("📋 4. Ofícios Gerados para este Processo")
             try:
                 df_oficios = pd.DataFrame(conn.client.table("oficios").select("id, numero_oficio, destinatario, fluxo_documento, oficio_despachado").eq("numero_processo", proc_selecionado).execute().data)
                 if not df_oficios.empty:
