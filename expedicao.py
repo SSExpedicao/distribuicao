@@ -788,6 +788,54 @@ with aba_inserir:
                         ok, msg = salvar_novo_processo(novo_processo, novo_relator, tipo_sessao, nome_sessao_atual, expedidores_ativos, revisores_ativos)
                         st.success(msg) if ok else st.error(msg)
 
+    st.markdown("---")
+    st.header("🛠️ Ferramentas de Manutenção da Pauta")
+    
+    with st.expander("🗑️ Remover Processo ou 🏷️ Renomear Sessão"):
+        # --- REMOVER PROCESSO ---
+        st.subheader("🗑️ Remover Processo Específico")
+        col_rm1, col_rm2, col_rm3, col_rm4 = st.columns([2, 2, 2, 1])
+        with col_rm1: proc_para_remover = st.text_input("Nº Processo:")
+        with col_rm2:
+            datas_disp = sorted(df_geral_status['nome_sessao'].unique(), reverse=True) if not df_geral_status.empty else []
+            data_sessao_remover = st.selectbox("Sessão:", datas_disp)
+        with col_rm3: motivo_remocao = st.selectbox("Motivo:", ["Fora de pauta", "Incluído errado", "Teste", "Outros"], key="motivo_proc")
+        with col_rm4:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("❌ Remover", type="primary", use_container_width=True):
+                if proc_para_remover and data_sessao_remover:
+                    ok, m = remover_processo(proc_para_remover, data_sessao_remover, motivo_remocao)
+                    if ok:
+                        st.success(m)
+                        time.sleep(1.5)
+                        st.rerun()
+                    else: st.error(m)
+        
+        st.markdown("---")
+        
+        # --- NOMEAR SESSÃO ---
+        st.subheader("🏷️ Identificar / Nomear Sessão")
+        col_sn1, col_sn2, col_sn3, col_sn4 = st.columns([2, 2, 1, 1.5])
+        with col_sn1:
+            sessao_alvo = st.selectbox("Sessão Alvo:", datas_disp)
+        with col_sn2: tipo_alvo = st.selectbox("Tipo:", ["Sessão Ordinária", "Sessão Ordinária Virtual", "Sessão Reservada", "Sessão Administrativa"])
+        with col_sn3: num_oficial = st.text_input("Número:", placeholder="Ex: 125")
+        with col_sn4:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("🏷️ Confirmar", type="primary", use_container_width=True):
+                if num_oficial and sessao_alvo:
+                    if " - " in sessao_alvo:
+                        data_pura = sessao_alvo.split(" - ")[-1].strip()
+                        novo_nome = f"Sessão {num_oficial} - {data_pura}"
+                    else: novo_nome = f"Sessão {num_oficial} - {sessao_alvo}"
+                    ok, msg = renomear_sessao(sessao_alvo, novo_nome, tipo_alvo)
+                    if ok:
+                        st.success(msg)
+                        time.sleep(1.5)
+                        st.rerun()
+                    else: st.error(msg)
+                else: st.warning("⚠️ Digite o número da pauta.")
+
     elif modo_insercao == "Importar Planilha (Em lote)":
         st.info("💡 **Dica:** Para importar vários processos de uma vez, baixe a planilha modelo, preencha com seus dados e faça o upload abaixo.")
         df_modelo = pd.DataFrame({"Processo": ["12345/2026", "67890/2026"], "Relator": ["Conselheiro A", "Conselheiro B"]})
@@ -1513,26 +1561,6 @@ with aba_gestao:
                 with col_rev: st.dataframe(df_filtrado['revisao'].value_counts().reset_index(), hide_index=True)
 
             st.markdown("---")
-            with st.container(border=True):
-                st.subheader("🗑️ Remover Processo Específico (Saiu de Pauta)")
-                col_rm1, col_rm2, col_rm3, col_rm4 = st.columns([2, 2, 2, 1])
-                with col_rm1: proc_para_remover = st.text_input("Número Exato do Processo:")
-                with col_rm2:
-                    datas_disp = sorted(df_geral_status['nome_sessao'].unique(), reverse=True) if not df_geral_status.empty else []
-                    data_sessao_remover = st.selectbox("Data da Sessão:", datas_disp)
-                with col_rm3: motivo_remocao = st.selectbox("Motivo:", ["Fora de pauta", "Incluído errado", "Teste", "Outros"], key="motivo_proc")
-                with col_rm4:
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    if st.button("❌ Remover", type="primary", use_container_width=True):
-                        if proc_para_remover and data_sessao_remover:
-                            ok, m = remover_processo(proc_para_remover, data_sessao_remover, motivo_remocao)
-                            if ok:
-                                st.success(m)
-                                time.sleep(1.5)
-                                st.rerun()
-                            else: st.error(m)
-
-            st.markdown("---")
             with st.expander("⚙️ Área Administrativa Avançada (Equipe e Banco de Dados)"):
                 st.subheader("📢 Mural de Avisos (Letreiro)")
                 col_av1, col_av2, col_av3 = st.columns([1, 1, 2])
@@ -1548,31 +1576,6 @@ with aba_gestao:
                             st.rerun()
                         else: st.error(msg)
                     else: st.warning("⚠️ Preencha o número do processo e a mensagem.")
-                st.markdown("---")
-
-                st.subheader("🏷️ Identificar / Nomear Sessão")
-                st.write("Vincule o número oficial para cada tipo de sessão individualmente.")
-                col_sn1, col_sn2, col_sn3, col_sn4 = st.columns([2, 2, 1, 1.5])
-                with col_sn1:
-                    sessoes_disp = sorted(df_geral_status['nome_sessao'].unique(), reverse=True) if not df_geral_status.empty else []
-                    sessao_alvo = st.selectbox("Data / Sessão Alvo:", sessoes_disp)
-                with col_sn2: tipo_alvo = st.selectbox("Qual o Tipo de Sessão?", ["Sessão Ordinária", "Sessão Ordinária Virtual", "Sessão Reservada", "Sessão Administrativa"])
-                with col_sn3: num_oficial = st.text_input("Número:", placeholder="Ex: 125")
-                with col_sn4:
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    if st.button("🏷️ Confirmar", type="primary", use_container_width=True):
-                        if num_oficial and sessao_alvo:
-                            if " - " in sessao_alvo:
-                                data_pura = sessao_alvo.split(" - ")[-1].strip()
-                                novo_nome = f"Sessão {num_oficial} - {data_pura}"
-                            else: novo_nome = f"Sessão {num_oficial} - {sessao_alvo}"
-                            ok, msg = renomear_sessao(sessao_alvo, novo_nome, tipo_alvo)
-                            if ok:
-                                st.success(msg)
-                                time.sleep(1.5)
-                                st.rerun()
-                            else: st.error(msg)
-                        else: st.warning("⚠️ Digite o número da pauta.")
                 st.markdown("---")
 
                 st.subheader("📄 Relatório Gerencial Mensal/Anual")
