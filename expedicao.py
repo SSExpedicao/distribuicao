@@ -72,18 +72,32 @@ def init_db():
         res = conn.client.table("equipe").select("nome").limit(1).execute()
         if not res.data:
             iniciais = [
-                {"nome": "André", "expedicao": 1, "revisao": 1},
-                {"nome": "Elaine", "expedicao": 1, "revisao": 1},
-                {"nome": "Kátia", "expedicao": 1, "revisao": 1},
-                {"nome": "Luana C", "expedicao": 1, "revisao": 1},
-                {"nome": "Jessyca", "expedicao": 1, "revisao": 1},
-                {"nome": "Lu Fiorote", "expedicao": 1, "revisao": 1},
-                {"nome": "Mariana", "expedicao": 1, "revisao": 1},
-                {"nome": "Maurício", "expedicao": 1, "revisao": 1}
+                {"nome": "André", "expedicao": 1, "revisao": 1, "cargo": "Assessor"},
+                {"nome": "Elaine", "expedicao": 1, "revisao": 1, "cargo": "Assessor"},
+                {"nome": "Kátia", "expedicao": 1, "revisao": 1, "cargo": "Assessor"},
+                {"nome": "Luana C", "expedicao": 1, "revisao": 1, "cargo": "Estagiário"},
+                {"nome": "Jessyca", "expedicao": 1, "revisao": 1, "cargo": "Chefia"},
+                {"nome": "Lu Fiorote", "expedicao": 1, "revisao": 1, "cargo": "Assessor"},
+                {"nome": "Mariana", "expedicao": 1, "revisao": 1, "cargo": "Assessor"},
+                {"nome": "Maurício", "expedicao": 1, "revisao": 1, "cargo": "Assessor"}
             ]
             conn.client.table("equipe").insert(iniciais).execute()
     except Exception as e:
         st.sidebar.error(f"Aviso: Erro ao iniciar banco de dados (Equipe). {e}")
+
+def gerenciar_usuario(acao, nome_atual, novo_nome=None, expedicao=0, revisao=0, cargo="Assessor"):
+    try:
+        if acao == 'adicionar': 
+            conn.client.table("equipe").insert({"nome": nome_atual, "expedicao": expedicao, "revisao": revisao, "cargo": cargo}).execute()
+        elif acao == 'remover': 
+            conn.client.table("equipe").delete().eq("nome", nome_atual).execute()
+        elif acao == 'substituir': 
+            conn.client.table("equipe").update({"nome": novo_nome, "expedicao": expedicao, "revisao": revisao, "cargo": cargo}).eq("nome", nome_atual).execute()
+        elif acao == 'editar': 
+            conn.client.table("equipe").update({"expedicao": expedicao, "revisao": revisao, "cargo": cargo}).eq("nome", nome_atual).execute()
+        return True, "✅ Operação realizada com sucesso!"
+    except Exception as e: 
+        return False, f"❌ Erro no banco de dados: {e}"
 
 def carregar_equipes():
     try:
@@ -402,61 +416,78 @@ def gerar_relatorio_gerencial(mes, ano):
 def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, expedidores_selecionados, revisores_selecionados):
     numero_processo, relator = higienizar_dados(numero_processo, relator)
     
-    # Trava: não deixa duplicar na mesma sessão
     if processo_existe(numero_processo, nome_sessao): 
         return False, f"❌ O processo já existe nesta mesma sessão ({nome_sessao})."
     
-    # 1. ESCOPO CORRETO: Puxa o histórico APENAS da sessão de hoje para balancear a mesa atual
-    res_sessao = conn.client.table("processos").select("expedicao, revisao").eq("nome_sessao", nome_sessao).execute().data
+    # 1. Busca mapeamento de cargos do setor para aplicar as travas de direito de acesso
+    try:
+        equipe_dados = conn.client.table("equipe").select("nome, cargo").execute().data
+        cargos = {row['nome']: row.get('cargo', 'Assessor') for row in equipe_dados}
+    except:
+        cargos = {}
+
+    ausentes = obter_colaboradores_ausentes_hoje()
     
     # ---------------------------------------------------------
-    # 2. ROLETA DE EXPEDIÇÃO (Quem pega o processo para elaborar?)
+    # TRAVA DE SEGURANÇA 1: SESSÃO ADMINISTRATIVA (Exclusivo da Chefia)
     # ---------------------------------------------------------
-    contagem_exp = {nome: 0 for nome in expedidores_selecionados}
+    if tipo_sessao == "Sessão Administrativa":
+        if "Jessyca" not in ausentes and "Jessyca" in expedidores_selecionados:
+            exp_filtrados = ["Jessyca"]
+            rev_filtrados = ["Jessyca"]
+        else:
+            # Contingência: Jessyca de férias/atestado -> repassa para Elaine e André
+            exp_filtrados = [n for n in ["Elaine", "André"] if n in expedidores_selecionados]
+            rev_filtrados = [n for n in ["Elaine", "André"] if n in revisores_selecionados]
+            if not exp_filtrados: exp_filtrados = expedidores_selecionados
+            if not rev_filtrados: rev_filtrados = revisores_selecionados
+
+    # ---------------------------------------------------------
+    # TRAVA DE SEGURANÇA 2: SESSÃO RESERVADA (Estagiários Bloqueados)
+    # ---------------------------------------------------------
+    elif tipo_sessao == "Sessão Reservada":
+        exp_filtrados = [n for n in expedidores_selecionados if cargos.get(n) != "Estagiário"]
+        rev_filtrados = [n for n in revisores_selecionados if cargos.get(n) != "Estagiário"]
+        
+    else:
+        # Ordinárias e Virtuais aceitam todo mundo da escala
+        exp_filtrados = expedidores_selecionados
+        rev_filtrados = revisores_selecionados
+
+    # Proteção para evitar listas vazias caso a escala de pauta falte membros
+    if not exp_filtrados: exp_filtrados = expedidores_selecionados
+    if not rev_filtrados: rev_filtrados = revisores_selecionados
+
+    # 2. Puxa histórico da sessão de hoje para balanceamento com os candidatos válidos
+    res_sessao = conn.client.table("processos").select("expedicao, revisao").eq("nome_sessao", nome_sessao).execute().data
+    
+    # Distribuição da Expedição
+    contagem_exp = {nome: 0 for nome in exp_filtrados}
     for row in res_sessao:
         exp = row.get('expedicao')
         if exp in contagem_exp: contagem_exp[exp] += 1
     
-    # Acha quem tem MENOS processos na sessão de hoje. Se houver empate, pega o próximo da fila.
-    menor_carga_exp = min(contagem_exp.values())
-    empatados_exp = [nome for nome, qtd in contagem_exp.items() if qtd == menor_carga_exp]
-    responsavel_expedicao = empatados_exp[0] 
+    responsavel_expedicao = min(contagem_exp, key=contagem_exp.get)
     
-    # ---------------------------------------------------------
-    # 3. ROLETA DE REVISÃO (Cruzamento X -> Y, Y -> W)
-    # ---------------------------------------------------------
-    # Regra 1: Revisor tem que estar na lista de hoje e NÃO pode ser a mesma pessoa que expediu
-    candidatos_revisores = [nome for nome in revisores_selecionados if nome != responsavel_expedicao]
-    
-    if not candidatos_revisores: 
-        # Falha de segurança: se só tiver 1 pessoa trabalhando na sessão toda, ela faz as duas coisas
-        responsavel_revisao = responsavel_expedicao 
+    # Distribuição da Revisão (Anti-Casal e Rodízio)
+    candidatos_revisores = [nome for nome in rev_filtrados if nome != responsavel_expedicao]
+    if not candidatos_revisores:
+        responsavel_revisao = responsavel_expedicao
     else:
-        # Conta quantas revisões cada candidato já pegou HOJE
         contagem_rev = {nome: 0 for nome in candidatos_revisores}
         for row in res_sessao:
             rev = row.get('revisao')
             if rev in contagem_rev: contagem_rev[rev] += 1
             
-        # Regra 2: Cruzamento Obrigatório (A teia de aranha)
-        # Descobre para quem o nosso expedidor escolhido JÁ MANDOU processo hoje
         ja_mandei_para = [row.get('revisao') for row in res_sessao if row.get('expedicao') == responsavel_expedicao]
-        
-        # Filtra os colegas que ainda NÃO revisaram nada do nosso expedidor hoje
         candidatos_prioritarios = [nome for nome in candidatos_revisores if nome not in ja_mandei_para]
         
         if candidatos_prioritarios:
-            # Dentre os que nunca receberam dele hoje, escolhe o que tem menos trabalho na mesa
-            menor_carga_rev = min([contagem_rev[nome] for nome in candidatos_prioritarios])
-            empatados_rev = [nome for nome in candidatos_prioritarios if contagem_rev[nome] == menor_carga_rev]
-            responsavel_revisao = empatados_rev[0]
+            responsavel_revisao = min(candidatos_prioritarios, key=lambda x: contagem_rev[x])
         else:
-            # Se ele já mandou pra todo mundo (a roda girou completa), recomeça dando para quem tem menos
-            menor_carga_rev = min(contagem_rev.values())
-            empatados_rev = [nome for nome, qtd in contagem_rev.items() if qtd == menor_carga_rev]
-            responsavel_revisao = empatados_rev[0]
+            responsavel_revisao = min(candidatos_revisores, key=lambda x: contagem_rev[x])
     
-    # 4. SALVAMENTO NO BANCO
+    # Inserção Definitiva
     data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     try:
         conn.client.table("processos").insert({
@@ -464,7 +495,7 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
             "nome_sessao": nome_sessao, "expedicao": responsavel_expedicao, "revisao": responsavel_revisao, 
             "data_entrada": data_atual, "expedido_ok": 0, "revisado_ok": 0, "despachado": 0, "urgente": 0
         }).execute()
-        return True, f"✅ Distribuído! Exp: {responsavel_expedicao} ➔ Rev: {responsavel_revisao}"
+        return True, f"✅ Distribuído com Trava de Acesso! Exp: {responsavel_expedicao} ➔ Rev: {responsavel_revisao}"
     except Exception as e:
         return False, f"❌ Erro ao salvar no banco: {e}"
 
@@ -819,7 +850,9 @@ with aba_sessoes:
     
     st.markdown("---")
     
-    sub_aba_ord, sub_aba_ordv, sub_aba_res, sub_aba_adm = st.tabs(["🏛️ Ordinária", "💻 Ordinária Virtual", "🔒 Reservada", "📁 Administrativa"])
+    sub_aba_urg, sub_aba_ord, sub_aba_ordv, sub_aba_res, sub_aba_adm = st.tabs([
+        "🚨 0. URGENTES", "🏛️ 1. Ordinária", "💻 2. Ordinária Virtual", "🔒 3. Reservada", "📁 4. Administrativa"
+    ])
     def exibir_tabela_interativa(df_filtrado, key_prefix, data_sessao, tipo_sessao_tb):
         titulo_placeholder = st.empty()
         
@@ -998,9 +1031,31 @@ with aba_sessoes:
 
         st.markdown("---")
 
+    with sub_aba_urg:
+        st.subheader("🚨 Painel Unificado de Demandas Urgentes")
+        df_urg = carregar_dados_sqlite() # Carrega banco amplo
+        
+        if not df_urg.empty and 'urgente' in df_urg.columns:
+            # FILTRA APENAS OS ATIVOS QUE SÃO URGENTES
+            df_urg = df_urg[(df_urg['urgente'] == 1) & (df_urg['despachado'] == 0)]
+            
+            if colab_painel != "👁️ Ver Todos os Processos do Setor":
+                df_urg = df_urg[(df_urg['expedicao'] == colab_painel) | (df_urg['revisao'] == colab_painel)]
+                
+            sessoes_com_urgentes = sorted(df_urg['nome_sessao'].unique().tolist())
+            
+            if sessoes_com_urgentes:
+                for data in sessoes_com_urgentes:
+                    exibir_tabela_interativa(df_urg[df_urg['nome_sessao'] == data], "urg", data, "Urgente")
+            else:
+                st.success("✨ Nenhuma pauta crítica ou urgência pendente no momento!")
+
     with sub_aba_ord:
         df_ord = carregar_dados_sqlite("Sessão Ordinária")
         if not df_ord.empty:
+            # BLINDAGEM: Retira os urgentes da pauta comum
+            df_ord = df_ord[df_ord['urgente'] == 0]
+            
             if colab_painel != "👁️ Ver Todos os Processos do Setor":
                 df_ord = df_ord[(df_ord['expedicao'] == colab_painel) | (df_ord['revisao'] == colab_painel)]
             
@@ -1010,11 +1065,14 @@ with aba_sessoes:
                 for data in sessoes_com_processos:
                     exibir_tabela_interativa(df_ord[df_ord['nome_sessao'] == data], "ord", data, "Sessão Ordinária")
             else:
-                st.success("✨ Você não possui nenhum processo pendente nesta sub-aba!")
+                st.success("✨ Você não possui nenhum processo ordinário pendente!")
 
     with sub_aba_ordv:
         df_ordv = carregar_dados_sqlite("Sessão Ordinária Virtual")
         if not df_ordv.empty:
+            # BLINDAGEM: Retira os urgentes da pauta comum
+            df_ordv = df_ordv[df_ordv['urgente'] == 0]
+            
             if colab_painel != "👁️ Ver Todos os Processos do Setor":
                 df_ordv = df_ordv[(df_ordv['expedicao'] == colab_painel) | (df_ordv['revisao'] == colab_painel)]
                 
@@ -1024,11 +1082,14 @@ with aba_sessoes:
                 for data in sessoes_com_processos:
                     exibir_tabela_interativa(df_ordv[df_ordv['nome_sessao'] == data], "ordv", data, "Sessão Ordinária Virtual")
             else:
-                st.success("✨ Você não possui nenhum processo pendente nesta sub-aba!")
+                st.success("✨ Você não possui nenhum processo virtual pendente!")
 
     with sub_aba_res:
         df_res = carregar_dados_sqlite("Sessão Reservada")
         if not df_res.empty:
+            # BLINDAGEM: Retira os urgentes da pauta comum
+            df_res = df_res[df_res['urgente'] == 0]
+            
             if colab_painel != "👁️ Ver Todos os Processos do Setor":
                 df_res = df_res[(df_res['expedicao'] == colab_painel) | (df_res['revisao'] == colab_painel)]
                 
@@ -1038,11 +1099,14 @@ with aba_sessoes:
                 for data in sessoes_com_processos:
                     exibir_tabela_interativa(df_res[df_res['nome_sessao'] == data], "res", data, "Sessão Reservada")
             else:
-                st.success("✨ Você não possui nenhum processo pendente nesta sub-aba!")
+                st.success("✨ Você não possui nenhum processo reservado pendente!")
 
     with sub_aba_adm:
         df_adm = carregar_dados_sqlite("Sessão Administrativa")
         if not df_adm.empty:
+            # BLINDAGEM: Retira os urgentes da pauta comum
+            df_adm = df_adm[df_adm['urgente'] == 0]
+            
             if colab_painel != "👁️ Ver Todos os Processos do Setor":
                 df_adm = df_adm[(df_adm['expedicao'] == colab_painel) | (df_adm['revisao'] == colab_painel)]
                 
@@ -1052,7 +1116,7 @@ with aba_sessoes:
                 for data in sessoes_com_processos:
                     exibir_tabela_interativa(df_adm[df_adm['nome_sessao'] == data], "adm", data, "Sessão Administrativa")
             else:
-                st.success("✨ Você não possui nenhum processo pendente nesta sub-aba!")
+                st.success("✨ Você não possui nenhum processo administrativo pendente!")
 
 # ------------------------------------------
 # ABA 2.5: CONTROLE DE OFÍCIOS E QUARENTENA
@@ -1444,17 +1508,20 @@ with aba_gestao:
                 if acao_equipe == "Adicionar Novo":
                     col1, col2 = st.columns(2)
                     novo_colab = col1.text_input("Nome do novo colaborador")
+                    cargo_colab = col1.selectbox("Função / Cargo no Setor:", ["Assessor", "Estagiário", "Chefia"])
                     faz_exp, faz_rev = col2.checkbox("Participa da Expedição", value=True), col2.checkbox("Participa da Revisão", value=True)
                     if st.button("➕ Adicionar", type="primary", key="add_user"):
-                        ok, m = gerenciar_usuario('adicionar', novo_colab, expedicao=int(faz_exp), revisao=int(faz_rev))
+                        ok, m = gerenciar_usuario('adicionar', novo_colab, expedicao=int(faz_exp), revisao=int(faz_rev), cargo=cargo_colab)
                         if ok: st.success(m); time.sleep(1); st.rerun()
+                        
                 elif acao_equipe == "Editar Permissões":
                     col1, col2, col3 = st.columns(3)
                     colab_editar = col1.selectbox("Selecione o colaborador", TODOS_NOMES)
+                    cargo_editar = col1.selectbox("Atualizar Cargo:", ["Assessor", "Estagiário", "Chefia"], key="edit_cargo_sel")
                     faz_exp = col2.checkbox("Participa da Expedição", value=True, key="edit_exp")
                     faz_rev = col3.checkbox("Participa da Revisão", value=True, key="edit_rev")
                     if st.button("✏️ Atualizar Permissões", type="primary", key="edit_user"):
-                        ok, m = gerenciar_usuario('editar', colab_editar, expedicao=int(faz_exp), revisao=int(faz_rev))
+                        ok, m = gerenciar_usuario('editar', colab_editar, expedicao=int(faz_exp), revisao=int(faz_rev), cargo=cargo_editar)
                         if ok: st.success(m); time.sleep(1); st.rerun()
                 elif acao_equipe == "Substituir Nome":
                     col1, col2, col3 = st.columns(3)
