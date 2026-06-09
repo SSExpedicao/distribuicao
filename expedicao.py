@@ -402,37 +402,71 @@ def gerar_relatorio_gerencial(mes, ano):
 def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, expedidores_selecionados, revisores_selecionados):
     numero_processo, relator = higienizar_dados(numero_processo, relator)
     
+    # Trava: não deixa duplicar na mesma sessão
     if processo_existe(numero_processo, nome_sessao): 
         return False, f"❌ O processo já existe nesta mesma sessão ({nome_sessao})."
     
-    res_global = conn.client.table("processos").select("expedicao, revisao").in_("expedicao", expedidores_selecionados).execute().data
+    # 1. ESCOPO CORRETO: Puxa o histórico APENAS da sessão de hoje para balancear a mesa atual
+    res_sessao = conn.client.table("processos").select("expedicao, revisao").eq("nome_sessao", nome_sessao).execute().data
     
+    # ---------------------------------------------------------
+    # 2. ROLETA DE EXPEDIÇÃO (Quem pega o processo para elaborar?)
+    # ---------------------------------------------------------
     contagem_exp = {nome: 0 for nome in expedidores_selecionados}
-    for row in res_global:
+    for row in res_sessao:
         exp = row.get('expedicao')
         if exp in contagem_exp: contagem_exp[exp] += 1
     
-    responsavel_expedicao = min(contagem_exp, key=contagem_exp.get)
+    # Acha quem tem MENOS processos na sessão de hoje. Se houver empate, pega o próximo da fila.
+    menor_carga_exp = min(contagem_exp.values())
+    empatados_exp = [nome for nome, qtd in contagem_exp.items() if qtd == menor_carga_exp]
+    responsavel_expedicao = empatados_exp[0] 
     
+    # ---------------------------------------------------------
+    # 3. ROLETA DE REVISÃO (Cruzamento X -> Y, Y -> W)
+    # ---------------------------------------------------------
+    # Regra 1: Revisor tem que estar na lista de hoje e NÃO pode ser a mesma pessoa que expediu
     candidatos_revisores = [nome for nome in revisores_selecionados if nome != responsavel_expedicao]
+    
     if not candidatos_revisores: 
-        responsavel_revisao = responsavel_expedicao
+        # Falha de segurança: se só tiver 1 pessoa trabalhando na sessão toda, ela faz as duas coisas
+        responsavel_revisao = responsavel_expedicao 
     else:
-        res_rev_global = conn.client.table("processos").select("revisao").in_("revisao", candidatos_revisores).execute().data
+        # Conta quantas revisões cada candidato já pegou HOJE
         contagem_rev = {nome: 0 for nome in candidatos_revisores}
-        for row in res_rev_global:
+        for row in res_sessao:
             rev = row.get('revisao')
             if rev in contagem_rev: contagem_rev[rev] += 1
-        responsavel_revisao = min(contagem_rev, key=contagem_rev.get)
+            
+        # Regra 2: Cruzamento Obrigatório (A teia de aranha)
+        # Descobre para quem o nosso expedidor escolhido JÁ MANDOU processo hoje
+        ja_mandei_para = [row.get('revisao') for row in res_sessao if row.get('expedicao') == responsavel_expedicao]
+        
+        # Filtra os colegas que ainda NÃO revisaram nada do nosso expedidor hoje
+        candidatos_prioritarios = [nome for nome in candidatos_revisores if nome not in ja_mandei_para]
+        
+        if candidatos_prioritarios:
+            # Dentre os que nunca receberam dele hoje, escolhe o que tem menos trabalho na mesa
+            menor_carga_rev = min([contagem_rev[nome] for nome in candidatos_prioritarios])
+            empatados_rev = [nome for nome in candidatos_prioritarios if contagem_rev[nome] == menor_carga_rev]
+            responsavel_revisao = empatados_rev[0]
+        else:
+            # Se ele já mandou pra todo mundo (a roda girou completa), recomeça dando para quem tem menos
+            menor_carga_rev = min(contagem_rev.values())
+            empatados_rev = [nome for nome, qtd in contagem_rev.items() if qtd == menor_carga_rev]
+            responsavel_revisao = empatados_rev[0]
     
+    # 4. SALVAMENTO NO BANCO
     data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-    conn.client.table("processos").insert({
-        "numero_processo": numero_processo, "relator": relator, "tipo_sessao": tipo_sessao, 
-        "nome_sessao": nome_sessao, "expedicao": responsavel_expedicao, "revisao": responsavel_revisao, 
-        "data_entrada": data_atual, "expedido_ok": 0, "revisado_ok": 0, "despachado": 0, "urgente": 0
-    }).execute()
-    
-    return True, f"✅ Distribuído! Exp: {responsavel_expedicao} | Rev: {responsavel_revisao}"
+    try:
+        conn.client.table("processos").insert({
+            "numero_processo": numero_processo, "relator": relator, "tipo_sessao": tipo_sessao, 
+            "nome_sessao": nome_sessao, "expedicao": responsavel_expedicao, "revisao": responsavel_revisao, 
+            "data_entrada": data_atual, "expedido_ok": 0, "revisado_ok": 0, "despachado": 0, "urgente": 0
+        }).execute()
+        return True, f"✅ Distribuído! Exp: {responsavel_expedicao} ➔ Rev: {responsavel_revisao}"
+    except Exception as e:
+        return False, f"❌ Erro ao salvar no banco: {e}"
 
 def buscar_todos_paginado(nome_tabela, coluna_eq=None, valor_eq=None):
     todos_dados = []
