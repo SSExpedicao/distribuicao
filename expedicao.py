@@ -579,29 +579,40 @@ def obter_avisos_pendentes():
         
         avisos_validos = []
         for row in res:
-            # 1. Verifica se tem data de expiração
+            # 1. Verifica Expiração
             data_exp = row.get('data_expiracao')
-            
-            # 2. Lógica de validade
-            valido = True # Assume que é válido
-            
-            if data_exp is not None:
+            valido = True
+            if data_exp:
                 try:
                     expiracao = datetime.strptime(data_exp, "%d/%m/%Y %H:%M:%S")
-                    if agora > expiracao:
-                        valido = False # Expirou
-                except:
-                    valido = True # Se a data estiver corrompida, mantém ativo por segurança
+                    if agora > expiracao: valido = False
+                except: pass
             
-            # 3. Adiciona na lista se for válido
-            if valido:
-                # Se for individual, checa o despacho
-                if row.get('numero_processo'):
-                    proc_check = conn.client.table("processos").select("despachado").eq("numero_processo", row['numero_processo']).execute().data
-                    if proc_check and proc_check[0].get('despachado', 0) == 0:
+            if not valido: continue
+
+            # 2. Verifica se é aviso de processo
+            proc_alvo = row.get('numero_processo')
+            
+            if proc_alvo and proc_alvo.strip() != "":
+                # Tenta buscar o processo (removendo espaços extras para garantir)
+                proc_limpo = proc_alvo.strip()
+                proc_check = conn.client.table("processos").select("despachado").eq("numero_processo", proc_limpo).execute().data
+                
+                # Se encontrou o processo E ele não está despachado, mostra
+                if proc_check:
+                    if proc_check[0].get('despachado', 0) == 0:
                         avisos_validos.append(row)
+                    else:
+                        # Processo já despachado, desativa o aviso
+                        conn.client.table("avisos").update({"ativo": 0}).eq("id", row['id']).execute()
                 else:
-                    avisos_validos.append(row)
+                    # PROCESSO NÃO ENCONTRADO NO BANCO:
+                    # Se você quer ver o erro, descomente a linha abaixo (só por um momento):
+                    # st.warning(f"Aviso do processo {proc_limpo} ignorado: Processo não encontrado na base atual.")
+                    pass
+            else:
+                # É aviso "Para Todos", exibe direto
+                avisos_validos.append(row)
         
         return pd.DataFrame(avisos_validos)
     except Exception as e:
