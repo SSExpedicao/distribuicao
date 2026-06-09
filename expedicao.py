@@ -1316,33 +1316,63 @@ with aba_oficios:
             except: pass
 
 # ------------------------------------------
-# ABA 2.7: RELATÓRIO DE EXPEDIÇÃO INDIVIDUAL
+# ABA 2.7: AUDITORIA DE OFÍCIOS E MEMORANDOS
 # ------------------------------------------
-with aba_oficios_relatorio: 
-    st.header("📄 Relatório de Expedição Individual")
-    
-    col_r1, col_r2 = st.columns([1, 2])
-    with col_r1:
-        colab_rel = st.selectbox("Selecione o Colaborador:", TODOS_NOMES, key="rel_colab")
-        if st.button("📋 Gerar Relatório de Produção"):
-            df_prod = pd.DataFrame(conn.client.table("oficios").select("*").eq("quem_expediu", colab_rel).eq("oficio_despachado", 1).execute().data)
+with aba_oficios_relatorio:
+    st.header("📋 Auditoria de Documentos")
+    st.write("Visualize o histórico completo de ofícios e memorandos. Use os filtros abaixo para localizar documentos específicos.")
+
+    try:
+        # Puxa tudo do banco
+        df_auditoria = pd.DataFrame(conn.client.table("oficios").select("*").execute().data)
+    except:
+        df_auditoria = pd.DataFrame()
+
+    if not df_auditoria.empty:
+        # --- ÁREA DE FILTROS ---
+        col_filtro1, col_filtro2 = st.columns(2)
+        
+        with col_filtro1:
+            filtro_colab = st.selectbox("Filtrar por Colaborador:", ["Todos"] + TODOS_NOMES)
+        with col_filtro2:
+            filtro_proc = st.text_input("Filtrar por Nº do Processo:")
             
-            if not df_prod.empty:
-                st.subheader(f"Produção de: {colab_rel}")
-                
-                for proc in df_prod['numero_processo'].unique():
-                    with st.expander(f"Processo: {proc}"):
-                        oficios_proc = df_prod[df_prod['numero_processo'] == proc]
-                        
-                        st.markdown("**✉️ Ofícios expedidos:**")
-                        for _, row in oficios_proc[oficios_proc['categoria'] != "Memorando (Envio Interno)"].iterrows():
-                            st.write(f"- {row['numero_oficio']} | Destino: {row['destinatario']} ({row['categoria']})")
-                        
-                        st.markdown("**📝 Memorandos expedidos:**")
-                        for _, row in oficios_proc[oficios_proc['categoria'] == "Memorando (Envio Interno)"].iterrows():
-                            st.write(f"- {row['numero_oficio']} | Destino: {row['destinatario']}")
-            else:
-                st.info("Nenhum ofício/memorando registrado para este colaborador.")
+        # --- LÓGICA DE FILTRAGEM ---
+        df_view = df_auditoria.copy()
+        
+        if filtro_colab != "Todos":
+            df_view = df_view[df_view['quem_expediu'] == filtro_colab]
+            
+        if filtro_proc:
+            df_view = df_view[df_view['numero_processo'].astype(str).str.contains(filtro_proc, case=False, na=False)]
+            
+        # --- CABEÇALHO DO TOTAL ---
+        st.markdown("---")
+        st.info(f"📍 Total de documentos localizados: **{len(df_view)}**")
+        
+        # --- TABELA DE AUDITORIA ---
+        if not df_view.empty:
+            # Selecionando apenas as colunas que você pediu
+            df_display = df_view[['numero_processo', 'numero_oficio', 'quem_expediu']].rename(columns={
+                'numero_processo': 'Processo', 
+                'numero_oficio': 'Nº Ofício/Memo', 
+                'quem_expediu': 'Responsável'
+            })
+            
+            st.dataframe(df_display, use_container_width=True, hide_index=True)
+            
+            # Download da lista filtrada
+            csv = df_view.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Exportar Lista Filtrada (CSV)", 
+                data=csv, 
+                file_name="auditoria_documentos.csv", 
+                mime='text/csv'
+            )
+        else:
+            st.warning("Nenhum documento encontrado com esses filtros.")
+    else:
+        st.info("A base de documentos está vazia.")
 
 # ------------------------------------------
 # ABA 3: HISTÓRICO, EXCLUSÕES E AVISOS
