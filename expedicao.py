@@ -767,15 +767,15 @@ with aba_inserir:
             with col3: expedidores_ativos = st.multiselect("👥 Quem fará a Expedição nesta sessão?", opcoes_expedicao, default=opcoes_expedicao)
             with col4: revisores_ativos = st.multiselect("👥 Quem fará a Revisão nesta sessão?", opcoes_revisao, default=opcoes_revisao)
 
-       st.markdown("---")
-       st.header("Passo 2: Inserir Processos")
-       modo_insercao = st.radio("Método de Inserção", ["Digitar um por vez (Manual)", "Importar Planilha (Em lote)"], horizontal=True)
+    st.markdown("---")
+    st.header("Passo 2: Inserir Processos")
+    modo_insercao = st.radio("Método de Inserção", ["Digitar um por vez (Manual)", "Importar Planilha (Em lote)"], horizontal=True)
 
-       if modo_insercao == "Digitar um por vez (Manual)":
-          with st.form("form_novo_processo", clear_on_submit=True):
-             col_p, col_r = st.columns(2)
-             with col_p: novo_processo = st.text_input("Número do Processo")
-             if tipo_sessao != "Urgente":
+    if modo_insercao == "Digitar um por vez (Manual)":
+        with st.form("form_novo_processo", clear_on_submit=True):
+            col_p, col_r = st.columns(2)
+            with col_p: novo_processo = st.text_input("Número do Processo")
+            if tipo_sessao != "Urgente":
                 with col_r: novo_relator = st.text_input("Nome do Relator")
             if st.form_submit_button("Verificar e Processar", type="primary"):
                 if tipo_sessao == "Urgente":
@@ -788,7 +788,7 @@ with aba_inserir:
                         ok, msg = salvar_novo_processo(novo_processo, novo_relator, tipo_sessao, nome_sessao_atual, expedidores_ativos, revisores_ativos)
                         st.success(msg) if ok else st.error(msg)
 
-        elif modo_insercao == "Importar Planilha (Em lote)":
+    elif modo_insercao == "Importar Planilha (Em lote)":
         st.info("💡 **Dica:** Para importar vários processos de uma vez, baixe a planilha modelo, preencha com seus dados e faça o upload abaixo.")
         df_modelo = pd.DataFrame({"Processo": ["12345/2026", "67890/2026"], "Relator": ["Conselheiro A", "Conselheiro B"]})
         csv_modelo = df_modelo.to_csv(index=False).encode('utf-8')
@@ -812,6 +812,7 @@ with aba_inserir:
                     barra_progresso.progress((index + 1) / len(df_upload))
                 st.success(f"🎉 Operação Concluída! {sucessos} processos inseridos.")
 
+    # --- FERRAMENTAS DE MANUTENÇÃO (AGORA ALINHADAS CORRETAMENTE FORA DO IF/ELIF) ---
     st.markdown("---")
     st.header("🛠️ Ferramentas de Manutenção da Pauta")
     
@@ -859,32 +860,6 @@ with aba_inserir:
                         st.rerun()
                     else: st.error(msg)
                 else: st.warning("⚠️ Digite o número da pauta.")
-
-    elif modo_insercao == "Importar Planilha (Em lote)":
-        st.info("💡 **Dica:** Para importar vários processos de uma vez, baixe a planilha modelo, preencha com seus dados e faça o upload abaixo.")
-        df_modelo = pd.DataFrame({"Processo": ["12345/2026", "67890/2026"], "Relator": ["Conselheiro A", "Conselheiro B"]})
-        csv_modelo = df_modelo.to_csv(index=False).encode('utf-8')
-        st.download_button(label="📥 Baixar Planilha Modelo (CSV)", data=csv_modelo, file_name="modelo_importacao.csv", mime="text/csv", type="secondary")
-
-        arquivo_upload = st.file_uploader("Arraste sua planilha preenchida (.csv ou .xlsx)", type=["csv", "xlsx"])
-        if arquivo_upload is not None:
-            df_upload = pd.read_csv(arquivo_upload, encoding='utf-8-sig') if arquivo_upload.name.endswith('.csv') else pd.read_excel(arquivo_upload)
-            st.dataframe(df_upload.head(3))
-            if st.button("🚀 Iniciar Importação", type="primary"):
-                barra_progresso = st.progress(0)
-                sucessos = 0
-                for index, row in df_upload.iterrows():
-                    processo_val = str(row['Processo']).strip() if pd.notna(row.get('Processo')) else ""
-                    if tipo_sessao == "Urgente": 
-                        ok, msg = marcar_urgente(processo_val)
-                    else:
-                        relator_val = str(row.get('Relator', '')).strip() if pd.notna(row.get('Relator')) else ""
-                        ok, msg = salvar_novo_processo(processo_val, relator_val, tipo_sessao, nome_sessao_atual, expedidores_ativos, revisores_ativos)
-                    if ok: sucessos += 1
-                    barra_progresso.progress((index + 1) / len(df_upload))
-                st.success(f"🎉 Operação Concluída! {sucessos} processos inseridos.")
-
-def color_urgentes(row): return ['color: #ff4b4b; font-weight: bold'] * len(row) if 'urgente_flag' in row and row['urgente_flag'] == 1 else [''] * len(row)
 
 # ------------------------------------------
 # ABA 2: PAINEL DAS SESSÕES ATIVAS
