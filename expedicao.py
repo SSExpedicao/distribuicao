@@ -251,6 +251,13 @@ def obter_colaboradores_ausentes_hoje():
     except:
         return []
 
+def color_urgentes(row): 
+    # Verifica se a coluna 'urgente_flag' existe na linha e se é igual a 1
+    if 'urgente_flag' in row and row['urgente_flag'] == 1:
+        return ['color: #ff4b4b; font-weight: bold'] * len(row)
+    else:
+        return [''] * len(row)
+
 def gerar_relatorio_gerencial(mes, ano):
     try:
         df_dados = carregar_dados_sqlite()
