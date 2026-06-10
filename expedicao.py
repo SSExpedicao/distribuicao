@@ -1572,26 +1572,77 @@ with aba_historico:
         else: st.info("Nenhum registro de afastamento encontrado no sistema.")
 
 # ------------------------------------------
-# ABA 4: GESTÃO ADMINISTRATIVA (COM SENHA)
+# ABA 4: GESTÃO ADMINISTRATIVA (SÉRIE PÚBLICA + ÁREA RESTRITA)
 # ------------------------------------------
 with aba_gestao:
+    # ---------------------------------------------------------
+    # PARTE 1: VISÃO PÚBLICA DE TRANSPARÊNCIA (Acesso Livre)
+    # ---------------------------------------------------------
+    st.subheader("📊 Transparência Operacional: Distribuição de Carga")
+    st.write("Consulte a volumetria exata de distribuição por sessão para verificar o equilíbrio de tarefas no setor.")
+
+    if df_geral_status.empty:
+        st.info("📌 O banco de dados de processos está vazio no momento.")
+    else:
+        # Seletor público de sessão
+        data_selecionada_pub = st.selectbox(
+            "📅 Escolha a pauta para auditar a distribuição:", 
+            sorted(df_geral_status['nome_sessao'].unique(), reverse=True), 
+            key="chave_data_oks_publico"
+        )
+        
+        df_filtrado_pub = df_geral_status[df_geral_status['nome_sessao'] == data_selecionada_pub]
+        
+        if not df_filtrado_pub.empty:
+            col_exp_pub, col_rev_pub = st.columns(2)
+            
+            with col_exp_pub:
+                st.markdown("<div style='padding:5px; border-left:4px solid #1E90FF; font-weight:bold;'>📦 Carga de Trabalho: EXPEDIÇÃO</div>", unsafe_allow_html=True)
+                # Renderiza contagem tratada em tabela limpa
+                ct_exp = df_filtrado_pub['expedicao'].value_counts().reset_index()
+                ct_exp.columns = ['Colaborador', 'Processos Designados']
+                st.dataframe(ct_exp, hide_index=True, use_container_width=True)
+                
+            with col_rev_pub:
+                st.markdown("<div style='padding:5px; border-left:4px solid #2ED573; font-weight:bold;'>🔍 Carga de Trabalho: REVISÃO</div>", unsafe_allow_html=True)
+                ct_rev = df_filtrado_pub['revisao'].value_counts().reset_index()
+                ct_rev.columns = ['Colaborador', 'Processos Designados']
+                st.dataframe(ct_rev, hide_index=True, use_container_width=True)
+        else:
+            st.warning("Nenhum processo registrado para a data selecionada.")
+
+    # Linha divisória para separar o conteúdo público do restrito
+    st.markdown("<br><hr style='border:1px dashed #ccc;'><br>", unsafe_allow_html=True)
+
+    # ---------------------------------------------------------
+    # PARTE 2: ÁREA RESTRITA DA CHEFIA (Protegida por Senha)
+    # ---------------------------------------------------------
     if not st.session_state.gestor_autenticado:
-        st.warning("🔒 Área restrita para a Chefia. Insira a senha para acessar as ferramentas de gestão, dashboards e férias.")
+        st.warning("🔒 Ferramentas de Comando: Espaço Restrito à Chefia. Insira as credenciais para liberar ações administrativas.")
         col_senha1, col_senha2 = st.columns([1, 2])
         with col_senha1:
-            senha_digitada = st.text_input("Senha de Acesso:", type="password")
-            if st.button("🔓 Desbloquear", type="primary", use_container_width=True):
+            senha_digitada = st.text_input("Senha Administrativa:", type="password", key="senha_adm_input")
+            if st.button("🔓 Autenticar Painel", type="primary", use_container_width=True):
                 if senha_digitada == "admin123":
                     st.session_state.gestor_autenticado = True
                     st.rerun()
-                else: st.error("❌ Senha Incorreta!")
+                else: 
+                    st.error("❌ Senha Incorreta!")
                     
     if st.session_state.gestor_autenticado:
         col_titulo, col_btn = st.columns([4, 1])
-        col_titulo.subheader("⚙️ Painel de Gestão Administrativa")
-        if col_btn.button("🚪 Bloquear Tela", type="secondary", use_container_width=True):
+        col_titulo.markdown("### 🔑 Painel de Operações Críticas (Chefia Ativa)")
+        if col_btn.button("🚪 Bloquear Comandos", type="secondary", use_container_width=True):
             st.session_state.gestor_autenticado = False
             st.rerun()
+            
+        st.markdown("---")
+        sub_controle, sub_dados, sub_ferias = st.tabs(["⚙️ 4.1. Controle Operacional", "📈 4.2. Analytics Avançado", "🌴 4.3. Afastamentos"])
+        
+        with sub_controle:
+            st.subheader("⚡ Liberação Extraordinária de Processo")
+            st.write("Força o despacho imediato de um processo ignorando as travas de segurança de ofícios pendentes.")
+            # ... (aqui continua o seu código original de sub_controle a partir do 'col_lib1, col_lib2, col_lib3 = st.columns([2, 4, 2])')
             
         st.markdown("---")
         sub_controle, sub_dados, sub_ferias = st.tabs(["📊 4.1. Controle de Banco de Dados", "📈 4.2. Analytics e Desempenho", "🌴 4.3. Afastamentos da Equipe"])
