@@ -1720,7 +1720,30 @@ with aba_gestao:
         # 👇 DEIXE APENAS ESTA LINHA AQUI E APAGUE QUALQUER OUTRO 'st.tabs' QUE ESTIVER LOGO ABAIXO DELA!
         sub_controle, sub_dados, sub_ferias = st.tabs(["⚙️ 4.1. Controle Operacional", "📈 4.2. Analytics Avançado", "🌴 4.3. Afastamentos"])
         
-        st.markdown("---")
+        with sub_controle:
+            st.subheader("⚡ Liberação Extraordinária de Processo")
+            st.write("Força o despacho imediato de um processo ignorando as travas de segurança de ofícios pendentes.")
+            col_lib1, col_lib2, col_lib3 = st.columns([2, 4, 2])
+            with col_lib1:
+                proc_forcar = st.text_input("Número do Processo:", key="proc_chefia")
+            with col_lib2:
+                just_forcar = st.text_input("Justificativa Legal / Motivo:", key="just_chefia")
+            with col_lib3:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("⚡ Forçar Despacho", type="primary", use_container_width=True):
+                    if proc_forcar and just_forcar:
+                        ok, m = liberar_processo_chefia(proc_forcar, just_forcar)
+                        if ok:
+                            st.success(m)
+                            time.sleep(1.5)
+                            st.rerun()
+                        else:
+                            st.error(m)
+                    else:
+                        st.warning("⚠️ Preencha o número do processo e a justificativa para auditoria.")
+            
+            st.markdown("---")
+            
             with st.expander("🔐 Segurança e Controle de Acesso (Mudar Senha)"):
                 st.write("Atualize a senha de acesso ao Painel de Gestão e Operações Críticas.")
                 col_s1, col_s2 = st.columns(2)
@@ -1739,27 +1762,6 @@ with aba_gestao:
                         if ok:
                             st.success(m)
                             time.sleep(2)
-                            st.rerun()
-                        else:
-                            st.error(m)
-        
-        with sub_controle:
-            st.subheader("⚡ Liberação Extraordinária de Processo")
-            # ... (continua o resto do código da liberação e do banco de dados) ...
-            st.write("Force o despacho de um processo travado (ignora regras de ofícios e revisões). Esta ação ficará gravada na Auditoria da Chefia.")
-            col_lib1, col_lib2, col_lib3 = st.columns([2, 4, 2])
-            with col_lib1:
-                proc_forcar = st.text_input("Número do Processo:", key="proc_chefia")
-            with col_lib2:
-                just_forcar = st.text_input("Justificativa Legal / Motivo:", key="just_chefia")
-            with col_lib3:
-                st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("⚡ Forçar Despacho", type="primary", use_container_width=True):
-                    if proc_forcar and just_forcar:
-                        ok, m = liberar_processo_chefia(proc_forcar, just_forcar)
-                        if ok:
-                            st.success(m)
-                            time.sleep(1.5)
                             st.rerun()
                         else:
                             st.error(m)
