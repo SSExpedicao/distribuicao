@@ -1765,13 +1765,12 @@ with aba_gestao:
                             st.rerun()
                         else:
                             st.error(m)
-                    else:
-                        st.warning("⚠️ Preencha o número do processo e a justificativa para auditoria.")
+
             st.markdown("---")
-            
             
             with st.expander("⚙️ Área Administrativa Avançada (Equipe e Banco de Dados)"):
                 st.subheader("📢 Mural de Avisos (Letreiro)")
+                # (Abaixo dessa linha o seu código antigo do letreiro e afins continua normalmente...)
                 st.write("Publique ordens para toda a equipe ou de forma nominal. Vincule a um processo (opcional) para o aviso sumir apenas no despacho.")
                 
                 col_av1, col_av2, col_av3 = st.columns([1.5, 1, 1])
