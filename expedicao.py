@@ -1698,11 +1698,6 @@ with aba_gestao:
                     st.rerun()
                 else: 
                     st.error("❌ Senha Incorreta!")
-                    
-    if st.session_state.gestor_autenticado:
-        col_titulo, col_btn = st.columns([4, 1])
-        col_titulo.markdown("### 🔑 Painel de Operações Críticas (Chefia Ativa)")
-                    
     # ---------------------------------------------------------
     # PARTE 2: ÁREA RESTRITA DA CHEFIA (Protegida por Senha)
     # ---------------------------------------------------------
