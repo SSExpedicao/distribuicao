@@ -2106,7 +2106,7 @@ with aba_gestao:
                             st.rerun()
                         except Exception as e: st.error(f"❌ Erro ao tentar resetar o banco: {e}")
 
-       with sub_dados:
+            with sub_dados:
             st.header("📈 Centro de Inteligência e Analytics (C.I.A.)")
             st.markdown("Visão de telemetria avançada do S.A.D.E. Identifique gargalos, meça a cadência e visualize o fluxo operacional do setor.")
             
