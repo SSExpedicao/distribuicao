@@ -2570,51 +2570,129 @@ with aba_gestao:
 # ------------------------------------------
 with aba_ajuda:
     st.header("📖 Manual Operacional Completo: S.A.D.E.")
-    st.markdown("Bem-vindo ao guia definitivo de operação. Siga estas instruções para manter a integridade dos dados e a produtividade do setor.")
+    st.markdown("""
+    Bem-vindo ao **Sistema de Automação de Distribuição e Expedição (S.A.D.E.)**. 
+    Este manual foi criado para ser o seu guia definitivo. Seja você um Assessor, Estagiário ou a Chefia do setor, 
+    aqui você encontrará a explicação detalhada de cada botão, tabela e regra do sistema.
+    """)
 
-    with st.expander("📥 1. Inserir Novos (Recepção de Pauta)"):
+    st.info("💡 **Dica de Ouro:** O S.A.D.E. é um sistema vivo. Ele aprende com seus cliques e mede o tempo de tudo o que você faz. Quanto mais fiel e rápido você for nos registros, melhores serão os relatórios de desempenho da equipe!")
+
+    with st.expander("📥 1. INSERIR NOVOS (Recepção e Distribuição)", expanded=False):
         st.markdown("""
-        * **Modo Manual:** Escolha o tipo de sessão, o identificador (data ou nome da sessão) e insira o processo e o relator. O sistema fará a distribuição automática baseada na carga de trabalho global.
-        * **Importação em Lote (Planilhas):**
-            1. **Modelo:** Baixe o arquivo modelo (CSV).
-            2. **Formato:** O arquivo **deve** ser salvo obrigatoriamente como `.csv` (separado por vírgula ou ponto e vírgula).
-            3. **Regras:** Não altere o nome das colunas `Processo` e `Relator`.
-            4. **Upload:** Arraste o arquivo para a área de upload do sistema. O S.A.D.E. processará linha por linha, limpando nomes e validando duplicidades automaticamente.
+        ### Objetivo desta Aba
+        É a porta de entrada do sistema. Aqui os processos deixam de ser um "papel na mesa" e entram para o radar do setor. O sistema distribui automaticamente o trabalho de forma justa (quem trabalhou menos na última sessão, recebe primeiro).
+
+        ### Passo a Passo:
+        1. **Passo 1: Configurar a Sessão:** - **Destino:** Escolha o tipo de pauta (Ordinária, Virtual, Reservada, etc). 
+           - **Nome:** O sistema sugere a data de hoje, mas você pode agrupar com uma sessão que já existe ou criar um nome especial (Ex: Sessão 125).
+           - **Equipe:** Escalar quem fará Expedição e Revisão. *(Atenção: Na Sessão Reservada, estagiários são cortados automaticamente da lista. Na Administrativa, a prioridade é da Chefia).*
+        
+        2. **Passo 2: Inserir Processos:**
+           - **Modo Manual:** Você digita um por um. Ideal para pingados.
+           - **Importação em Lote (A Mágica):** Baixe o modelo CSV. Preencha no Excel as colunas `Processo` e `Relator`. Salve e arraste para o sistema. Ele vai engolir dezenas de processos em 2 segundos, limpar espaços em branco dos nomes e distribuir a carga.
+
+        ### 🛠️ Ferramentas de Manutenção
+        Errou alguma coisa? Não tem problema:
+        - **Remover Processo:** Tira o processo da pauta e manda para a Lixeira de Auditoria (Aba 3), exigindo que você justifique o porquê apagou.
+        - **Renomear Sessão:** Serve para "batizar" um lote. Entrou no dia 10/06, mas descobriu que é a Sessão 125? Use essa ferramenta para atualizar o título de todos os processos daquele lote de uma vez só.
         """)
 
-    with st.expander("🗂️ 2. Painel Ativo (A Mesa de Trabalho)"):
+    with st.expander("🗂️ 2. PAINEL ATIVO (A Sua Mesa de Trabalho)", expanded=False):
         st.markdown("""
-        * **Fluxo:** É aqui que o trabalho acontece. O sistema filtra os processos da sessão escolhida.
-        * **Análise de Dados:** O sistema coleta, em tempo real, o tempo que cada processo leva entre a entrada, expedição, revisão e despacho. Esses dados alimentam os gráficos da aba de Gestão, permitindo que você visualize seu desempenho individual e do setor.
-        * **Salvamento:** Ao alterar qualquer status (Expedido/Revisado), você deve confirmar no botão **"💾 Salvar Alterações desta Sessão"**.
-        * **Quarentena:** Processos devolvidos pelo revisor ficam na tabela inferior (vermelha). Eles **não** avançam para despacho até que a correção seja feita na Aba 2.5 e o botão "Correção Realizada" seja acionado.
+        ### Objetivo desta Aba
+        É onde a mágica acontece. Você só deve focar nos processos que estão atribuídos a você. 
+
+        ### Como Usar:
+        - No topo da página, no filtro **"Filtrar processos por responsável"**, escolha o seu nome. 
+        - Ao fazer isso, o sistema esconde o barulho e mostra **apenas** onde você é o Expedidor ou o Revisor.
+
+        ### A Tabela Principal e as Travas de Segurança
+        A tabela mostra a jornada do processo:
+        1. **Expedição:** Quem elabora o documento (Minuta/Ofício).
+        2. **Revisor:** Quem confere o que foi feito.
+        3. **Ação do Revisor (Status):** O revisor precisa entrar e marcar se está `✅ OK` ou se precisa `❌ Corrigir`.
+        4. **Despachado:** O botão final que manda o processo pro Histórico.
+
+        🚨 **ATENÇÃO ÀS TRAVAS DA CHEFIA:**
+        - Você **não consegue** marcar "Despachado" se o Revisor não tiver dado o "✅ OK".
+        - Você **não consegue** marcar "Despachado" (em sessões Ordinárias/Virtuais) se o processo não tiver Ofícios lançados ou não tiver recebido uma "Isenção". O sistema te bloqueia para evitar esquecimentos no Tribunal.
+
+        ### 🟥 A Quarentena (Processos Devolvidos)
+        Se o Revisor marcar `❌ Corrigir`, o processo **some** da mesa de Despacho e cai na Tabela Vermelha de Quarentena.
+        - O Expedidor vai ver o motivo do erro (Ex: "Faltou a data no ofício").
+        - O Expedidor arruma no sistema do Tribunal, volta no S.A.D.E., e clica no botão: **"✅ Já arrumei. Devolver p/ Revisor!"**
+        - O processo volta para a mesa principal para uma nova conferência.
         """)
 
-    with st.expander("✉️ 2.5. Controle de Ofícios & 2.7. Relatório de Expedição"):
+    with st.expander("✉️ 2.5. CONTROLE DE OFÍCIOS (A Alma do Negócio)", expanded=False):
         st.markdown("""
-        * **Controle:** Cadastro de Jurisdicionados, Não Jurisdicionados e Memorandos. O sistema usa "Autocomplete" para sugerir destinatários recorrentes.
-        * **Trava de Segurança:** Processos da Ordinária/Virtual **não podem ser despachados** sem antes ter seus ofícios cadastrados e marcados como despachados (ou o processo ser marcado como "Isento").
-        * **Isenção:** Ao aplicar isenção a um processo, ele é instantaneamente concluído (Expedido, Revisado e Despachado) e vai direto para o Histórico, com a justificativa atrelada à operação.
-        * **Relatório Individual:** Na Aba 2.7, o colaborador gera seu relatório de produção diária, que lista exatamente o que foi feito (ofícios/memorandos) por processo. É a sua lista para "passar a limpo" no sistema do Tribunal.
+        ### Objetivo desta Aba
+        Garantir que nenhum processo saia do setor sem a documentação legal devida.
+
+        ### Ações Disponíveis:
+        - **1. Cadastrar Novo Ofício/Memorando:** Selecione o processo pendente, a categoria e digite o número do ofício. O sistema é inteligente: ele salva os nomes dos destinatários que você digitar hoje, para que amanhã você só precise selecionar numa lista rápida.
+        - **2. Isenção de Ofícios (Botão do Pânico/Salvação):** Às vezes, o processo não precisa de ofício (Ex: É só um Despacho Singular ou Pedido de Vista). Escolha o motivo da isenção e clique no botão vermelho. O sistema vai aplicar a regra mágica: marcar os ofícios como isentos, dar OK na revisão automaticamente e despachar o processo para o histórico num único clique!
+        - **3. Atualizar Status:** Se você já gerou o ofício, mas ele ainda não foi assinado ou enviado, você pode controlar isso na tabela inferior, marcando o "checkbox" conforme o andamento real.
         """)
 
-    with st.expander("🗄️ 3. Histórico e Auditoria"):
+    with st.expander("🗄️ 3. HISTÓRICO E LETREIRO (O Arquivo Morto)", expanded=False):
         st.markdown("""
-        * **Arquivo:** Sessões 100% concluídas. Aqui você pode visualizar a contagem de ofícios/memorandos ou a justificativa de isenção de cada processo.
-        * **Lixeira:** Processos excluídos com registro do motivo.
-        * **Histórico de Avisos:** Consulta de comunicados que já rodaram no Letreiro.
-        * **Férias e Ausências:** Exibe quem da equipe está afastado. **Regra:** O sistema cruza os dados do cadastro de afastamentos com as datas de distribuição; se um colaborador estiver em período de afastamento, o sistema ignora o nome dele no sorteio automático, evitando que ele receba trabalho enquanto está ausente.
+        ### Objetivo desta Aba
+        Consultar o passado. O S.A.D.E. não apaga nada, ele arquiva.
+
+        - **✅ Arquivo Concluídas:** Uma busca avançada super rápida. Digite o número de um processo ou o nome do relator de meses atrás, e o sistema acha quem fez, quem revisou, e quantos ofícios foram gerados.
+        - **🗑️ Auditoria de Excluídos:** A lixeira. Todo processo removido na Aba 1 fica gravado aqui com o nome de quem mandou apagar e a data exata.
+        - **📢 Histórico de Avisos:** Mostra todos os "Recados do Letreiro" que a Chefia já publicou no topo do sistema e que já expiraram.
         """)
 
-    with st.expander("⚙️ 4. Gestão Administrativa (Manual de Operações Criticas)"):
+    with st.expander("⚙️ 4. GESTÃO ADMINISTRATIVA (Controle da Chefia)", expanded=False):
         st.markdown("""
-        * **Controle de Banco de Dados:** Visualize volumetria de expedição/revisão por data.
-        * **Remover Processo:** Exclui um processo da pauta, movendo-o para a lixeira de auditoria.
-        * **Mural de Avisos (Letreiro):** Publique avisos. Se marcar para "Todos", o aviso limpa automaticamente após 24h. Se marcar um processo, ele limpa assim que o processo for despachado.
-        * **Identificar/Nomear Sessão:** Renomeia o lote de processos (Ex: mudar "10/06/2026" para "Sessão 125 - 10/06/2026").
-        * **Relatório Gerencial:** Compila todos os dados de produtividade, tempos de ciclo e ofícios, gerando um resumo textual para exportação.
-        * **Gestão de Colaboradores:** Adicione, substitua ou edite as permissões (Expedidor/Revisor) dos membros da equipe.
-        * **Backup e Restauração:** O Backup gera um CSV com o banco atual. A Restauração limpa a base e substitui pelos dados do CSV (Use com cautela).
-        * **Modo Limpeza:** * **Por Período:** Apaga processos em um intervalo de datas.
-            * **Modo Nuclear:** Reseta todo o banco de processos (ativos e histórico). Colaboradores e afastamentos são preservados.
+        ### Objetivo desta Aba
+        Área restrita por senha para controle de banco de dados, equipes e auditoria pesada.
+
+        ### Ferramentas Críticas:
+        - **Liberação Extraordinária:** Sabe aquele processo que bugou, ou que a Chefia autorizou sair sem ofício por ordem superior? Digite o número dele e a justificativa. O sistema quebra todas as travas de segurança e arremessa o processo para o arquivo na força bruta.
+        - **Mural de Avisos:** Escreva recados (Ex: "Atenção ao modelo novo de ofício!"). O letreiro vai ficar rodando no topo da tela para todos lerem.
+        - **Migração Direta:** Serve para subir planilhas velhas de anos anteriores direto para o arquivo morto, sem passar pela mesa de trabalho.
+        - **Modo Nuclear:** Apaga os registros de um período inteiro ou formata o banco de dados completamente (cuidado, não tem Ctrl+Z!).
+        """)
+
+    with st.expander("📈 4.2. ANALYTICS E C.I.A (Como ler as métricas e os rankings)", expanded=True):
+        st.markdown("""
+        ### Centro de Inteligência e Analytics (C.I.A.)
+        Aqui o S.A.D.E. brilha. Ele transforma cliques em dados para avaliação de desempenho. Existem duas lentes: a **Visão Panorâmica** (Setor como um todo) e a **Visão Individual** (Raio-X de um servidor específico).
+
+        ### 🌐 VISÃO PANORÂMICA (A Tela da Chefia)
+        - **HUD Global (Os 7 Indicadores):** Mostra a vida do setor. Processos totais, taxa de sucesso, tempo médio (SLA) do setor, quantos estão travados em quarentena de erro, total de ofícios feitos, total de memorandos e total de isenções aplicadas.
+        - **Gráficos de Funil e Evolução:** Permite ver em que fase os processos vivos estão agora (Quantos na fila? Quantos esperando revisar?) e os picos de demanda por data.
+        
+        #### 🚨 Radar de Urgências (DEFCON 1)
+        Uma seção dedicada apenas para as "bombas". Quantas urgências chegaram? Quantas já matamos? E qual sessão está concentrando o maior número de urgências travadas?
+        
+        #### 🗣️ Rádio Peão (O Dedo-Duro Operacional)
+        Onde moram os gargalos.
+        - **A Lógica:** Se um processo está pendente, com quem está a culpa? O sistema avalia: se não tem ofício, dedura o Expedidor. Se tem ofício mas não tem "OK", dedura o Revisor. Se tem erro, aponta a Quarentena.
+        - **Ranking dos Atrasados:** Um gráfico de barras vermelho mostrando quem está com a maior "batata quente" (maior acúmulo de processos parados na sua fase).
+        - **Megafone do Joãozinho:** O sistema grita na tela se um processo Urgente está parado de bobeira ou se rolou alguma fofoca de processo devolvido com erro.
+
+        #### 🏆 Rankings de Equipe (Gamificação)
+        - **Top Expedidores e Revisores:** Quem entrega mais volume de trabalho puro.
+        - **Ranking dos 'Isentões':** Quem usa mais a flag de "Isenção de Ofícios" para se livrar do processo mais rápido. (Ótimo para a Chefia auditar se alguém está "fugindo" de fazer ofícios).
+        - **Troféu Assiduidade:** Um gráfico especial que mostra quem participou do maior número de sessões diferentes (Não conta volume, conta presença e consistência). Chefia e Estagiários não entram nessa disputa.
+
+        ---
+        
+        ### 👤 VISÃO INDIVIDUAL (O seu Boletim de Ocorrência)
+        Selecione o seu nome no radar para ver o seu próprio boletim!
+        - **Cards de Desempenho:** Quantos processos você elaborou vs. revisou.
+        - **Velocidade (Cronômetro):** O sistema calcula exatamente os **minutos médios** que você demora para dar andamento em um processo depois que ele cai na sua mão.
+        - **Impacto e Afinidade:** Quantas urgências você ajudou a salvar e quem é o seu "Parceiro de Dupla" mais frequente na distribuição do sistema.
+        - **Produção Documental:** Exatamente quantos ofícios e memorandos VOCÊ gerou no sistema, e quantas isenções você ativou.
+        
+        #### ⏱️ Cronômetro de SLA por Sessão
+        A métrica mais cirúrgica do sistema. 
+        - **O que é SLA?** *Service Level Agreement* (Tempo de Acordo de Serviço). 
+        - **Como o S.A.D.E. calcula:** Ele olha para uma sessão (Ex: Sessão 125). Pega o minuto exato em que o primeiro processo dessa sessão caiu na sua mão, e o minuto exato em que o último processo dessa sessão foi despachado por você. 
+        - **Resultado:** Ele te diz: *"Você matou a Sessão 125 em 3h e 40m"*. Ele cruza todas as sessões e te dá a sua **Média Geral de Resolução** e qual foi o seu **Recorde** (A sessão que você foi mais veloz na história do sistema).
         """)
