@@ -905,26 +905,47 @@ with aba_inserir:
     elif modo_insercao == "Importar Planilha (Em lote)":
         st.info("💡 **Dica:** Para importar vários processos de uma vez, baixe a planilha modelo, preencha com seus dados e faça o upload abaixo.")
         df_modelo = pd.DataFrame({"Processo": ["12345/2026", "67890/2026"], "Relator": ["Conselheiro A", "Conselheiro B"]})
-        csv_modelo = df_modelo.to_csv(index=False).encode('utf-8')
+        
+        # 🌟 AJUSTE: O modelo agora já baixa no padrão do Excel Brasileiro (separado por ';' e com formatação utf-8-sig)
+        csv_modelo = df_modelo.to_csv(index=False, sep=';').encode('utf-8-sig')
         st.download_button(label="📥 Baixar Planilha Modelo (CSV)", data=csv_modelo, file_name="modelo_importacao.csv", mime="text/csv", type="secondary")
 
         arquivo_upload = st.file_uploader("Arraste sua planilha preenchida (.csv ou .xlsx)", type=["csv", "xlsx"])
         if arquivo_upload is not None:
-            df_upload = pd.read_csv(arquivo_upload, encoding='utf-8-sig') if arquivo_upload.name.endswith('.csv') else pd.read_excel(arquivo_upload)
+            # 🌟 AJUSTE: Leitura blindada que fareja o separador automático (vírgula ou ponto e vírgula)
+            if arquivo_upload.name.endswith('.csv'):
+                try:
+                    df_upload = pd.read_csv(arquivo_upload, sep=None, engine='python', encoding='utf-8-sig')
+                except Exception:
+                    # Se der algum erro bizarro de formatação de texto, tenta o modo de resgate
+                    arquivo_upload.seek(0)
+                    df_upload = pd.read_csv(arquivo_upload, sep=';', encoding='latin-1')
+            else:
+                df_upload = pd.read_excel(arquivo_upload)
+            
+            # Mostra a prévia na tela para o usuário ver que leu certinho
             st.dataframe(df_upload.head(3))
+            
             if st.button("🚀 Iniciar Importação", type="primary"):
                 barra_progresso = st.progress(0)
                 sucessos = 0
                 for index, row in df_upload.iterrows():
-                    processo_val = str(row['Processo']).strip() if pd.notna(row.get('Processo')) else ""
+                    # Usa .get() protegido contra espaços extras no nome da coluna
+                    processo_val = str(row.get('Processo', '')).strip() if pd.notna(row.get('Processo')) else ""
+                    
                     if tipo_sessao == "Urgente": 
                         ok, msg = marcar_urgente(processo_val)
                     else:
                         relator_val = str(row.get('Relator', '')).strip() if pd.notna(row.get('Relator')) else ""
                         ok, msg = salvar_novo_processo(processo_val, relator_val, tipo_sessao, nome_sessao_atual, expedidores_ativos, revisores_ativos)
+                    
                     if ok: sucessos += 1
                     barra_progresso.progress((index + 1) / len(df_upload))
-                st.success(f"🎉 Operação Concluída! {sucessos} processos inseridos.")
+                
+                if sucessos > 0:
+                    st.success(f"🎉 Operação Concluída! {sucessos} processos inseridos com sucesso.")
+                else:
+                    st.error("⚠️ Nenhum processo foi importado. Verifique se as colunas estão com o nome 'Processo' e 'Relator'.")
 
     st.markdown("---")
     st.header("🛠️ Ferramentas de Manutenção da Pauta")
