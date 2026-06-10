@@ -742,6 +742,30 @@ def liberar_processo_chefia(numero_processo, justificativa, usuario="Chefia"):
     except Exception as e:
         return False, f"❌ Erro interno: {e}"
 
+def obter_senha_admin():
+    """Busca a senha atual no banco. Se não achar nada, usa admin123 como padrão."""
+    try:
+        res = conn.client.table("configuracoes").select("valor").eq("chave", "senha_admin").execute().data
+        if res: 
+            return str(res[0]['valor'])
+        return "admin123"
+    except:
+        return "admin123"
+
+def atualizar_senha_admin(nova_senha):
+    """Salva a nova senha da Chefia no banco de dados."""
+    try:
+        res = conn.client.table("configuracoes").select("valor").eq("chave", "senha_admin").execute().data
+        if res:
+            # Se a chave já existe, atualiza
+            conn.client.table("configuracoes").update({"valor": nova_senha}).eq("chave", "senha_admin").execute()
+        else:
+            # Se é a primeira vez, insere do zero
+            conn.client.table("configuracoes").insert({"chave": "senha_admin", "valor": nova_senha}).execute()
+        return True, "✅ Senha mestre atualizada com sucesso! Use a nova senha no próximo login."
+    except Exception as e:
+        return False, f"❌ Erro interno ao tentar salvar a senha: {e}"
+
 def tem_oficio_cadastrado(numero_processo):
     try:
         res = conn.client.table("oficios").select("id", count="exact").eq("numero_processo", numero_processo).execute()
@@ -1668,7 +1692,9 @@ with aba_gestao:
         with col_senha1:
             senha_digitada = st.text_input("Senha Administrativa:", type="password", key="senha_adm_input")
             if st.button("🔓 Autenticar Painel", type="primary", use_container_width=True):
-                if senha_digitada == "admin123":
+                if st.button("🔓 Autenticar Painel", type="primary", use_container_width=True):
+                senha_correta = obter_senha_admin() # O sistema agora pergunta pro banco!
+                if senha_digitada == senha_correta:
                     st.session_state.gestor_autenticado = True
                     st.rerun()
                 else: 
@@ -1690,6 +1716,29 @@ with aba_gestao:
         
         # 👇 DEIXE APENAS ESTA LINHA AQUI E APAGUE QUALQUER OUTRO 'st.tabs' QUE ESTIVER LOGO ABAIXO DELA!
         sub_controle, sub_dados, sub_ferias = st.tabs(["⚙️ 4.1. Controle Operacional", "📈 4.2. Analytics Avançado", "🌴 4.3. Afastamentos"])
+        
+        st.markdown("---")
+            with st.expander("🔐 Segurança e Controle de Acesso (Mudar Senha)"):
+                st.write("Atualize a senha de acesso ao Painel de Gestão e Operações Críticas.")
+                col_s1, col_s2 = st.columns(2)
+                with col_s1:
+                    nova_senha = st.text_input("Nova Senha:", type="password", key="new_pwd")
+                with col_s2:
+                    confirma_senha = st.text_input("Confirme a Nova Senha:", type="password", key="conf_pwd")
+                
+                if st.button("💾 Salvar Nova Senha", type="primary"):
+                    if not nova_senha:
+                        st.warning("⚠️ A senha não pode ficar em branco.")
+                    elif nova_senha != confirma_senha:
+                        st.error("❌ As senhas não coincidem! Digite com atenção.")
+                    else:
+                        ok, m = atualizar_senha_admin(nova_senha)
+                        if ok:
+                            st.success(m)
+                            time.sleep(2)
+                            st.rerun()
+                        else:
+                            st.error(m)
         
         with sub_controle:
             st.subheader("⚡ Liberação Extraordinária de Processo")
