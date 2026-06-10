@@ -1670,14 +1670,7 @@ with aba_gestao:
                         st.warning("⚠️ Preencha o número do processo e a justificativa para auditoria.")
             st.markdown("---")
             
-            if not df_geral_status.empty:
-                data_selecionada = st.selectbox("📅 Data da Sessão (OKs):", sorted(df_geral_status['nome_sessao'].unique(), reverse=True), key="chave_data_oks_gestao")
-                df_filtrado = df_geral_status[df_geral_status['nome_sessao'] == data_selecionada]
-                col_exp, col_rev = st.columns(2)
-                with col_exp: st.dataframe(df_filtrado['expedicao'].value_counts().reset_index(), hide_index=True)
-                with col_rev: st.dataframe(df_filtrado['revisao'].value_counts().reset_index(), hide_index=True)
-
-            st.markdown("---")
+            
             with st.expander("⚙️ Área Administrativa Avançada (Equipe e Banco de Dados)"):
                 st.subheader("📢 Mural de Avisos (Letreiro)")
                 st.write("Publique ordens para toda a equipe ou de forma nominal. Vincule a um processo (opcional) para o aviso sumir apenas no despacho.")
