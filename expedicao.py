@@ -2106,7 +2106,7 @@ with aba_gestao:
                             st.rerun()
                         except Exception as e: st.error(f"❌ Erro ao tentar resetar o banco: {e}")
 
-        with sub_dados:
+       with sub_dados:
             st.header("📈 Centro de Inteligência e Analytics (C.I.A.)")
             st.markdown("Visão de telemetria avançada do S.A.D.E. Identifique gargalos, meça a cadência e visualize o fluxo operacional do setor.")
             
@@ -2374,7 +2374,7 @@ with aba_gestao:
                     else:
                         st.success("✨ A velha da vizinhança não tem do que reclamar hoje. Não há processos pendentes ou travados no setor!")
                     
-                    # --- RANKING DOS ISENTÕES (NOVO BLOCO RÁDIO PEÃO) ---
+                    # --- RANKING DOS ISENTÕES (RÁDIO PEÃO) ---
                     st.markdown("---")
                     st.markdown("#### 🏆 Ranking dos 'Isentões' (Maior volume de isenções)")
                     st.write("Quem despachou mais processos utilizando a flag de Isenção de Documentos:")
@@ -2390,6 +2390,41 @@ with aba_gestao:
                         st.plotly_chart(fig_isencao, use_container_width=True)
                     else:
                         st.success("✨ Ninguém aplicou isenção de documentos ainda!")
+
+                    # --- NOVO RANKING: ASSIDUIDADE (PARTICIPAÇÃO EM SESSÕES) ---
+                    st.markdown("---")
+                    st.markdown("#### 🏅 Troféu Assiduidade (Participação em Sessões)")
+                    st.write("Ranking dos Assessores que estiveram presentes no maior número de sessões (Chefia e Estagiários não entram nesta métrica):")
+                    
+                    try:
+                        df_eq_assiduidade = pd.DataFrame(conn.client.table("equipe").select("nome, cargo").execute().data)
+                        # Filtra apenas quem não é Chefia e não é Estagiário
+                        assessores_elegiveis = df_eq_assiduidade[~df_eq_assiduidade['cargo'].isin(['Chefia', 'Estagiário'])]['nome'].tolist()
+                    except:
+                        assessores_elegiveis = EQUIPE_EXPEDICAO # Fallback de segurança
+                        
+                    if not df_dados.empty and assessores_elegiveis:
+                        participacoes_data = []
+                        for assessor in assessores_elegiveis:
+                            # Pega as sessões únicas onde o assessor foi expedidor ou revisor
+                            sessoes_como_exp = df_dados[df_dados['expedicao'] == assessor]['nome_sessao'].unique()
+                            sessoes_como_rev = df_dados[df_dados['revisao'] == assessor]['nome_sessao'].unique()
+                            # Une os dois conjuntos para não contar a mesma sessão duplicada
+                            total_sessoes_unicas = len(set(sessoes_como_exp).union(set(sessoes_como_rev)))
+                            
+                            participacoes_data.append({'Colaborador': assessor, 'Sessões Presente': total_sessoes_unicas})
+                            
+                        df_assiduidade = pd.DataFrame(participacoes_data).sort_values(by='Sessões Presente', ascending=False)
+                        
+                        if not df_assiduidade.empty and df_assiduidade['Sessões Presente'].sum() > 0:
+                            fig_assiduidade = px.bar(df_assiduidade, x='Colaborador', y='Sessões Presente', text='Sessões Presente', color='Sessões Presente', color_continuous_scale='Teal')
+                            fig_assiduidade.update_traces(textposition='outside')
+                            fig_assiduidade.update_layout(margin=dict(l=0, r=0, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", coloraxis_showscale=False)
+                            st.plotly_chart(fig_assiduidade, use_container_width=True)
+                        else:
+                            st.info("Ainda não há dados suficientes de sessões para gerar o ranking de assiduidade.")
+                    else:
+                        st.info("Nenhum assessor elegível encontrado ou banco de dados sem histórico.")
                 
                 # ====================================================================
                 # VISÃO 2: O RAIO-X INDIVIDUAL (MÉTRICAS DO FUNCIONÁRIO)
@@ -2460,7 +2495,7 @@ with aba_gestao:
                     with c_doc3:
                         st.metric("Processos Isentos", isentos_ind)
 
-                    # --- NOVO BLOCO: CRONÔMETRO DE DESEMPENHO (SLA) POR SESSÃO ---
+                    # --- CRONÔMETRO DE DESEMPENHO (SLA) POR SESSÃO ---
                     st.markdown("<br>", unsafe_allow_html=True)
                     st.markdown("#### ⏱️ Cronômetro Operacional (Desempenho por Sessão)")
                     st.write("Acompanhe o tempo de ciclo (SLA) desde a entrada do primeiro processo na mesa até a conclusão de todo o lote da sessão.")
