@@ -2111,6 +2111,13 @@ with aba_gestao:
             st.markdown("Visão de telemetria avançada do S.A.D.E. Identifique gargalos, meça a cadência e visualize o fluxo operacional do setor.")
             
             df_dados = carregar_dados_sqlite()
+            
+            # --- NOVA BUSCA: TABELA DE OFÍCIOS PARA O ANALYTICS ---
+            try:
+                df_oficios_analytics = pd.DataFrame(conn.client.table("oficios").select("*").execute().data)
+            except:
+                df_oficios_analytics = pd.DataFrame()
+            
             if df_dados.empty or 'data_expedido' not in df_dados.columns: 
                 st.info("📊 Nenhuma anomalia detectada. O banco de dados está vazio no momento.")
             else:
@@ -2163,6 +2170,21 @@ with aba_gestao:
                     with kpi4:
                         st.metric("🚨 Retrabalho Ativo", total_erros, "Na Quarentena", delta_color="inverse" if total_erros > 0 else "normal")
                     
+                    st.markdown("<br>", unsafe_allow_html=True)
+
+                    # --- NOVOS KPIs GLOBAIS: OFÍCIOS, MEMOS E ISENÇÕES ---
+                    total_isentos_global = len(df_dados[df_dados['precisa_correcao'] == 2])
+                    total_oficios_global = len(df_oficios_analytics[df_oficios_analytics['categoria'].isin(["Jurisdicionado", "Não Jurisdicionado"])]) if not df_oficios_analytics.empty else 0
+                    total_memos_global = len(df_oficios_analytics[df_oficios_analytics['categoria'] == "Memorando (Envio Interno)"]) if not df_oficios_analytics.empty else 0
+
+                    kpi5, kpi6, kpi7 = st.columns(3)
+                    with kpi5:
+                        st.metric("📄 Total de Ofícios Emitidos", total_oficios_global, "Via S.A.D.E.")
+                    with kpi6:
+                        st.metric("📝 Total de Memorandos", total_memos_global, "Comunicação Interna")
+                    with kpi7:
+                        st.metric("🚫 Total de Isenções", total_isentos_global, "Processos s/ Documentos")
+
                     st.markdown("<br>", unsafe_allow_html=True)
 
                     # --- BLOCO 2: GRÁFICOS AVANÇADOS (PLOTLY) ---
@@ -2351,6 +2373,23 @@ with aba_gestao:
 
                     else:
                         st.success("✨ A velha da vizinhança não tem do que reclamar hoje. Não há processos pendentes ou travados no setor!")
+                    
+                    # --- RANKING DOS ISENTÕES (NOVO BLOCO RÁDIO PEÃO) ---
+                    st.markdown("---")
+                    st.markdown("#### 🏆 Ranking dos 'Isentões' (Maior volume de isenções)")
+                    st.write("Quem despachou mais processos utilizando a flag de Isenção de Documentos:")
+                    
+                    df_isentos_ranking = df_dados[df_dados['precisa_correcao'] == 2].copy()
+                    if not df_isentos_ranking.empty:
+                        ranking_isencao = df_isentos_ranking['expedicao'].value_counts().reset_index()
+                        ranking_isencao.columns = ['Colaborador', 'Qtd de Isenções']
+                        
+                        fig_isencao = px.bar(ranking_isencao, x='Colaborador', y='Qtd de Isenções', text='Qtd de Isenções', color='Qtd de Isenções', color_continuous_scale='Purples')
+                        fig_isencao.update_traces(textposition='outside')
+                        fig_isencao.update_layout(margin=dict(l=0, r=0, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", coloraxis_showscale=False)
+                        st.plotly_chart(fig_isencao, use_container_width=True)
+                    else:
+                        st.success("✨ Ninguém aplicou isenção de documentos ainda!")
                 
                 # ====================================================================
                 # VISÃO 2: O RAIO-X INDIVIDUAL (MÉTRICAS DO FUNCIONÁRIO)
@@ -2404,6 +2443,22 @@ with aba_gestao:
                             <p style='margin:0; font-size:12px;'>🤝 Maior Afinidade: <b>{parceiro}</b></p>
                         </div>
                         """, unsafe_allow_html=True)
+
+                    # --- NOVAS MÉTRICAS INDIVIDUAIS DE DOCUMENTAÇÃO ---
+                    isentos_ind = len(df_user_exp[df_user_exp['precisa_correcao'] == 2])
+                    oficios_ind = len(df_oficios_analytics[(df_oficios_analytics['quem_expediu'] == visao_selecionada) & (df_oficios_analytics['categoria'].isin(["Jurisdicionado", "Não Jurisdicionado"]))]) if not df_oficios_analytics.empty else 0
+                    memos_ind = len(df_oficios_analytics[(df_oficios_analytics['quem_expediu'] == visao_selecionada) & (df_oficios_analytics['categoria'] == "Memorando (Envio Interno)")]) if not df_oficios_analytics.empty else 0
+
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    st.markdown("#### 📄 Produção Documental e Isenções")
+                    
+                    c_doc1, c_doc2, c_doc3 = st.columns(3)
+                    with c_doc1:
+                        st.metric("Ofícios Emitidos", oficios_ind)
+                    with c_doc2:
+                        st.metric("Memorandos Emitidos", memos_ind)
+                    with c_doc3:
+                        st.metric("Processos Isentos", isentos_ind)
 
         with sub_ferias:
             st.header("🌴 Painel de Férias e Afastamentos Operacionais")
