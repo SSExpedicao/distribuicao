@@ -955,18 +955,43 @@ with aba_sessoes:
             
             if tipo_sessao_tb == "Sessão Reservada": cols_base.extend(['enviado_email', 'enviado_mensageria', 'recebido'])
             cols_base.append('despachado')
+            cols_base.extend(['precisa_correcao', 'motivo_correcao']) # Mantém temporariamente para o cálculo do texto
 
             df_exibicao = df_normais[cols_base].copy()
             
-            # TRADUÇÃO E CRIAÇÃO DAS NOVAS COLUNAS
-            df_exibicao['expedido_ok'] = df_exibicao['expedido_ok'].astype(bool)
+            # --- CÁLCULO MÁGICO DE OFÍCIOS / TEXTO NA COLUNA DE EXPEDIÇÃO ---
+            try:
+                procs = df_normais['numero_processo'].tolist()
+                res_oficios = conn.client.table("oficios").select("numero_processo, categoria").in_("numero_processo", procs).execute().data
+                df_oficios_tb = pd.DataFrame(res_oficios)
+            except:
+                df_oficios_tb = pd.DataFrame()
+
+            def calc_exp(row):
+                if row['precisa_correcao'] == 2:
+                    return row['motivo_correcao']
+                if row['expedido_ok'] in [1, 1.0, True, '1']:
+                    p = row['numero_processo']
+                    if not df_oficios_tb.empty:
+                        df_p = df_oficios_tb[df_oficios_tb['numero_processo'] == p]
+                        of_c = len(df_p[df_p['categoria'].isin(["Jurisdicionado", "Não Jurisdicionado"])])
+                        m_c = len(df_p[df_p['categoria'] == "Memorando (Envio Interno)"])
+                        ts = []
+                        if of_c > 0: ts.append(f"{of_c} OF")
+                        if m_c > 0: ts.append(f"{m_c} M")
+                        return " + ".join(ts) if ts else "✅ Concluído (S/ Doc)"
+                    return "✅ Concluído"
+                return "⏳ Pendente"
+
+            df_exibicao['expedido_ok'] = df_exibicao.apply(calc_exp, axis=1)
+            
             df_exibicao['despachado'] = df_exibicao['despachado'].astype(bool)
             
             df_exibicao['Status Revisão'] = df_exibicao['revisado_ok'].apply(lambda val: "✅ OK" if val in [1, 1.0, True, '1'] else "⏳ Pendente")
             df_exibicao['Motivo Devolução'] = "" 
             
-            # Remove a antiga coluna bool de revisão
-            df_exibicao = df_exibicao.drop(columns=['revisado_ok'])
+            # Remove as colunas de controle interno da view final
+            df_exibicao = df_exibicao.drop(columns=['revisado_ok', 'precisa_correcao', 'motivo_correcao'])
             
             # --- AJUSTE DA ORDEM DAS COLUNAS ---
             final_cols = ['id', 'urgente', 'numero_processo', 'relator']
@@ -1007,7 +1032,7 @@ with aba_sessoes:
                 "Processo": st.column_config.TextColumn(disabled=True), 
                 "Relator": st.column_config.TextColumn(disabled=True), 
                 "Expedição": st.column_config.SelectboxColumn("Expedição", options=TODOS_NOMES, disabled=modo_leitura, required=True), 
-                "Expedido": st.column_config.CheckboxColumn("Expedido", disabled=modo_leitura),
+                "Expedido": st.column_config.TextColumn("Expedido (Docs)", disabled=True),
                 "Revisor": st.column_config.SelectboxColumn("Revisor", options=TODOS_NOMES, disabled=modo_leitura, required=True),
                 "Status Revisão": st.column_config.SelectboxColumn("Ação do Revisor", options=["⏳ Pendente", "✅ OK", "❌ Corrigir"], disabled=modo_leitura, required=True),
                 "Motivo Devolução": st.column_config.TextColumn("Motivo (Só se Corrigir)", disabled=modo_leitura),
@@ -1079,7 +1104,7 @@ with aba_sessoes:
                                 else:
                                     mudancas['revisado_ok'] = 0
 
-                            mapa_banco_simples = {'Expedição': 'expedicao', 'Revisor': 'revisao', 'Expedido': 'expedido_ok', 'Despachado': 'despachado', 'E-mail': 'enviado_email', 'Mensageria': 'enviado_mensageria', 'Recebido': 'recebido'}
+                            mapa_banco_simples = {'Expedição': 'expedicao', 'Revisor': 'revisao', 'Despachado': 'despachado', 'E-mail': 'enviado_email', 'Mensageria': 'enviado_mensageria', 'Recebido': 'recebido'}
                             for col_tela, col_banco in mapa_banco_simples.items():
                                 if col_tela in linha_nova and linha_nova[col_tela] != linha_antiga.get(col_tela):
                                     val = linha_nova[col_tela]
@@ -1332,15 +1357,19 @@ with aba_oficios:
                 motivo_isencao = st.selectbox("Selecione a Justificativa:", ["Comunicação", "Acórdão", "Pedido de Vista", "Despacho Singular", "Sustentação Oral", "SERCON"])
             with col_is2:
                 st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("🚫 Aplicar Isenção e Expedir", use_container_width=True):
+                if st.button("🚫 Aplicar Isenção e Despachar Direto", use_container_width=True):
                     agora_str = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
                     conn.client.table("processos").update({
                         "precisa_correcao": 2, 
-                        "motivo_correcao": f"ISENTO: {motivo_isencao}",
+                        "motivo_correcao": f"🚫 ISENTO: {motivo_isencao}",
                         "expedido_ok": 1,
-                        "data_expedido": agora_str
+                        "revisado_ok": 1,
+                        "despachado": 1,
+                        "data_expedido": agora_str,
+                        "data_revisado": agora_str,
+                        "data_conclusao": agora_str
                     }).eq("numero_processo", proc_selecionado).execute()
-                    st.success(f"✅ Processo ISENTO ({motivo_isencao}) e marcado como EXPEDIDO automaticamente!")
+                    st.success(f"✅ Processo ISENTO ({motivo_isencao}) e despachado automaticamente para o arquivo!")
                     time.sleep(1.5)
                     st.rerun()
 
@@ -1447,7 +1476,29 @@ with aba_historico:
         st.subheader("Sessões 100% Concluídas")
         if sessoes_finalizadas:
             df_historico = df_geral_status[df_geral_status['chave_sessao'].isin(sessoes_finalizadas)].copy()
-            df_historico_display = df_historico[['numero_processo', 'urgente', 'relator', 'expedicao', 'revisao', 'data_conclusao', 'tipo_sessao', 'nome_sessao']].copy()
+            
+            try:
+                df_all_oficios_hist = pd.DataFrame(conn.client.table("oficios").select("numero_processo, categoria").execute().data)
+            except:
+                df_all_oficios_hist = pd.DataFrame()
+
+            def formata_hist(row):
+                if row.get('precisa_correcao') == 2:
+                    return row.get('motivo_correcao', '🚫 ISENTO')
+                p = row.get('numero_processo')
+                if not df_all_oficios_hist.empty:
+                    df_p = df_all_oficios_hist[df_all_oficios_hist['numero_processo'] == p]
+                    of_c = len(df_p[df_p['categoria'].isin(["Jurisdicionado", "Não Jurisdicionado"])])
+                    m_c = len(df_p[df_p['categoria'] == "Memorando (Envio Interno)"])
+                    ts = []
+                    if of_c > 0: ts.append(f"{of_c} OF")
+                    if m_c > 0: ts.append(f"{m_c} M")
+                    return " + ".join(ts) if ts else "Nenhum"
+                return "Nenhum"
+
+            df_historico['Docs / Justificativa'] = df_historico.apply(formata_hist, axis=1)
+            
+            df_historico_display = df_historico[['numero_processo', 'urgente', 'relator', 'expedicao', 'Docs / Justificativa', 'revisao', 'data_conclusao', 'tipo_sessao', 'nome_sessao']].copy()
             df_historico_display = df_historico_display.rename(columns={'numero_processo': 'Processo', 'urgente': 'urgente_flag', 'relator': 'Conselheiro', 'expedicao': 'Expedidor', 'revisao': 'Revisor', 'data_conclusao': 'Data/Hora Conclusão', 'tipo_sessao': 'Tipo de Sessão', 'nome_sessao': 'Data da Sessão'})
             
             with st.expander("🔎 Filtros de Busca Avançada", expanded=True):
@@ -2082,12 +2133,13 @@ with aba_ajuda:
         st.markdown("""
         * **Controle:** Cadastro de Jurisdicionados, Não Jurisdicionados e Memorandos. O sistema usa "Autocomplete" para sugerir destinatários recorrentes.
         * **Trava de Segurança:** Processos da Ordinária/Virtual **não podem ser despachados** sem antes ter seus ofícios cadastrados e marcados como despachados (ou o processo ser marcado como "Isento").
+        * **Isenção:** Ao aplicar isenção a um processo, ele é instantaneamente concluído (Expedido, Revisado e Despachado) e vai direto para o Histórico, com a justificativa atrelada à operação.
         * **Relatório Individual:** Na Aba 2.7, o colaborador gera seu relatório de produção diária, que lista exatamente o que foi feito (ofícios/memorandos) por processo. É a sua lista para "passar a limpo" no sistema do Tribunal.
         """)
 
     with st.expander("🗄️ 3. Histórico e Auditoria"):
         st.markdown("""
-        * **Arquivo:** Sessões 100% concluídas.
+        * **Arquivo:** Sessões 100% concluídas. Aqui você pode visualizar a contagem de ofícios/memorandos ou a justificativa de isenção de cada processo.
         * **Lixeira:** Processos excluídos com registro do motivo.
         * **Histórico de Avisos:** Consulta de comunicados que já rodaram no Letreiro.
         * **Férias e Ausências:** Exibe quem da equipe está afastado. **Regra:** O sistema cruza os dados do cadastro de afastamentos com as datas de distribuição; se um colaborador estiver em período de afastamento, o sistema ignora o nome dele no sorteio automático, evitando que ele receba trabalho enquanto está ausente.
@@ -2107,9 +2159,4 @@ with aba_ajuda:
         """)
 
     with st.expander("📚 Glossário de Termos"):
-        st.markdown("""
-        * **Modo Nuclear:** Limpeza total do sistema.
-        * **Isenção:** Processo marcado com status 2, dispensado de ofícios.
-        * **Quarentena:** Estado de bloqueio administrativo para processos com erros.
-        * **Sessão:** Unidade lógica de organização (Lotes de trabalho).
-        """)
+        st
