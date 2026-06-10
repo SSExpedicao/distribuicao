@@ -2159,4 +2159,24 @@ with aba_ajuda:
         """)
 
     with st.expander("📚 Glossário de Termos"):
-        st
+        st.markdown("""
+        * **S.A.D.E.:** Sistema de Acompanhamento (ou Administração) de Distribuição e Expedição. O ambiente virtual de controle de fluxo da equipe.
+        * **Expedidor:** Colaborador responsável pela análise inicial do processo e elaboração dos ofícios/memorandos.
+        * **Revisor:** Colaborador designado para conferir o trabalho do expedidor, garantindo a qualidade antes do despacho final.
+        * **Jurisdicionado:** Pessoa física, jurídica ou órgão público que está sujeito à jurisdição/fiscalização do Tribunal e possui cadastro prévio.
+        * **Não Jurisdicionado:** Entidade ou pessoa externa que não possui vínculo direto de fiscalização, mas que recebe comunicação do processo.
+        * **Quarentena:** Estado de alerta. Ocorre quando o Revisor encontra alguma inconsistência e devolve o processo. O processo fica travado na tela do Expedidor até ser corrigido.
+        * **Isenção:** Funcionalidade usada quando um processo, após análise, não exige a confecção de nenhum documento de saída (ofício/memorando). Ele é "baixado" direto para o histórico.
+        * **Letreiro:** O "Mural de Avisos" em letreiro digital. Ferramenta de comunicação assíncrona para a equipe não perder prazos ou diretrizes específicas de um processo.
+        * **Modo Nuclear:** Ação extrema na aba de Gestão que apaga absolutamente todos os processos (ativos e históricos) do banco de dados. **Ação irreversível** se feita sem backup.
+        """)st.markdown("""
+        * **S.A.D.E.:** Sistema de Acompanhamento (ou Administração) de Distribuição e Expedição. O ambiente virtual de controle de fluxo da equipe.
+        * **Expedidor:** Colaborador responsável pela análise inicial do processo e elaboração dos ofícios/memorandos.
+        * **Revisor:** Colaborador designado para conferir o trabalho do expedidor, garantindo a qualidade antes do despacho final.
+        * **Jurisdicionado:** Pessoa física, jurídica ou órgão público que está sujeito à jurisdição/fiscalização do Tribunal e possui cadastro prévio.
+        * **Não Jurisdicionado:** Entidade ou pessoa externa que não possui vínculo direto de fiscalização, mas que recebe comunicação do processo.
+        * **Quarentena:** Estado de alerta. Ocorre quando o Revisor encontra alguma inconsistência e devolve o processo. O processo fica travado na tela do Expedidor até ser corrigido.
+        * **Isenção:** Funcionalidade usada quando um processo, após análise, não exige a confecção de nenhum documento de saída (ofício/memorando). Ele é "baixado" direto para o histórico.
+        * **Letreiro:** O "Mural de Avisos" em letreiro digital. Ferramenta de comunicação assíncrona para a equipe não perder prazos ou diretrizes específicas de um processo.
+        * **Modo Nuclear:** Ação extrema na aba de Gestão que apaga absolutamente todos os processos (ativos e históricos) do banco de dados. **Ação irreversível** se feita sem backup.
+        """)
