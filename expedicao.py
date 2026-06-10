@@ -2444,7 +2444,7 @@ with aba_gestao:
                         </div>
                         """, unsafe_allow_html=True)
 
-                    # --- NOVAS MÉTRICAS INDIVIDUAIS DE DOCUMENTAÇÃO ---
+                    # --- MÉTRICAS INDIVIDUAIS DE DOCUMENTAÇÃO ---
                     isentos_ind = len(df_user_exp[df_user_exp['precisa_correcao'] == 2])
                     oficios_ind = len(df_oficios_analytics[(df_oficios_analytics['quem_expediu'] == visao_selecionada) & (df_oficios_analytics['categoria'].isin(["Jurisdicionado", "Não Jurisdicionado"]))]) if not df_oficios_analytics.empty else 0
                     memos_ind = len(df_oficios_analytics[(df_oficios_analytics['quem_expediu'] == visao_selecionada) & (df_oficios_analytics['categoria'] == "Memorando (Envio Interno)")]) if not df_oficios_analytics.empty else 0
@@ -2459,6 +2459,46 @@ with aba_gestao:
                         st.metric("Memorandos Emitidos", memos_ind)
                     with c_doc3:
                         st.metric("Processos Isentos", isentos_ind)
+
+                    # --- NOVO BLOCO: CRONÔMETRO DE DESEMPENHO (SLA) POR SESSÃO ---
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    st.markdown("#### ⏱️ Cronômetro Operacional (Desempenho por Sessão)")
+                    st.write("Acompanhe o tempo de ciclo (SLA) desde a entrada do primeiro processo na mesa até a conclusão de todo o lote da sessão.")
+                    
+                    if not df_user_total.empty:
+                        sessoes_stats = []
+                        for nome_sessao, group in df_user_total.groupby('nome_sessao'):
+                            # Tempo da primeira entrada até o último despacho que envolveu esse colaborador na sessão
+                            inicio_sessao = group['data_entrada_dt'].min()
+                            fim_sessao = group['data_conclusao_dt'].max()
+                            
+                            if pd.notna(inicio_sessao) and pd.notna(fim_sessao):
+                                minutos_sessao = (fim_sessao - inicio_sessao).total_seconds() / 60
+                                sessoes_stats.append({
+                                    'Sessão': nome_sessao,
+                                    'Minutos Totais': minutos_sessao,
+                                    'Tempo Formatado': format_tempo(minutos_sessao),
+                                    'Qtd Processos': len(group)
+                                })
+                        
+                        if sessoes_stats:
+                            df_sessoes_stats = pd.DataFrame(sessoes_stats)
+                            media_minutos_sessao = df_sessoes_stats['Minutos Totais'].mean()
+                            
+                            c_tm1, c_tm2 = st.columns(2)
+                            with c_tm1:
+                                st.metric("⏱️ Tempo Médio de Resolução por Sessão", format_tempo(media_minutos_sessao))
+                            with c_tm2:
+                                sessao_mais_rapida = df_sessoes_stats.loc[df_sessoes_stats['Minutos Totais'].idxmin()]
+                                st.metric("⚡ Recorde (Sessão Mais Rápida)", f"{sessao_mais_rapida['Tempo Formatado']}", f"{sessao_mais_rapida['Sessão']} ({sessao_mais_rapida['Qtd Processos']} procs)")
+                            
+                            # Tabela de tempos por sessão
+                            df_sessoes_display = df_sessoes_stats[['Sessão', 'Qtd Processos', 'Tempo Formatado']].rename(columns={'Tempo Formatado': 'Duração Total (Início ao Fim)'})
+                            st.dataframe(df_sessoes_display, hide_index=True, use_container_width=True)
+                        else:
+                            st.info("Ainda não há dados de conclusão suficientes para calcular as médias de sessão.")
+                    else:
+                        st.info("O colaborador ainda não participou de nenhuma sessão concluída.")
 
         with sub_ferias:
             st.header("🌴 Painel de Férias e Afastamentos Operacionais")
