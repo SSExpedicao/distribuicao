@@ -1683,7 +1683,7 @@ with aba_gestao:
     # Linha divisória para separar o conteúdo público do restrito
     st.markdown("<br><hr style='border:1px dashed #ccc;'><br>", unsafe_allow_html=True)
 
-    # ---------------------------------------------------------
+   # ---------------------------------------------------------
     # PARTE 2: ÁREA RESTRITA DA CHEFIA (Protegida por Senha)
     # ---------------------------------------------------------
     if not st.session_state.gestor_autenticado:
@@ -1692,13 +1692,16 @@ with aba_gestao:
         with col_senha1:
             senha_digitada = st.text_input("Senha Administrativa:", type="password", key="senha_adm_input")
             if st.button("🔓 Autenticar Painel", type="primary", use_container_width=True):
-                if st.button("🔓 Autenticar Painel", type="primary", use_container_width=True):
-                senha_correta = obter_senha_admin() # O sistema agora pergunta pro banco!
+                senha_correta = obter_senha_admin()
                 if senha_digitada == senha_correta:
                     st.session_state.gestor_autenticado = True
                     st.rerun()
                 else: 
                     st.error("❌ Senha Incorreta!")
+                    
+    if st.session_state.gestor_autenticado:
+        col_titulo, col_btn = st.columns([4, 1])
+        col_titulo.markdown("### 🔑 Painel de Operações Críticas (Chefia Ativa)")
                     
     # ---------------------------------------------------------
     # PARTE 2: ÁREA RESTRITA DA CHEFIA (Protegida por Senha)
