@@ -1941,13 +1941,17 @@ with aba_gestao:
                         except Exception as e: st.error(f"❌ Erro ao tentar resetar o banco: {e}")
 
         with sub_dados:
-            st.header("📈 Dashboard Analítico e Distribuição Operacional")
+            st.header("📈 Centro de Inteligência e Analytics (C.I.A.)")
+            st.markdown("Visão de telemetria avançada do S.A.D.E. Identifique gargalos, meça a cadência e visualize o fluxo operacional do setor.")
+            
             df_dados = carregar_dados_sqlite()
             if df_dados.empty or 'data_expedido' not in df_dados.columns: 
-                st.info("📊 O banco de dados está vazio.")
+                st.info("📊 Nenhuma anomalia detectada. O banco de dados está vazio no momento.")
             else:
+                # 1. PREPARAÇÃO DA MATRIX (Limpeza e Tratamento de Datas)
                 for c in ['data_entrada', 'data_expedido', 'data_revisado', 'data_conclusao']:
                     df_dados[c + '_dt'] = pd.to_datetime(df_dados[c], format="%d/%m/%Y %H:%M:%S", errors='coerce').fillna(pd.to_datetime(df_dados[c], format="%d/%m/%Y %H:%M", errors='coerce'))
+                
                 df_concluidos = df_dados[df_dados['despachado'] == 1].copy()
                 df_tempo_real = df_concluidos[df_concluidos['data_entrada'] != df_concluidos['data_conclusao']].copy()
 
@@ -1964,148 +1968,237 @@ with aba_gestao:
                     if pd.isna(minutos) or minutos < 0: return "N/A"
                     return f"{int(minutos)} min" if int(minutos) < 60 else f"{int(minutos) // 60}h {int(minutos) % 60}m"
 
-                st.markdown("### Selecione o Perfil de Análise")
-                visao_selecionada = st.selectbox("Escolha a Visão:", ["Todo o Setor (Global)"] + TODOS_NOMES, label_visibility="collapsed")
+                st.markdown("### 🎯 Selecione a Lente de Observação")
+                visao_selecionada = st.selectbox("Foco do Radar:", ["Visão Panorâmica (Setor Completo)"] + TODOS_NOMES, label_visibility="collapsed")
                 st.markdown("---")
 
-                if visao_selecionada == "Todo o Setor (Global)":
-                    st.subheader("🌐 Visão Macro (Histórico Completo)")
-                    col1, col2, col3, col4 = st.columns(4)
-                    total_despachados = len(df_concluidos)
-                    total_sessoes = df_concluidos['nome_sessao'].nunique()
-                    media_proc_sessao = round(total_despachados / total_sessoes) if total_sessoes > 0 else 0
-                    total_urgentes = len(df_concluidos[df_concluidos['urgente'] == 1])
-                    col1.metric("📦 Total Despachados", total_despachados)
-                    col2.metric("🏛️ Sessões Realizadas", total_sessoes)
-                    col3.metric("⚖️ Média Proc./Sessão", media_proc_sessao)
-                    col4.metric("🔥 Urgências Atendidas", total_urgentes)
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    st.markdown("---")
-                    st.markdown("### ✉️ Inteligência de Expedição (Ofícios e Correções)")
+                # ====================================================================
+                # VISÃO 1: O PAINEL GLOBAL DA CHEFIA (MATRIX)
+                # ====================================================================
+                if visao_selecionada == "Visão Panorâmica (Setor Completo)":
                     
-                    try:
-                        df_oficios_analytics = pd.DataFrame(conn.client.table("oficios").select("*").execute().data)
-                    except:
-                        df_oficios_analytics = pd.DataFrame()
-
-                    if not df_oficios_analytics.empty:
-                        df_ofic_despachados = df_oficios_analytics[df_oficios_analytics['oficio_despachado'] == 1]
-                        total_oficios = len(df_ofic_despachados)
-                        proc_com_oficios = df_ofic_despachados['numero_processo'].nunique()
-                        media_ofic_proc = round(total_oficios / proc_com_oficios, 1) if proc_com_oficios > 0 else 0
-                        
-                        col_of1, col_of2, col_of3, col_of4 = st.columns(4)
-                        col_of1.metric("✉️ Ofícios Expedidos", total_oficios)
-                        col_of2.metric("📊 Média Ofícios/Processo", media_ofic_proc)
-                        
-                        ofic_jur = len(df_ofic_despachados[df_ofic_despachados['categoria'] == 'Jurisdicionado'])
-                        col_of3.metric("🏛️ Ofic. Jurisdicionados", ofic_jur)
-                        col_of4.metric("🏢 Ofic. Não Jurisdic.", total_oficios - ofic_jur)
-                        
-                        st.markdown("#### 🏆 Ranking de Emissão de Ofícios")
-                        ofic_counts = df_ofic_despachados['quem_expediu'].value_counts().reset_index()
-                        ofic_counts.columns = ['Colaborador', 'Ofícios Gerados']
-                        
-                        if not ofic_counts.empty:
-                            fig_ofic = px.bar(ofic_counts, x='Colaborador', y='Ofícios Gerados', text='Ofícios Gerados', color='Ofícios Gerados', color_continuous_scale='Blues')
-                            fig_ofic.update_traces(textposition='outside')
-                            fig_ofic.update_layout(margin=dict(l=0, r=0, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)")
-                            st.plotly_chart(fig_ofic, use_container_width=True)
-                    else:
-                        st.info("Nenhum dado de ofício registrado ainda para gerar estatísticas.")
-
-                    st.markdown("#### 🚨 Termômetro de Retrabalho (Quarentena Ativa)")
+                    # --- BLOCO 1: HUD DE INDICADORES (KPIs CRÍTICOS) ---
+                    st.markdown("#### 🌐 Painel de Desempenho Global")
+                    total_processos = len(df_dados)
+                    total_despachados = len(df_concluidos)
+                    tx_conclusao = round((total_despachados / total_processos) * 100, 1) if total_processos > 0 else 0
+                    
                     if 'precisa_correcao' in df_dados.columns:
-                        df_erros_ativos = df_dados[df_dados['precisa_correcao'] == 1]
-                        total_erros_ativos = len(df_erros_ativos)
-                        
-                        if total_erros_ativos > 0:
-                            st.error(f"⚠️ Atualmente existem {total_erros_ativos} processo(s) travado(s) na quarentena aguardando correção.")
-                            erros_por_user = df_erros_ativos['expedicao'].value_counts().reset_index()
-                            erros_por_user.columns = ['Expedidor', 'Processos com Erro Ativos']
-                            st.dataframe(erros_por_user, hide_index=True)
-                        else:
-                            st.success("🎉 Zero processos na quarentena hoje! Equipe trabalhando com 100% de precisão.")
+                        total_erros = len(df_dados[df_dados['precisa_correcao'] == 1])
+                    else: total_erros = 0
+
+                    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+                    with kpi1:
+                        st.metric("📦 Carga Total Histórica", total_processos, "Processos")
+                    with kpi2:
+                        st.metric("✅ Taxa de Conclusão", f"{tx_conclusao}%", f"{total_despachados} Despachados")
+                    with kpi3:
+                        st.metric("⏱️ Tempo Médio Total", format_tempo(df_tempo_real['min_total'].mean()), "Entrada ao Despacho", delta_color="inverse")
+                    with kpi4:
+                        st.metric("🚨 Retrabalho Ativo", total_erros, "Na Quarentena", delta_color="inverse" if total_erros > 0 else "normal")
+                    
                     st.markdown("<br>", unsafe_allow_html=True)
-                    st.markdown("### 🤝 Volume de Participação Operacional (Carga de Trabalho)")
-                    col_g1, col_g2 = st.columns(2)
-                    with col_g1:
-                        st.markdown("#### 📦 Expedição") 
+
+                    # --- BLOCO 2: GRÁFICOS AVANÇADOS (PLOTLY) ---
+                    col_graf1, col_graf2 = st.columns([1.5, 1])
+                    
+                    with col_graf1:
+                        st.markdown("#### 📉 Evolução Temporal (Picos de Demanda)")
+                        # Agrupa por data de entrada
+                        df_dados['Data Entrada Simples'] = df_dados['data_entrada_dt'].dt.date
+                        df_tendencia = df_dados.groupby('Data Entrada Simples').size().reset_index(name='Processos que Entraram')
+                        
+                        if not df_tendencia.empty:
+                            fig_linha = px.line(df_tendencia, x='Data Entrada Simples', y='Processos que Entraram', markers=True, 
+                                               color_discrete_sequence=['#00D2D3'])
+                            fig_linha.update_layout(xaxis_title="", yaxis_title="Volume", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", margin=dict(l=0, r=0, t=10, b=0))
+                            fig_linha.update_xaxes(showgrid=False)
+                            fig_linha.update_yaxes(showgrid=True, gridcolor='rgba(128, 128, 128, 0.2)')
+                            st.plotly_chart(fig_linha, use_container_width=True)
+                        else:
+                            st.info("Dados insuficientes para gerar a linha do tempo.")
+
+                    with col_graf2:
+                        st.markdown("#### 🌪️ Funil de Produção Atual")
+                        # Calcula os estágios do funil apenas dos processos ativos (não despachados)
+                        df_ativos_funil = df_dados[df_dados['despachado'] == 0]
+                        total_ativos = len(df_ativos_funil)
+                        etapa_exp = len(df_ativos_funil[df_ativos_funil['expedido_ok'] == 1])
+                        etapa_rev = len(df_ativos_funil[df_ativos_funil['revisado_ok'] == 1])
+                        
+                        # Usando um bar chart horizontal para simular o funil de forma limpa
+                        funil_dados = pd.DataFrame({
+                            'Estágio': ['1. Na Pauta', '2. Expedidos', '3. Revisados (Aguard. Despacho)'],
+                            'Volume': [total_ativos, etapa_exp, etapa_rev]
+                        })
+                        
+                        fig_funil = px.bar(funil_dados, x='Volume', y='Estágio', orientation='h', text='Volume',
+                                           color='Estágio', color_discrete_sequence=['#FF6B6B', '#FECA57', '#1DD1A1'])
+                        fig_funil.update_traces(textposition='auto')
+                        fig_funil.update_layout(showlegend=False, xaxis_visible=False, yaxis_title="", plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", margin=dict(l=0, r=0, t=10, b=0))
+                        st.plotly_chart(fig_funil, use_container_width=True)
+
+                    st.markdown("---")
+                    
+                    # --- BLOCO 3: CADÊNCIA E DISTRIBUIÇÃO DA EQUIPE ---
+                    st.markdown("#### 🤝 Raio-X Operacional da Equipe")
+                    col_rx1, col_rx2 = st.columns(2)
+                    
+                    with col_rx1:
+                        st.markdown("**Top Expedidores (Volume)**")
                         exp_counts = df_concluidos['expedicao'].value_counts().reset_index()
                         exp_counts.columns = ['Colaborador', 'Processos']
                         if not exp_counts.empty:
-                            fig_exp = px.pie(exp_counts, values='Processos', names='Colaborador', hole=0.5)
-                            fig_exp.update_traces(textposition='inside', textinfo='percent+value')
-                            fig_exp.update_layout(margin=dict(l=0, r=0, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)", legend_title="Colaborador")
-                            st.plotly_chart(fig_exp, use_container_width=True)
-                        else: st.info("Sem dados de expedição.")
-                    with col_g2:
-                        st.markdown("#### 🔍 Revisão") 
+                            fig_bar_exp = px.bar(exp_counts, x='Colaborador', y='Processos', text='Processos', color='Processos', color_continuous_scale='Blues')
+                            fig_bar_exp.update_traces(textposition='outside')
+                            fig_bar_exp.update_layout(margin=dict(l=0, r=0, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", coloraxis_showscale=False)
+                            st.plotly_chart(fig_bar_exp, use_container_width=True)
+                    
+                    with col_rx2:
+                        st.markdown("**Top Revisores (Volume)**")
                         rev_counts = df_concluidos['revisao'].value_counts().reset_index()
                         rev_counts.columns = ['Colaborador', 'Processos']
                         if not rev_counts.empty:
-                            fig_rev = px.pie(rev_counts, values='Processos', names='Colaborador', hole=0.5)
-                            fig_rev.update_traces(textposition='inside', textinfo='percent+value')
-                            fig_rev.update_layout(margin=dict(l=0, r=0, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)", legend_title="Colaborador")
-                            st.plotly_chart(fig_rev, use_container_width=True)
-                        else: st.info("Sem dados de revisão.")
+                            fig_bar_rev = px.bar(rev_counts, x='Colaborador', y='Processos', text='Processos', color='Processos', color_continuous_scale='Greens')
+                            fig_bar_rev.update_traces(textposition='outside')
+                            fig_bar_rev.update_layout(margin=dict(l=0, r=0, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", coloraxis_showscale=False)
+                            st.plotly_chart(fig_bar_rev, use_container_width=True)
+
+                    # ====================================================================
+                    # BLOCO 4: O JOÃOZINHO / VELHA DA VIZINHANÇA (DEDO-DURO OPERACIONAL)
+                    # ====================================================================
                     st.markdown("---")
-                    st.markdown("### ⏱️ Cadência e Desempenho")
-                    c_t1, c_t2, c_t3 = st.columns(3)
-                    c_t1.metric("Média de Elaboração (Expedição)", format_tempo(df_tempo_real['min_exp'].mean()))
-                    c_t2.metric("Média de Conferência (Revisão)", format_tempo(df_tempo_real['min_rev'].mean()))
-                    c_t3.metric("Tempo de Ciclo Total", format_tempo(df_tempo_real['min_total'].mean()))
-                    st.markdown("---")
-                    st.markdown("### 📡 Radar em Tempo Real (Painel Ativo)")
-                    sessoes_stats = df_dados.groupby('nome_sessao')['despachado'].agg(['count', 'sum']).reset_index()
-                    ativas_list = sessoes_stats[sessoes_stats['count'] > sessoes_stats['sum']]['nome_sessao'].tolist()
-                    df_ativos_reais = df_dados[df_dados['nome_sessao'].isin(ativas_list)].copy()
-                    if not df_ativos_reais.empty:
-                        col_r1, col_r2, col_r3, col_r4, col_r5 = st.columns(5)
-                        urg_pendentes = len(df_ativos_reais[(df_ativos_reais['urgente'] == 1) & (df_ativos_reais['despachado'] == 0)])
-                        col_r1.metric("📋 Total na Pauta", len(df_ativos_reais))
-                        col_r2.metric("⏳ Aguardando Elab.", len(df_ativos_reais[df_ativos_reais['expedido_ok'] == 0]))
-                        col_r3.metric("🔍 Aguardando Conf.", len(df_ativos_reais[(df_ativos_reais['expedido_ok'] == 1) & (df_ativos_reais['revisado_ok'] == 0)]))
-                        col_r4.metric("✍️ Prontos p/ Despacho", len(df_ativos_reais[(df_ativos_reais['revisado_ok'] == 1) & (df_ativos_reais['despachado'] == 0)]))
-                        with col_r5:
-                            st.markdown(f"""
-                            <div style='background-color: #ff4b4b; padding: 15px; border-radius: 8px; text-align: center; color: white; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);'>
-                                <p style='margin: 0; font-size: 14px; font-weight: bold;'>🚨 Urgentes Restantes</p>
-                                <h2 style='margin: 0; padding-top: 5px; color: white; font-weight: bold;'>{urg_pendentes}</h2>
-                            </div>
-                            """, unsafe_allow_html=True)
-                    else: st.success("✨ Pauta limpa! Não há processos pendentes no radar ativo neste exato momento.")
+                    st.markdown("### 🗣️ Rádio Peão (Auditoria Implacável de Gargalos)")
+                    st.write("O sistema não deixa passar nada. Veja exatamente com quem os processos estão travados agora.")
+
+                    # Filtra apenas o que está aberto agora (A Fofoca é ao vivo)
+                    df_pendentes_fofoca = df_dados[df_dados['despachado'] == 0].copy()
+
+                    if not df_pendentes_fofoca.empty:
+                        # Motor de dedurar: descobre com quem está a bola (ou a batata quente)
+                        def apontar_culpado(row):
+                            if row.get('precisa_correcao') == 1:
+                                return f"🚨 Travado com {row['expedicao']} (Corrigindo erro apontado por {row['revisao']})"
+                            elif row.get('expedido_ok') == 0:
+                                return f"⏳ Mofando na mesa de {row['expedicao']} (Falta Elaborar)"
+                            elif row.get('revisado_ok') == 0:
+                                return f"👀 Pegando poeira com {row['revisao']} (Falta Conferir)"
+                            return "✅ Pronto para o Despacho da Chefia!"
+
+                        df_pendentes_fofoca['Onde Tá a Batata Quente?'] = df_pendentes_fofoca.apply(apontar_culpado, axis=1)
+
+                        # Conta quem tá segurando mais processos no momento
+                        # Extrai só o nome de quem tá devendo usando uma lógica simples (pega o nome depois do 'com ' ou 'de ')
+                        def extrair_devendo(texto):
+                            if 'com ' in texto: return texto.split('com ')[1].split(' (')[0]
+                            if 'de ' in texto: return texto.split('de ')[1].split(' (')[0]
+                            return "Chefia"
+                        
+                        df_pendentes_fofoca['Quem Tá Devendo?'] = df_pendentes_fofoca['Onde Tá a Batata Quente?'].apply(extrair_devendo)
+
+                        col_fof1, col_fof2 = st.columns([1, 2])
+
+                        with col_fof1:
+                            st.markdown("#### 🏆 Ranking dos Atrasados")
+                            st.write("Quem está acumulando mais pendências na mesa agora:")
+                            ranking_atraso = df_pendentes_fofoca[df_pendentes_fofoca['Quem Tá Devendo?'] != "Chefia"]['Quem Tá Devendo?'].value_counts().reset_index()
+                            ranking_atraso.columns = ['Colaborador', 'Qtd na Mesa']
+                            
+                            if not ranking_atraso.empty:
+                                fig_fofoca = px.bar(ranking_atraso, y='Colaborador', x='Qtd na Mesa', orientation='h', text='Qtd na Mesa', color='Qtd na Mesa', color_continuous_scale='Reds')
+                                fig_fofoca.update_traces(textposition='inside')
+                                fig_fofoca.update_layout(yaxis={'categoryorder':'total ascending'}, margin=dict(l=0, r=0, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", coloraxis_showscale=False)
+                                st.plotly_chart(fig_fofoca, use_container_width=True)
+                            else:
+                                st.success("Ninguém devendo nada! Estão todos de parabéns.")
+
+                        with col_fof2:
+                            st.markdown("#### 📋 A Lista da Vizinhança (Detalhado)")
+                            # Exibe a tabela do dedo-duro
+                            df_exibicao_fofoca = df_pendentes_fofoca[['numero_processo', 'nome_sessao', 'Onde Tá a Batata Quente?', 'urgente']].copy()
+                            df_exibicao_fofoca = df_exibicao_fofoca.sort_values(by=['urgente', 'Onde Tá a Batata Quente?'], ascending=[False, True])
+                            df_exibicao_fofoca = df_exibicao_fofoca.rename(columns={'numero_processo': 'Processo', 'nome_sessao': 'Da Sessão', 'urgente': 'É Urgente?'})
+                            
+                            # Formatação condicional para destacar as fofocas
+                            st.dataframe(
+                                df_exibicao_fofoca.style.apply(lambda x: ['background-color: #ffcccc' if x['É Urgente?'] else '' for i in x], axis=1),
+                                hide_index=True, 
+                                use_container_width=True,
+                                column_config={"É Urgente?": st.column_config.CheckboxColumn("Urgente", disabled=True)}
+                            )
+
+                        # O Megafone do Joãozinho: Mensagens dinâmicas
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        st.markdown("#### 📻 Megafone do Joãozinho")
+                        
+                        erros_ativos = df_pendentes_fofoca[df_pendentes_fofoca['precisa_correcao'] == 1]
+                        if not erros_ativos.empty:
+                            for _, erro in erros_ativos.iterrows():
+                                st.error(f"🗣️ **FOFOCA:** O {erro['revisao']} devolveu o processo **{erro['numero_processo']}** do(a) {erro['expedicao']} e disse: *'{erro['motivo_correcao']}'*!")
+                        
+                        urgentes_travados = df_pendentes_fofoca[(df_pendentes_fofoca['urgente'] == 1) & (df_pendentes_fofoca['precisa_correcao'] == 0)]
+                        if not urgentes_travados.empty:
+                            for _, urg in urgentes_travados.iterrows():
+                                if urg['expedido_ok'] == 0:
+                                    st.warning(f"👀 **OLHA LÁ:** O processo **URGENTE {urg['numero_processo']}** tá mofando na mesa do(a) {urg['expedicao']}! Alguém avisa!")
+                                elif urg['revisado_ok'] == 0:
+                                    st.warning(f"👀 **OLHA LÁ:** O(a) {urg['expedicao']} já fez a urgência **{urg['numero_processo']}**, mas o(a) {urg['revisao']} ainda não revisou!")
+
+                    else:
+                        st.success("✨ A velha da vizinhança não tem do que reclamar hoje. Não há processos pendentes ou travados no setor!")
+                
+                # ====================================================================
+                # VISÃO 2: O RAIO-X INDIVIDUAL (MÉTRICAS DO FUNCIONÁRIO)
+                # ====================================================================
                 else:
-                    st.subheader(f"🔎 Perfil Operacional: {visao_selecionada}")
+                    st.subheader(f"🔎 Dossiê Operacional: {visao_selecionada}")
                     try: ausentes = obter_colaboradores_ausentes_hoje()
                     except: ausentes = []
-                    if visao_selecionada in ausentes: st.warning(f"📌 **Status:** Afastamento Legítimo Ativo.", icon="🌴")
-                    else: st.info(f"📌 **Status no Dia de Hoje:** Ativo e Operacional.", icon="✅")
+                    
+                    if visao_selecionada in ausentes: 
+                        st.warning(f"📌 **Status de Ponto:** Afastamento Legítimo Ativo.", icon="🌴")
+                    else: 
+                        st.info(f"📌 **Status de Ponto:** Ativo e Operacional.", icon="✅")
+                    
+                    # Filtros do Colaborador
                     df_user_exp = df_concluidos[df_concluidos['expedicao'] == visao_selecionada]
                     df_user_rev = df_concluidos[df_concluidos['revisao'] == visao_selecionada]
                     df_user_total = df_concluidos[(df_concluidos['expedicao'] == visao_selecionada) | (df_concluidos['revisao'] == visao_selecionada)]
-                    st.markdown("#### 📦 Resumo de Participação Histórica")
-                    col_u1, col_u2, col_u3, col_u4 = st.columns(4)
-                    col_u1.metric("Participações Totais", len(df_user_total))
-                    col_u2.metric("Como Expedidor", len(df_user_exp))
-                    col_u3.metric("Como Revisor", len(df_user_rev))
-                    col_u4.metric("🔥 Urgências Salvas", len(df_user_total[df_user_total['urgente'] == 1]))
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    st.markdown("#### ⏱️ Qualidade e Cadência")
+                    
                     df_user_tempo_exp = df_tempo_real[df_tempo_real['expedicao'] == visao_selecionada]
                     df_user_tempo_rev = df_tempo_real[df_tempo_real['revisao'] == visao_selecionada]
-                    cu1, cu2, cu3 = st.columns(3)
-                    cu1.metric("Tempo Médio de Elaboração", format_tempo(df_user_tempo_exp['min_exp'].mean()))
-                    cu2.metric("Tempo Médio de Conferência", format_tempo(df_user_tempo_rev['min_rev'].mean()))
-                    if not df_user_total.empty:
-                        parceiros = []
-                        parceiros.extend(df_user_exp['revisao'].tolist())
-                        parceiros.extend(df_user_rev['expedicao'].tolist())
-                        if parceiros:
-                            dupla = pd.Series(parceiros).mode()[0]
-                            cu3.metric("🤝 Parceiro Mais Frequente", dupla)
-                        else: cu3.metric("🤝 Parceiro Operacional", "N/A")
-                    else: cu3.metric("🤝 Parceiro Operacional", "N/A")
+                    
+                    # Cartões de Resumo Individual
+                    c_ind1, c_ind2, c_ind3 = st.columns(3)
+                    with c_ind1:
+                        st.markdown(f"""
+                        <div style='background-color: rgba(30, 144, 255, 0.1); border-left: 5px solid #1E90FF; padding: 15px; border-radius: 5px;'>
+                            <h4 style='margin:0; color:#1E90FF;'>Elaborador</h4>
+                            <h2 style='margin:0;'>{len(df_user_exp)} <span style='font-size:14px; font-weight:normal; color:gray;'>processos</span></h2>
+                            <p style='margin:0; font-size:12px;'>⏱️ Velocidade: <b>{format_tempo(df_user_tempo_exp['min_exp'].mean())}</b></p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    with c_ind2:
+                        st.markdown(f"""
+                        <div style='background-color: rgba(46, 213, 115, 0.1); border-left: 5px solid #2ED573; padding: 15px; border-radius: 5px;'>
+                            <h4 style='margin:0; color:#2ED573;'>Revisor</h4>
+                            <h2 style='margin:0;'>{len(df_user_rev)} <span style='font-size:14px; font-weight:normal; color:gray;'>processos</span></h2>
+                            <p style='margin:0; font-size:12px;'>⏱️ Velocidade: <b>{format_tempo(df_user_tempo_rev['min_rev'].mean())}</b></p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    with c_ind3:
+                        parceiro = "N/A"
+                        if not df_user_total.empty:
+                            parceiros = df_user_exp['revisao'].tolist() + df_user_rev['expedicao'].tolist()
+                            if parceiros: parceiro = pd.Series(parceiros).mode()[0]
+                        
+                        st.markdown(f"""
+                        <div style='background-color: rgba(255, 107, 107, 0.1); border-left: 5px solid #FF6B6B; padding: 15px; border-radius: 5px;'>
+                            <h4 style='margin:0; color:#FF6B6B;'>Impacto</h4>
+                            <h2 style='margin:0;'>{len(df_user_total[df_user_total['urgente'] == 1])} <span style='font-size:14px; font-weight:normal; color:gray;'>urgências salvas</span></h2>
+                            <p style='margin:0; font-size:12px;'>🤝 Maior Afinidade: <b>{parceiro}</b></p>
+                        </div>
+                        """, unsafe_allow_html=True)
 
         with sub_ferias:
             st.header("🌴 Painel de Férias e Afastamentos Operacionais")
