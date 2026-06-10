@@ -1868,6 +1868,33 @@ with aba_gestao:
                         ok, m = gerenciar_usuario('adicionar', novo_colab, expedicao=int(faz_exp), revisao=int(faz_rev), cargo=cargo_colab)
                         if ok: st.success(m); time.sleep(1); st.rerun()
                         
+                # ---------------------------------------------------------
+                # QUADRO DE PERMISSÕES E CARGOS
+                # ---------------------------------------------------------
+                st.markdown("---")
+                st.subheader("📋 Quadro da Equipe e Permissões")
+                st.write("Visão geral de todos os membros do setor, seus cargos e papéis na distribuição.")
+                
+                # Puxa os dados da tabela 'equipe'
+                df_equipe = pd.DataFrame(conn.client.table("equipe").select("*").execute().data)
+                
+                if not df_equipe.empty:
+                    # Ajusta as colunas para o quadro ficar bonito
+                    df_quadro = df_equipe[['nome', 'cargo', 'expedicao', 'revisao']].copy()
+                    
+                    # Converte os números 0/1 para ícones visuais
+                    df_quadro['Expedição'] = df_quadro['expedicao'].apply(lambda x: '✅ Sim' if x == 1 else '❌ Não')
+                    df_quadro['Revisão'] = df_quadro['revisao'].apply(lambda x: '✅ Sim' if x == 1 else '❌ Não')
+                    
+                    # Renomeia para exibição
+                    df_quadro = df_quadro.rename(columns={'nome': 'Colaborador', 'cargo': 'Cargo no Setor'})
+                    
+                    # Exibe o dataframe sem as colunas técnicas de controle
+                    st.dataframe(df_quadro[['Colaborador', 'Cargo no Setor', 'Expedição', 'Revisão']], 
+                                 hide_index=True, 
+                                 use_container_width=True)
+                else:
+                    st.info("Nenhum colaborador registrado na base de dados.")
                 elif acao_equipe == "Editar Permissões":
                     col1, col2, col3 = st.columns(3)
                     colab_editar = col1.selectbox("Selecione o colaborador", TODOS_NOMES)
