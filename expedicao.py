@@ -252,7 +252,6 @@ def obter_colaboradores_ausentes_hoje():
         return []
 
 def color_urgentes(row): 
-    # Verifica se a coluna 'urgente_flag' existe na linha e se é igual a 1
     if 'urgente_flag' in row and row['urgente_flag'] == 1:
         return ['color: #ff4b4b; font-weight: bold'] * len(row)
     else:
@@ -728,15 +727,9 @@ st.title("⚖️ S.A.D.E. - Sistema de Automação de Distribuição e Expediç�
 # ==========================================
 df_avisos = obter_avisos_pendentes()
 
-# DEBUG (Só aparece se houver avisos no banco mas não aparecerem no letreiro)
-# Descomente a linha abaixo para testar se o script está lendo o banco corretamente:
-# st.write(f"DEBUG: Avisos encontrados na memória: {len(df_avisos)}")
-
 if not df_avisos.empty:
     textos_aviso = []
     for _, row in df_avisos.iterrows():
-        # Filtro: Mostra se for "Todos" ou se o expedidor for quem está logado
-        # Como o seu sistema não tem login obrigatório, vamos exibir para todos que virem o painel
         textos_aviso.append(f"🚨 <b>{row['usuario']}</b>: Processo <b>{row['numero_processo'] if row['numero_processo'] else 'GERAL'}</b> ➔ {row['mensagem']}")
         
     texto_marquee = " &nbsp;&nbsp;&nbsp;&nbsp; | &nbsp;&nbsp;&nbsp;&nbsp; ".join(textos_aviso)
@@ -869,7 +862,6 @@ with aba_inserir:
                     barra_progresso.progress((index + 1) / len(df_upload))
                 st.success(f"🎉 Operação Concluída! {sucessos} processos inseridos.")
 
-    # --- FERRAMENTAS DE MANUTENÇÃO (AGORA ALINHADAS CORRETAMENTE FORA DO IF/ELIF) ---
     st.markdown("---")
     st.header("🛠️ Ferramentas de Manutenção da Pauta")
     
@@ -928,12 +920,12 @@ with aba_sessoes:
     with col_filtro_p:
         colab_painel = st.selectbox(
             "Filtrar processos por responsável:", 
-            ["👁️ Ver Todos os Processos do Setor"] + TODOS_NOMES,
+            ["👁️ Ver Todos Os Processos do Setor"] + TODOS_NOMES,
             key="filtro_colab_painel_ativo",
             label_visibility="collapsed"
         )
     
-    if colab_painel != "👁️ Ver Todos os Processos do Setor":
+    if colab_painel != "👁️ Ver Todos Os Processos do Setor":
         st.markdown(f"👋 **Bom trabalho, {colab_painel}!** Exibindo estritamente as demandas onde você é o Expedidor ou o Revisor.")
     
     st.markdown("---")
@@ -941,6 +933,7 @@ with aba_sessoes:
     sub_aba_urg, sub_aba_ord, sub_aba_ordv, sub_aba_res, sub_aba_adm = st.tabs([
         "🚨 0. URGENTES", "🏛️ 1. Ordinária", "💻 2. Ordinária Virtual", "🔒 3. Reservada", "📁 4. Administrativa"
     ])
+    
     def exibir_tabela_interativa(df_filtrado, key_prefix, data_sessao, tipo_sessao_tb):
         titulo_placeholder = st.empty()
         
@@ -997,23 +990,16 @@ with aba_sessoes:
             styled_df = df_exibicao.style.apply(color_urgentes, axis=1)
 
             # ------------------------------------------------------------------------
-            # A SOLUÇÃO DA BRECHA: Identifica se a Mesa está em modo Global (Leitura)
+            # Identifica se a Mesa está em modo Global (Leitura)
             # ------------------------------------------------------------------------
-            painel_atual = st.session_state.get('filtro_colab_painel_ativo', "👁️ Ver Todos os Processos do Setor")
+            painel_atual = st.session_state.get('filtro_colab_painel_ativo', "👁️ Ver Todos Os Processos do Setor")
+            
             # --- LÓGICA DE SUPER-PODER DA CHEFIA ---
-            # Verifica quem é o chefe atual no banco
             equipe_data = conn.client.table("equipe").select("nome, cargo").execute().data
             chefes = [row['nome'] for row in equipe_data if row.get('cargo') == "Chefia"]
             
-            # O modo de edição é liberado se for a chefia OU se o colaborador selecionado for o responsável
             e_chefia = (painel_atual in chefes)
-            
-            # Bloqueia a edição apenas se não for chefia E estiver em modo global
-            modo_leitura = (painel_atual == "👁️ Ver Todos os Processos do Setor" and not e_chefia)
-            
-            # --- AJUSTE DAS TRAVAS ---
-            # Se for chefia, desabilitamos as travas de ofício e revisão
-            # Usaremos 'e_chefia' para decidir se permitimos o despacho sem ofício
+            modo_leitura = (painel_atual == "👁️ Ver Todos Os Processos do Setor" and not e_chefia)
             
             cfg_colunas = {
                 "id": None, 
@@ -1034,7 +1020,6 @@ with aba_sessoes:
             if pendentes > 0: titulo_placeholder.markdown(f"##### 📅 {data_sessao} | ⏳ {pendentes} Pendentes", unsafe_allow_html=True)
             else: titulo_placeholder.markdown(f"##### 📅 {data_sessao} | ✅ Concluído!", unsafe_allow_html=True)
 
-            # Alerta amigável avisando que a mesa global é apenas para consulta
             if modo_leitura:
                 st.info("💡 **Mesa em Modo Leitura (Setor Global):** Para avaliar, revisar ou despachar um processo, selecione o seu nome no filtro do topo da página.")
 
@@ -1051,11 +1036,10 @@ with aba_sessoes:
                         linha_antiga = df_exibicao.iloc[i].to_dict()
                         if linha_nova != linha_antiga:
                             
-                            # A CHEFIA PULA AS TRAVAS!
                             if not e_chefia:
                                 # TRAVA: Quem pode mudar a revisão?
                                 if linha_nova['Status Revisão'] != linha_antiga['Status Revisão']:
-                                    if colab_painel != "👁️ Ver Todos os Processos do Setor" and colab_painel != linha_nova['Revisor']:
+                                    if colab_painel != "👁️ Ver Todos Os Processos do Setor" and colab_painel != linha_nova['Revisor']:
                                         st.error(f"🚨 ERRO: Apenas o Revisor ({linha_nova['Revisor']}) pode alterar o Status!")
                                         bloqueio_ativo = True
                                         continue
@@ -1097,7 +1081,7 @@ with aba_sessoes:
 
                             mapa_banco_simples = {'Expedição': 'expedicao', 'Revisor': 'revisao', 'Expedido': 'expedido_ok', 'Despachado': 'despachado', 'E-mail': 'enviado_email', 'Mensageria': 'enviado_mensageria', 'Recebido': 'recebido'}
                             for col_tela, col_banco in mapa_banco_simples.items():
-                                if col_tela in línea_nova and linha_nova[col_tela] != linha_antiga.get(col_tela):
+                                if col_tela in linha_nova and linha_nova[col_tela] != linha_antiga.get(col_tela):
                                     val = linha_nova[col_tela]
                                     mudancas[col_banco] = 1 if val else 0 if isinstance(val, bool) else val
 
@@ -1120,12 +1104,10 @@ with aba_sessoes:
             st.error("🚨 PROCESSOS EM QUARENTENA (Revisor encontrou erros que precisam ser arrumados)")
             
             df_q_exib = df_quarentena[['id', 'numero_processo', 'relator', 'expedicao', 'revisao', 'motivo_correcao']].copy()
-            # Se estiver na mesa global, o Expedidor também não pode dar baixa na quarentena por aqui
             df_q_exib['Ação do Expedidor'] = False 
             df_q_exib = df_q_exib.rename(columns={'numero_processo':'Processo', 'relator':'Relator', 'expedicao':'Expedidor', 'revisao': 'Revisor', 'motivo_correcao':'Motivo Apontado'})
             
             with st.form(key=f"form_quarentena_{key_prefix}_{data_sessao}"):
-                # Usa a variável 'modo_leitura' para desativar o checkbox caso seja a pauta global
                 q_edited = st.data_editor(
                     df_q_exib, 
                     hide_index=True, 
@@ -1161,24 +1143,20 @@ with aba_sessoes:
 
         st.markdown("---")
 
-         # Identifica quem são os chefes antes de abrir as abas
+    # Identifica quem são os chefes antes de abrir as abas
     equipe_data = conn.client.table("equipe").select("nome, cargo").execute().data
     lista_chefes = [row['nome'] for row in equipe_data if row.get('cargo') == "Chefia"]
-    
-    # Isso define se o usuário logado tem poderes totais
     e_chefia = (colab_painel in lista_chefes)
     
     with sub_aba_urg:
         st.subheader("🚨 Painel Unificado de Demandas Urgentes")
-        df_urg = carregar_dados_sqlite() # Carrega banco amplo
+        df_urg = carregar_dados_sqlite()
         
         if not df_urg.empty and 'urgente' in df_urg.columns:
-            # FILTRA OS URGENTES E IGNORA OS ADMINISTRATIVOS (EXCLUSIVOS DA CHEFIA)
             df_urg = df_urg[(df_urg['urgente'] == 1) & (df_urg['despachado'] == 0) & (df_urg['tipo_sessao'] != "Sessão Administrativa")]
             
-            # A lógica mudou: Agora só filtra se não for o modo "Ver Todos" E não for Chefia
-            if colab_painel != "👁️ Ver Todos os Processos do Setor" and not e_chefia:
-                df_ord = df_ord[(df_ord['expedicao'] == colab_painel) | (df_ord['revisao'] == colab_painel)]
+            if colab_painel != "👁️ Ver Todos Os Processos do Setor" and not e_chefia:
+                df_urg = df_urg[(df_urg['expedicao'] == colab_painel) | (df_urg['revisao'] == colab_painel)]
                 
             sessoes_com_urgentes = sorted(df_urg['nome_sessao'].unique().tolist())
             
@@ -1187,14 +1165,13 @@ with aba_sessoes:
                     exibir_tabela_interativa(df_urg[df_urg['nome_sessao'] == data], "urg", data, "Urgente")
             else:
                 st.success("✨ Nenhuma pauta crítica ou urgência pendente no momento!")
+                
     with sub_aba_ord:
         df_ord = carregar_dados_sqlite("Sessão Ordinária")
         if not df_ord.empty:
-            # BLINDAGEM: Retira os urgentes da pauta comum
             df_ord = df_ord[df_ord['urgente'] == 0]
             
-            # A lógica mudou: Agora só filtra se não for o modo "Ver Todos" E não for Chefia
-            if colab_painel != "👁️ Ver Todos os Processos do Setor" and not e_chefia:
+            if colab_painel != "👁️ Ver Todos Os Processos do Setor" and not e_chefia:
                  df_ord = df_ord[(df_ord['expedicao'] == colab_painel) | (df_ord['revisao'] == colab_painel)]
             
             sessoes_com_processos = [data for data in df_ord['nome_sessao'].unique() if f"Sessão Ordinária | {str(data).strip()}" not in sessoes_finalizadas]
@@ -1208,13 +1185,10 @@ with aba_sessoes:
     with sub_aba_ordv:
         df_ordv = carregar_dados_sqlite("Sessão Ordinária Virtual")
         if not df_ordv.empty:
-            # BLINDAGEM: Retira os urgentes da pauta comum
             df_ordv = df_ordv[df_ordv['urgente'] == 0]
             
-            # A lógica mudou: Agora só filtra se não for o modo "Ver Todos" E não for Chefia
-# A lógica mudou: Agora só filtra se não for o modo "Ver Todos" E não for Chefia
-            if colab_painel != "👁️ Ver Todos os Processos do Setor" and not e_chefia:
-                df_ord = df_ord[(df_ord['expedicao'] == colab_painel) | (df_ord['revisao'] == colab_painel)]
+            if colab_painel != "👁️ Ver Todos Os Processos do Setor" and not e_chefia:
+                df_ordv = df_ordv[(df_ordv['expedicao'] == colab_painel) | (df_ordv['revisao'] == colab_painel)]
                 
             sessoes_com_processos = [data for data in df_ordv['nome_sessao'].unique() if f"Sessão Ordinária Virtual | {str(data).strip()}" not in sessoes_finalizadas]
             
@@ -1227,12 +1201,10 @@ with aba_sessoes:
     with sub_aba_res:
         df_res = carregar_dados_sqlite("Sessão Reservada")
         if not df_res.empty:
-            # BLINDAGEM: Retira os urgentes da pauta comum
             df_res = df_res[df_res['urgente'] == 0]
             
-            # A lógica mudou: Agora só filtra se não for o modo "Ver Todos" E não for Chefia
-            if colab_painel != "👁️ Ver Todos os Processos do Setor" and not e_chefia:
-                df_ord = df_ord[(df_ord['expedicao'] == colab_painel) | (df_ord['revisao'] == colab_painel)]
+            if colab_painel != "👁️ Ver Todos Os Processos do Setor" and not e_chefia:
+                df_res = df_res[(df_res['expedicao'] == colab_painel) | (df_res['revisao'] == colab_painel)]
                 
             sessoes_com_processos = [data for data in df_res['nome_sessao'].unique() if f"Sessão Reservada | {str(data).strip()}" not in sessoes_finalizadas]
             
@@ -1245,12 +1217,10 @@ with aba_sessoes:
     with sub_aba_adm:
         df_adm = carregar_dados_sqlite("Sessão Administrativa")
         if not df_adm.empty:
-            # BLINDAGEM: Retira os urgentes da pauta comum
             df_adm = df_adm[df_adm['urgente'] == 0]
             
-            # A lógica mudou: Agora só filtra se não for o modo "Ver Todos" E não for Chefia
-            if colab_painel != "👁️ Ver Todos os Processos do Setor" and not e_chefia:
-                df_ord = df_ord[(df_ord['expedicao'] == colab_painel) | (df_ord['revisao'] == colab_painel)]
+            if colab_painel != "👁️ Ver Todos Os Processos do Setor" and not e_chefia:
+                df_adm = df_adm[(df_adm['expedicao'] == colab_painel) | (df_adm['revisao'] == colab_painel)]
                 
             sessoes_com_processos = [data for data in df_adm['nome_sessao'].unique() if f"Sessão Administrativa | {str(data).strip()}" not in sessoes_finalizadas]
             
@@ -1283,7 +1253,6 @@ with aba_oficios:
         with col_f2:
             quem_expede_global = st.selectbox("Identifique-se (Quem está expedindo?):", TODOS_NOMES)
             
-        # O SEGREDO DO FILTRO INDIVIDUAL ESTÁ AQUI:
         df_ativos_filtrado = df_ativos_base[(df_ativos_base['tipo_sessao'] == tipo_sessao_filtro) & (df_ativos_base['expedicao'] == quem_expede_global)]
         
         with col_f3:
@@ -1340,7 +1309,6 @@ with aba_oficios:
                 if dest_final and dest_final != "-- Selecionar Existente --" and num_oficio:
                     ok, m = adicionar_oficio(proc_selecionado, num_oficio, cat_oficio, tipo_nao_jur, dest_final, 1, fluxo_doc, quem_expede_global)
                     
-                    # AUTOMAÇÃO: Marca o processo como EXPEDIDO automaticamente no banco
                     agora_str = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
                     conn.client.table("processos").update({
                         "precisa_correcao": 0, 
@@ -1358,9 +1326,6 @@ with aba_oficios:
                     
             st.markdown("---")
 
-            # -----------------------------------------------------
-            # NOVO MÓDULO: ISENÇÃO COM JUSTIFICATIVA OBRIGATÓRIA
-            # -----------------------------------------------------
             st.subheader("🚫 3. Isenção de Ofícios (Casos Especiais)")
             col_is1, col_is2 = st.columns([2, 1])
             with col_is1:
@@ -1427,13 +1392,11 @@ with aba_oficios_relatorio:
     st.write("Visualize o histórico completo de ofícios e memorandos. Use os filtros abaixo para localizar documentos específicos.")
 
     try:
-        # Puxa tudo do banco
         df_auditoria = pd.DataFrame(conn.client.table("oficios").select("*").execute().data)
     except:
         df_auditoria = pd.DataFrame()
 
     if not df_auditoria.empty:
-        # --- ÁREA DE FILTROS ---
         col_filtro1, col_filtro2 = st.columns(2)
         
         with col_filtro1:
@@ -1441,7 +1404,6 @@ with aba_oficios_relatorio:
         with col_filtro2:
             filtro_proc = st.text_input("Filtrar por Nº do Processo:")
             
-        # --- LÓGICA DE FILTRAGEM ---
         df_view = df_auditoria.copy()
         
         if filtro_colab != "Todos":
@@ -1450,13 +1412,10 @@ with aba_oficios_relatorio:
         if filtro_proc:
             df_view = df_view[df_view['numero_processo'].astype(str).str.contains(filtro_proc, case=False, na=False)]
             
-        # --- CABEÇALHO DO TOTAL ---
         st.markdown("---")
         st.info(f"📍 Total de documentos localizados: **{len(df_view)}**")
         
-        # --- TABELA DE AUDITORIA ---
         if not df_view.empty:
-            # Selecionando apenas as colunas que você pediu
             df_display = df_view[['numero_processo', 'numero_oficio', 'quem_expediu']].rename(columns={
                 'numero_processo': 'Processo', 
                 'numero_oficio': 'Nº Ofício/Memo', 
@@ -1465,7 +1424,6 @@ with aba_oficios_relatorio:
             
             st.dataframe(df_display, use_container_width=True, hide_index=True)
             
-            # Download da lista filtrada
             csv = df_view.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📥 Exportar Lista Filtrada (CSV)", 
@@ -1620,7 +1578,6 @@ with aba_gestao:
             with st.expander("⚙️ Área Administrativa Avançada (Equipe e Banco de Dados)"):
                 st.subheader("📢 Mural de Avisos (Letreiro)")
                 
-                # Escolha o tipo de aviso
                 tipo_aviso = st.radio("Destinatário do Aviso:", ["Para Todos", "Para um Processo Específico"], horizontal=True)
                 
                 col_av1, col_av2 = st.columns([1, 2])
@@ -1632,31 +1589,29 @@ with aba_gestao:
                     with col_av2:
                         msg = st.text_input("Mensagem para todos:", placeholder="Ex: Informamos que o sistema ficará lento às 14h...")
                 else:
-                    duracao = 0 # Não se aplica
+                    duracao = 0 
                     with col_av1:
                         aviso_processo = st.text_input("Nº do Processo:")
                     with col_av2:
                         msg = st.text_input("Mensagem para o expedidor:", placeholder="Ex: Favor verificar ofício pendente...")
                 
                 if st.button("📢 Publicar no Letreiro", type="primary", use_container_width=True):
-            # 1. Validação: Verifica se os campos obrigatórios estão preenchidos
                     if not msg:
                         st.warning("⚠️ Preencha a mensagem do aviso.")
                     elif tipo_aviso == "Para um Processo Específico" and not aviso_processo:
                         st.warning("⚠️ Preencha o número do processo.")
                     else:
-                # 2. Se passou na validação, executa a lógica
                         proc_input = aviso_processo if tipo_aviso == "Para um Processo Específico" else None
                         avisado = "Todos" if tipo_aviso == "Para Todos" else "Individual"
                 
                         ok, msg_retorno = adicionar_aviso(avisado, proc_input, msg, duracao)
                 
-                    if ok:
-                        st.success(msg_retorno)
-                        time.sleep(1)
-                        st.rerun()
-                    else: 
-                        st.error(msg_retorno)
+                        if ok:
+                            st.success(msg_retorno)
+                            time.sleep(1)
+                            st.rerun()
+                        else: 
+                            st.error(msg_retorno)
                         
                 st.markdown("---")
                 st.subheader("📄 Relatório Gerencial Mensal/Anual")
