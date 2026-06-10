@@ -1868,6 +1868,28 @@ with aba_gestao:
                         ok, m = gerenciar_usuario('adicionar', novo_colab, expedicao=int(faz_exp), revisao=int(faz_rev), cargo=cargo_colab)
                         if ok: st.success(m); time.sleep(1); st.rerun()
                         
+                elif acao_equipe == "Editar Permissões":
+                    col1, col2, col3 = st.columns(3)
+                    colab_editar = col1.selectbox("Selecione o colaborador", TODOS_NOMES)
+                    cargo_editar = col1.selectbox("Atualizar Cargo:", ["Assessor", "Estagiário", "Chefia"], key="edit_cargo_sel")
+                    faz_exp = col2.checkbox("Participa da Expedição", value=True, key="edit_exp")
+                    faz_rev = col3.checkbox("Participa da Revisão", value=True, key="edit_rev")
+                    if st.button("✏️ Atualizar Permissões", type="primary", key="edit_user"):
+                        ok, m = gerenciar_usuario('editar', colab_editar, expedicao=int(faz_exp), revisao=int(faz_rev), cargo=cargo_editar)
+                        if ok: st.success(m); time.sleep(1); st.rerun()
+                elif acao_equipe == "Substituir Nome":
+                    col1, col2, col3 = st.columns(3)
+                    colab_atual = col1.selectbox("Quem vai sair?", TODOS_NOMES)
+                    novo_nome = col2.text_input("Qual o nome de quem vai entrar?")
+                    faz_exp, faz_rev = col3.checkbox("Entra na Expedição?", value=True), col3.checkbox("Entra na Revisão?", value=True)
+                    if st.button("🔄 Substituir", type="primary", key="subst_user"):
+                        ok, m = gerenciar_usuario('substituir', colab_atual, novo_nome=novo_nome, expedicao=int(faz_exp), revisao=int(faz_rev))
+                        if ok: st.success(m); time.sleep(1); st.rerun()
+                elif acao_equipe == "Remover Colaborador":
+                    colab_remover = st.selectbox("Selecione quem será removido", TODOS_NOMES)
+                    if st.button("🗑️ Remover Definitivamente", type="primary", key="rem_user"):
+                        ok, m = gerenciar_usuario('remover', colab_remover)
+                        if ok: st.success(m); time.sleep(1); st.rerun()
                 # ---------------------------------------------------------
                 # QUADRO DE PERMISSÕES E CARGOS
                 # ---------------------------------------------------------
@@ -1895,29 +1917,6 @@ with aba_gestao:
                                  use_container_width=True)
                 else:
                     st.info("Nenhum colaborador registrado na base de dados.")
-                elif acao_equipe == "Editar Permissões":
-                    col1, col2, col3 = st.columns(3)
-                    colab_editar = col1.selectbox("Selecione o colaborador", TODOS_NOMES)
-                    cargo_editar = col1.selectbox("Atualizar Cargo:", ["Assessor", "Estagiário", "Chefia"], key="edit_cargo_sel")
-                    faz_exp = col2.checkbox("Participa da Expedição", value=True, key="edit_exp")
-                    faz_rev = col3.checkbox("Participa da Revisão", value=True, key="edit_rev")
-                    if st.button("✏️ Atualizar Permissões", type="primary", key="edit_user"):
-                        ok, m = gerenciar_usuario('editar', colab_editar, expedicao=int(faz_exp), revisao=int(faz_rev), cargo=cargo_editar)
-                        if ok: st.success(m); time.sleep(1); st.rerun()
-                elif acao_equipe == "Substituir Nome":
-                    col1, col2, col3 = st.columns(3)
-                    colab_atual = col1.selectbox("Quem vai sair?", TODOS_NOMES)
-                    novo_nome = col2.text_input("Qual o nome de quem vai entrar?")
-                    faz_exp, faz_rev = col3.checkbox("Entra na Expedição?", value=True), col3.checkbox("Entra na Revisão?", value=True)
-                    if st.button("🔄 Substituir", type="primary", key="subst_user"):
-                        ok, m = gerenciar_usuario('substituir', colab_atual, novo_nome=novo_nome, expedicao=int(faz_exp), revisao=int(faz_rev))
-                        if ok: st.success(m); time.sleep(1); st.rerun()
-                elif acao_equipe == "Remover Colaborador":
-                    colab_remover = st.selectbox("Selecione quem será removido", TODOS_NOMES)
-                    if st.button("🗑️ Remover Definitivamente", type="primary", key="rem_user"):
-                        ok, m = gerenciar_usuario('remover', colab_remover)
-                        if ok: st.success(m); time.sleep(1); st.rerun()
-                st.markdown("---")
 
                 st.subheader("💾 Backup e Restauração de Dados")
                 col_down, col_up = st.columns(2)
