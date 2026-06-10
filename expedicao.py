@@ -1629,6 +1629,11 @@ with aba_gestao:
                 else: 
                     st.error("❌ Senha Incorreta!")
                     
+    # ---------------------------------------------------------
+    # PARTE 2: ÁREA RESTRITA DA CHEFIA (Protegida por Senha)
+    # ---------------------------------------------------------
+    # ... (código do login da senha) ...
+
     if st.session_state.gestor_autenticado:
         col_titulo, col_btn = st.columns([4, 1])
         col_titulo.markdown("### 🔑 Painel de Operações Críticas (Chefia Ativa)")
@@ -1637,18 +1642,13 @@ with aba_gestao:
             st.rerun()
             
         st.markdown("---")
+        
+        # 👇 DEIXE APENAS ESTA LINHA AQUI E APAGUE QUALQUER OUTRO 'st.tabs' QUE ESTIVER LOGO ABAIXO DELA!
         sub_controle, sub_dados, sub_ferias = st.tabs(["⚙️ 4.1. Controle Operacional", "📈 4.2. Analytics Avançado", "🌴 4.3. Afastamentos"])
         
         with sub_controle:
             st.subheader("⚡ Liberação Extraordinária de Processo")
-            st.write("Força o despacho imediato de um processo ignorando as travas de segurança de ofícios pendentes.")
-            # ... (aqui continua o seu código original de sub_controle a partir do 'col_lib1, col_lib2, col_lib3 = st.columns([2, 4, 2])')
-            
-        st.markdown("---")
-        sub_controle, sub_dados, sub_ferias = st.tabs(["📊 4.1. Controle de Banco de Dados", "📈 4.2. Analytics e Desempenho", "🌴 4.3. Afastamentos da Equipe"])
-        
-        with sub_controle:
-            st.subheader("🔑 Liberação Extraordinária de Processo")
+            # ... (continua o resto do código da liberação e do banco de dados) ...
             st.write("Force o despacho de um processo travado (ignora regras de ofícios e revisões). Esta ação ficará gravada na Auditoria da Chefia.")
             col_lib1, col_lib2, col_lib3 = st.columns([2, 4, 2])
             with col_lib1:
