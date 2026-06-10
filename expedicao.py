@@ -2040,6 +2040,45 @@ with aba_gestao:
 
                     st.markdown("---")
                     
+                    # ====================================================================
+                    # BLOCO 2.5: DEFCON 1 - MONITORAMENTO ISOLADO DE URGÊNCIAS
+                    # ====================================================================
+                    st.markdown("---")
+                    st.markdown("### 🚨 DEFCON 1: Radar de Urgências")
+                    st.write("Acompanhamento exclusivo das demandas críticas e prioritárias do setor.")
+                    
+                    # Separa apenas os urgentes de todo o histórico
+                    df_urgentes_dash = df_dados[df_dados['urgente'] == 1].copy()
+                    
+                    if not df_urgentes_dash.empty:
+                        total_urg = len(df_urgentes_dash)
+                        urg_ok = len(df_urgentes_dash[df_urgentes_dash['despachado'] == 1])
+                        urg_pend = len(df_urgentes_dash[df_urgentes_dash['despachado'] == 0])
+                        
+                        # Cartões HUD exclusivos para urgentes
+                        c_u1, c_u2, c_u3 = st.columns(3)
+                        with c_u1:
+                            st.metric("🔥 Total de Urgências (Geral)", total_urg)
+                        with c_u2:
+                            st.metric("✅ Urgências Despachadas", urg_ok)
+                        with c_u3:
+                            st.metric("⏳ Restantes (Na Pauta)", urg_pend, delta="- Crítico" if urg_pend > 0 else "Limpo", delta_color="inverse" if urg_pend > 0 else "normal")
+                        
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        st.markdown("#### 📍 Onde estão as Urgências? (Distribuição por Sessão)")
+                        
+                        # Conta quantos urgentes tem em cada sessão
+                        urg_sessao = df_urgentes_dash['nome_sessao'].value_counts().reset_index()
+                        urg_sessao.columns = ['Sessão', 'Qtd de Urgentes']
+                        
+                        # Gráfico de barras vermelho intenso
+                        fig_urg = px.bar(urg_sessao, x='Sessão', y='Qtd de Urgentes', text='Qtd de Urgentes', color='Qtd de Urgentes', color_continuous_scale='Reds')
+                        fig_urg.update_traces(textposition='outside')
+                        fig_urg.update_layout(margin=dict(l=0, r=0, t=10, b=0), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", coloraxis_showscale=False)
+                        st.plotly_chart(fig_urg, use_container_width=True)
+                    else:
+                        st.success("✨ Clima de paz e tranquilidade! Nenhuma urgência registrada no banco de dados.")
+                    
                     # --- BLOCO 3: CADÊNCIA E DISTRIBUIÇÃO DA EQUIPE ---
                     st.markdown("#### 🤝 Raio-X Operacional da Equipe")
                     col_rx1, col_rx2 = st.columns(2)
