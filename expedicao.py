@@ -1902,9 +1902,10 @@ with aba_gestao:
                     "Tipo_Sessao": ["Sessão Ordinária", "Sessão Reservada"]
                 })
                 
+                # 🌟 AJUSTE: Botão de modelo já baixa em padrão brasileiro (;) e utf-8
                 st.download_button(
                     label="📥 Baixar Modelo para Histórico (CSV)",
-                    data=df_modelo_hist.to_csv(index=False).encode('utf-8'),
+                    data=df_modelo_hist.to_csv(index=False, sep=';').encode('utf-8-sig'),
                     file_name="modelo_historico.csv", 
                     mime="text/csv", 
                     type="secondary"
@@ -1933,14 +1934,13 @@ with aba_gestao:
                         
                         if arquivo_hist is not None:
                             try:
+                                # 🌟 AJUSTE: Inteligência ativada para farejar o separador
                                 if arquivo_hist.name.endswith('.csv'):
-                                    try: df_up = pd.read_csv(arquivo_hist, encoding='utf-8-sig')
-                                    except UnicodeDecodeError:
+                                    try: 
+                                        df_up = pd.read_csv(arquivo_hist, sep=None, engine='python', encoding='utf-8-sig')
+                                    except Exception:
                                         arquivo_hist.seek(0)
-                                        df_up = pd.read_csv(arquivo_hist, encoding='latin-1', sep=';')
-                                        if len(df_up.columns) == 1:
-                                            arquivo_hist.seek(0)
-                                            df_up = pd.read_csv(arquivo_hist, encoding='latin-1', sep=',')
+                                        df_up = pd.read_csv(arquivo_hist, sep=';', encoding='latin-1')
                                 else:
                                     df_up = pd.read_excel(arquivo_hist)
                                 
