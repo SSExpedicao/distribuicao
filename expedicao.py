@@ -404,6 +404,7 @@ def gerar_relatorio_gerencial(mes, ano):
         return False, f"Erro interno ao compilar relatório: {e}"
 
 def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, expedidores_selecionados, revisores_selecionados):
+    import random
     numero_processo, relator = higienizar_dados(numero_processo, relator)
     
     if processo_existe(numero_processo, nome_sessao): 
@@ -426,7 +427,6 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
             exp_filtrados = ["Jessyca"]
             rev_filtrados = ["Jessyca"]
         else:
-            # Contingência: Jessyca de férias/atestado -> repassa para Elaine e André
             exp_filtrados = [n for n in ["Elaine", "André"] if n in expedidores_selecionados]
             rev_filtrados = [n for n in ["Elaine", "André"] if n in revisores_selecionados]
             if not exp_filtrados: exp_filtrados = expedidores_selecionados
@@ -438,44 +438,83 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
     elif tipo_sessao == "Sessão Reservada":
         exp_filtrados = [n for n in expedidores_selecionados if cargos.get(n) != "Estagiário"]
         rev_filtrados = [n for n in revisores_selecionados if cargos.get(n) != "Estagiário"]
-        
     else:
-        # Ordinárias e Virtuais aceitam todo mundo da escala
         exp_filtrados = expedidores_selecionados
         rev_filtrados = revisores_selecionados
 
-    # Proteção para evitar listas vazias caso a escala de pauta falte membros
     if not exp_filtrados: exp_filtrados = expedidores_selecionados
     if not rev_filtrados: rev_filtrados = revisores_selecionados
 
-    # 2. Puxa histórico da sessão de hoje para balanceamento com os candidatos válidos
-    res_sessao = conn.client.table("processos").select("expedicao, revisao").eq("nome_sessao", nome_sessao).execute().data
+    # =========================================================
+    # INTELIGÊNCIA DE DISTRIBUIÇÃO E DESEMPATE JUSTO
+    # =========================================================
     
-    # Distribuição da Expedição
-    contagem_exp = {nome: 0 for nome in exp_filtrados}
-    for row in res_sessao:
+    # Busca a sessão atual e identifica qual foi a ÚLTIMA sessão para critério de desempate
+    res_sessao_atual = conn.client.table("processos").select("expedicao, revisao").eq("nome_sessao", nome_sessao).execute().data
+    try:
+        res_ultima = conn.client.table("processos").select("nome_sessao").neq("nome_sessao", nome_sessao).order("id", desc=True).limit(1).execute().data
+        ultima_sessao_nome = res_ultima[0]['nome_sessao'] if res_ultima else None
+    except:
+        ultima_sessao_nome = None
+
+    # --- LÓGICA DO EXPEDIDOR ---
+    contagem_exp_atual = {nome: 0 for nome in exp_filtrados}
+    for row in res_sessao_atual:
         exp = row.get('expedicao')
-        if exp in contagem_exp: contagem_exp[exp] += 1
+        if exp in contagem_exp_atual: contagem_exp_atual[exp] += 1
     
-    responsavel_expedicao = min(contagem_exp, key=contagem_exp.get)
-    
-    # Distribuição da Revisão (Anti-Casal e Rodízio)
+    menor_carga_exp = min(contagem_exp_atual.values())
+    empatados_exp = [nome for nome, carga in contagem_exp_atual.items() if carga == menor_carga_exp]
+
+    if len(empatados_exp) == 1:
+        responsavel_expedicao = empatados_exp[0]
+    else:
+        # Desempate buscando quem trabalhou menos apenas na ÚLTIMA sessão
+        if ultima_sessao_nome:
+            contagem_exp_ant = {nome: 0 for nome in empatados_exp}
+            res_ant_exp = conn.client.table("processos").select("expedicao").eq("nome_sessao", ultima_sessao_nome).execute().data
+            for row in res_ant_exp:
+                exp = row.get('expedicao')
+                if exp in contagem_exp_ant: contagem_exp_ant[exp] += 1
+            menor_carga_ant = min(contagem_exp_ant.values())
+            empatados_exp_ant = [nome for nome, carga in contagem_exp_ant.items() if carga == menor_carga_ant]
+            responsavel_expedicao = random.choice(empatados_exp_ant)
+        else:
+            responsavel_expedicao = random.choice(empatados_exp)
+
+    # --- LÓGICA DO REVISOR (ANTI-CASAL + DESEMPATE) ---
     candidatos_revisores = [nome for nome in rev_filtrados if nome != responsavel_expedicao]
     if not candidatos_revisores:
         responsavel_revisao = responsavel_expedicao
     else:
-        contagem_rev = {nome: 0 for nome in candidatos_revisores}
-        for row in res_sessao:
+        contagem_rev_atual = {nome: 0 for nome in candidatos_revisores}
+        for row in res_sessao_atual:
             rev = row.get('revisao')
-            if rev in contagem_rev: contagem_rev[rev] += 1
+            if rev in contagem_rev_atual: contagem_rev_atual[rev] += 1
             
-        ja_mandei_para = [row.get('revisao') for row in res_sessao if row.get('expedicao') == responsavel_expedicao]
+        # Proteção anti-casal na mesma sessão
+        ja_mandei_para = [row.get('revisao') for row in res_sessao_atual if row.get('expedicao') == responsavel_expedicao]
         candidatos_prioritarios = [nome for nome in candidatos_revisores if nome not in ja_mandei_para]
         
-        if candidatos_prioritarios:
-            responsavel_revisao = min(candidatos_prioritarios, key=lambda x: contagem_rev[x])
+        candidatos_finais = candidatos_prioritarios if candidatos_prioritarios else candidatos_revisores
+        menor_carga_rev = min([contagem_rev_atual[n] for n in candidatos_finais])
+        empatados_rev = [n for n in candidatos_finais if contagem_rev_atual[n] == menor_carga_rev]
+
+        if len(empatados_rev) == 1:
+            responsavel_revisao = empatados_rev[0]
         else:
-            responsavel_revisao = min(candidatos_revisores, key=lambda x: contagem_rev[x])
+            # Desempate buscando quem revisou menos apenas na ÚLTIMA sessão
+            if ultima_sessao_nome:
+                contagem_rev_ant = {nome: 0 for nome in empatados_rev}
+                res_ant_rev = conn.client.table("processos").select("revisao").eq("nome_sessao", ultima_sessao_nome).execute().data
+                for row in res_ant_rev:
+                    rev = row.get('revisao')
+                    if rev in contagem_rev_ant: contagem_rev_ant[rev] += 1
+                menor_carga_ant_rev = min(contagem_rev_ant.values())
+                empatados_rev_ant = [nome for nome, carga in contagem_rev_ant.items() if carga == menor_carga_ant_rev]
+                responsavel_revisao = random.choice(empatados_rev_ant)
+            else:
+                responsavel_revisao = random.choice(empatados_rev)
     
     # Inserção Definitiva
     data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
@@ -485,7 +524,7 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
             "nome_sessao": nome_sessao, "expedicao": responsavel_expedicao, "revisao": responsavel_revisao, 
             "data_entrada": data_atual, "expedido_ok": 0, "revisado_ok": 0, "despachado": 0, "urgente": 0
         }).execute()
-        return True, f"✅ Distribuído com Trava de Acesso! Exp: {responsavel_expedicao} ➔ Rev: {responsavel_revisao}"
+        return True, f"✅ Distribuído com Sucesso! Exp: {responsavel_expedicao} ➔ Rev: {responsavel_revisao}"
     except Exception as e:
         return False, f"❌ Erro ao salvar no banco: {e}"
 
@@ -1265,7 +1304,15 @@ with aba_oficios:
     if df_geral_status.empty or 'despachado' not in df_geral_status.columns or 'tipo_sessao' not in df_geral_status.columns:
         df_ativos_base = pd.DataFrame() 
     else:
-        df_ativos_base = df_geral_status[(df_geral_status['despachado'] == 0) & (df_geral_status['tipo_sessao'].isin(['Sessão Ordinária', 'Sessão Ordinária Virtual']))].copy()
+        # Traz processos abertos E que ainda não foram expedidos (0) OU que voltaram pra corrigir na Quarentena (1)
+    if not df_geral_status.empty and 'despachado' in df_geral_status.columns:
+        df_ativos_base = df_geral_status[
+            (df_geral_status['despachado'] == 0) & 
+            (df_geral_status['tipo_sessao'].isin(['Sessão Ordinária', 'Sessão Ordinária Virtual'])) &
+            ((df_geral_status['expedido_ok'] == 0) | (df_geral_status['precisa_correcao'] == 1))
+        ].copy()
+    else:
+        df_ativos_base = pd.DataFrame()
     
     if df_ativos_base.empty:
         st.success("✨ Pauta limpa! Nenhum processo aguardando ofícios no momento.")
