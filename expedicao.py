@@ -1301,18 +1301,16 @@ with aba_sessoes:
 with aba_oficios:
     st.header("✉️ Controle e Expedição de Ofícios")
     
+    # Validação inicial do banco de dados
     if df_geral_status.empty or 'despachado' not in df_geral_status.columns or 'tipo_sessao' not in df_geral_status.columns:
         df_ativos_base = pd.DataFrame() 
     else:
         # Traz processos abertos E que ainda não foram expedidos (0) OU que voltaram pra corrigir na Quarentena (1)
-    if not df_geral_status.empty and 'despachado' in df_geral_status.columns:
         df_ativos_base = df_geral_status[
             (df_geral_status['despachado'] == 0) & 
             (df_geral_status['tipo_sessao'].isin(['Sessão Ordinária', 'Sessão Ordinária Virtual'])) &
             ((df_geral_status['expedido_ok'] == 0) | (df_geral_status['precisa_correcao'] == 1))
         ].copy()
-    else:
-        df_ativos_base = pd.DataFrame()
     
     if df_ativos_base.empty:
         st.success("✨ Pauta limpa! Nenhum processo aguardando ofícios no momento.")
