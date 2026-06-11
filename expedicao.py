@@ -181,13 +181,21 @@ def marcar_urgente(numero_processo, expedidores_selecionados, revisores_selecion
 
             # 1. Filtros de Segurança baseados no Rito Original
             if tipo_sessao_original == "Sessão Administrativa":
-                if "Jessyca" not in ausentes and "Jessyca" in expedidores_selecionados:
-                    exp_filtrados, rev_filtrados = ["Jessyca"], ["Jessyca"]
+                chefes = [nome for nome, cargo in cargos.items() if cargo == "Chefia"]
+                chefe_ativo = None
+                for c in chefes:
+                    if c not in ausentes:
+                        chefe_ativo = c
+                        break
+                
+                if chefe_ativo:
+                    exp_filtrados, rev_filtrados = [chefe_ativo], [chefe_ativo]
                 else:
-                    exp_filtrados = [n for n in ["Elaine", "André"] if n in expedidores_selecionados]
-                    rev_filtrados = [n for n in ["Elaine", "André"] if n in revisores_selecionados]
-                    if not exp_filtrados: exp_filtrados = expedidores_selecionados
-                    if not rev_filtrados: rev_filtrados = revisores_selecionados
+                    if expedidores_selecionados:
+                        substituto = expedidores_selecionados[0]
+                        exp_filtrados, rev_filtrados = [substituto], [substituto]
+                    else:
+                        exp_filtrados, rev_filtrados = expedidores_selecionados, revisores_selecionados
             elif tipo_sessao_original == "Sessão Reservada":
                 exp_filtrados = [n for n in expedidores_selecionados if cargos.get(n) != "Estagiário"]
                 rev_filtrados = [n for n in revisores_selecionados if cargos.get(n) != "Estagiário"]
@@ -211,47 +219,32 @@ def marcar_urgente(numero_processo, expedidores_selecionados, revisores_selecion
             empatados_exp = [n for n, c in contagem_exp.items() if c == menor_carga_exp]
             responsavel_expedicao = random.choice(empatados_exp)
 
-            # --- Lógica do Revisor (Regra Anti-Casal dos Urgentes por Matriz) ---
-            candidatos_rev = [n for n in rev_filtrados if n != responsavel_expedicao]
+            # --- Lógica do Revisor (Regra de Cadeia / EXCLUSIVIDADE 1-PARA-1 NOS URGENTES) ---
+            revisores_deste_expedidor = list(set([row.get('revisao') for row in urgentes_ativos if row.get('expedicao') == responsavel_expedicao and row.get('revisao')]))
             
-            if not candidatos_rev: 
-                responsavel_revisao = responsavel_expedicao
+            if revisores_deste_expedidor:
+                responsavel_revisao = revisores_deste_expedidor[0]
             else:
+                revisores_ocupados = list(set([row.get('revisao') for row in urgentes_ativos if row.get('expedicao') != responsavel_expedicao and row.get('revisao')]))
+                quem_manda_pra_mim = list(set([row.get('expedicao') for row in urgentes_ativos if row.get('revisao') == responsavel_expedicao and row.get('expedicao')]))
+                
+                candidatos_rev = [n for n in rev_filtrados if n != responsavel_expedicao and n not in revisores_ocupados and n not in quem_manda_pra_mim]
+                
+                if not candidatos_rev:
+                    candidatos_rev = [n for n in rev_filtrados if n != responsavel_expedicao and n not in revisores_ocupados]
+                    if not candidatos_rev:
+                        candidatos_rev = [n for n in rev_filtrados if n != responsavel_expedicao]
+                        if not candidatos_rev:
+                            candidatos_rev = [responsavel_expedicao]
+
                 contagem_rev = {nome: 0 for nome in candidatos_rev}
-                interacoes_casal = {nome: 0 for nome in candidatos_rev}
-                
                 for row in urgentes_ativos:
-                    exp = row.get('expedicao')
                     rev = row.get('revisao')
+                    if rev in contagem_rev: contagem_rev[rev] += 1
                     
-                    # 1. Conta a carga do revisor nos urgentes
-                    if rev in contagem_rev: 
-                        contagem_rev[rev] += 1
-                        
-                    # 2. Nota de Casal (Evita repetição e Ping-Pong nos urgentes)
-                    if exp == responsavel_expedicao and rev in interacoes_casal:
-                        interacoes_casal[rev] += 1
-                    if rev == responsavel_expedicao and exp in interacoes_casal:
-                        interacoes_casal[exp] += 1
-                
-                # 3. Cria o Ranking de Prioridade
-                candidatos_pontuados = []
-                for nome in candidatos_rev:
-                    candidatos_pontuados.append({
-                        "nome": nome,
-                        "casal": interacoes_casal[nome],
-                        "carga": contagem_rev[nome]
-                    })
-                    
-                # Ordena primeiro por quem tem MENOS interação de casal, depois por MENOR carga
-                candidatos_pontuados.sort(key=lambda x: (x['casal'], x['carga']))
-                
-                melhor_casal = candidatos_pontuados[0]['casal']
-                melhor_carga = candidatos_pontuados[0]['carga']
-                
-                melhores_candidatos = [c['nome'] for c in candidatos_pontuados if c['casal'] == melhor_casal and c['carga'] == melhor_carga]
-                
-                responsavel_revisao = random.choice(melhores_candidatos)
+                menor_carga_rev = min([contagem_rev[n] for n in candidatos_rev])
+                empatados_rev = [n for n in candidatos_rev if contagem_rev[n] == menor_carga_rev]
+                responsavel_revisao = random.choice(empatados_rev)
 
             # 3. Atualiza o banco com a redistribuição justa
             conn.client.table("processos").update({
@@ -521,13 +514,11 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
     # ---------------------------------------------------------
     if tipo_sessao == "Sessão Administrativa":
         if chefe_ativo:
-            # Se a Chefia está ativa, assume TUDO sozinha. Ninguém mais toca.
             exp_filtrados = [chefe_ativo]
             rev_filtrados = [chefe_ativo]
         else:
-            # Chefia está de férias/ausente. Pega EXATAMENTE 1 substituto selecionado no Passo 1
             if expedidores_selecionados:
-                substituto = expedidores_selecionados[0] # Força ser apenas 1
+                substituto = expedidores_selecionados[0]
                 exp_filtrados = [substituto]
                 rev_filtrados = [substituto]
             else:
@@ -550,7 +541,6 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
     # INTELIGÊNCIA DE DISTRIBUIÇÃO E DESEMPATE JUSTO
     # =========================================================
     
-    # Busca a sessão atual e a ÚLTIMA sessão para critério de desempate
     res_sessao_atual = conn.client.table("processos").select("expedicao, revisao").eq("nome_sessao", nome_sessao).execute().data
     try:
         res_ultima = conn.client.table("processos").select("nome_sessao").neq("nome_sessao", nome_sessao).order("id", desc=True).limit(1).execute().data
@@ -582,67 +572,39 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
         else:
             responsavel_expedicao = random.choice(empatados_exp)
 
-    # --- LÓGICA DO REVISOR (ANTI-CASAL POR MATRIZ DE PONTUAÇÃO) ---
-    candidatos_revisores = [nome for nome in rev_filtrados if nome != responsavel_expedicao]
+    # --- LÓGICA DO REVISOR (REGRA DE CADEIA / EXCLUSIVIDADE 1-PARA-1) ---
+    revisores_deste_expedidor = list(set([row.get('revisao') for row in res_sessao_atual if row.get('expedicao') == responsavel_expedicao and row.get('revisao')]))
     
-    if not candidatos_revisores:
-        responsavel_revisao = responsavel_expedicao
+    if revisores_deste_expedidor:
+        # Se ele já mandou pra alguém nessa sessão, o sistema trava o mesmo revisor pra ele.
+        responsavel_revisao = revisores_deste_expedidor[0]
     else:
-        # 1. Carga geral de cada revisor na sessão
+        # Descobre quem já é "exclusivo" de outro colega (Esses não podem ser escolhidos)
+        revisores_ocupados = list(set([row.get('revisao') for row in res_sessao_atual if row.get('expedicao') != responsavel_expedicao and row.get('revisao')]))
+        # Descobre quem manda processos para este Expedidor (Impede o ping-pong de casal)
+        quem_manda_pra_mim = list(set([row.get('expedicao') for row in res_sessao_atual if row.get('revisao') == responsavel_expedicao and row.get('expedicao')]))
+        
+        # Filtro Rigoroso: Tira quem é o próprio expedidor, tira quem já está ocupado com outro, tira quem causaria ping-pong
+        candidatos_revisores = [n for n in rev_filtrados if n != responsavel_expedicao and n not in revisores_ocupados and n not in quem_manda_pra_mim]
+        
+        if not candidatos_revisores:
+            # Afrouxa primeiro a regra do ping-pong se a equipe for muito pequena
+            candidatos_revisores = [n for n in rev_filtrados if n != responsavel_expedicao and n not in revisores_ocupados]
+            if not candidatos_revisores:
+                # Afrouxa a regra de exclusividade (só acontece se houver muito mais expedidores que revisores)
+                candidatos_revisores = [n for n in rev_filtrados if n != responsavel_expedicao]
+                if not candidatos_revisores: 
+                    candidatos_revisores = [responsavel_expedicao] # Falha crítica de equipe
+
         contagem_rev_atual = {nome: 0 for nome in candidatos_revisores}
-        # 2. Interações diretas (A "Nota de Casal" entre o expedidor atual e o candidato)
-        interacoes_casal = {nome: 0 for nome in candidatos_revisores}
-
         for row in res_sessao_atual:
-            exp = row.get('expedicao')
             rev = row.get('revisao')
+            if rev in contagem_rev_atual: contagem_rev_atual[rev] += 1
             
-            # Conta a carga de trabalho geral na sessão
-            if rev in contagem_rev_atual: 
-                contagem_rev_atual[rev] += 1
-                
-            # Conta se EU (Expedidor) já mandei pra ELE (Revisor) -> Evita repetição
-            if exp == responsavel_expedicao and rev in interacoes_casal:
-                interacoes_casal[rev] += 1
-            # Conta se ELE (Revisor) mandou pra MIM (Expedidor) -> Evita Ping-Pong
-            if rev == responsavel_expedicao and exp in interacoes_casal:
-                interacoes_casal[exp] += 1
-
-        # Cria um ranking: Prioriza quem tem a MENOR nota de casal, seguido pela MENOR carga de trabalho
-        candidatos_pontuados = []
-        for nome in candidatos_revisores:
-            candidatos_pontuados.append({
-                "nome": nome,
-                "casal": interacoes_casal[nome],
-                "carga": contagem_rev_atual[nome]
-            })
-            
-        candidatos_pontuados.sort(key=lambda x: (x['casal'], x['carga']))
+        menor_carga_rev = min([contagem_rev_atual[n] for n in candidatos_revisores])
+        empatados_rev = [n for n in candidatos_revisores if contagem_rev_atual[n] == menor_carga_rev]
         
-        # Isola as melhores opções (Pontuação perfeita no topo do ranking)
-        melhor_casal = candidatos_pontuados[0]['casal']
-        melhor_carga = candidatos_pontuados[0]['carga']
-        
-        melhores_candidatos = [c['nome'] for c in candidatos_pontuados if c['casal'] == melhor_casal and c['carga'] == melhor_carga]
-
-        if len(melhores_candidatos) == 1:
-            responsavel_revisao = melhores_candidatos[0]
-        else:
-            # Em caso de empate absoluto, desempata buscando quem revisou menos na ÚLTIMA sessão
-            if ultima_sessao_nome:
-                contagem_rev_ant = {nome: 0 for nome in melhores_candidatos}
-                res_ant_rev = conn.client.table("processos").select("revisao").eq("nome_sessao", ultima_sessao_nome).execute().data
-                for row in res_ant_rev:
-                    rev = row.get('revisao')
-                    if rev in contagem_rev_ant: contagem_rev_ant[rev] += 1
-                menor_carga_ant_rev = min(contagem_rev_ant.values())
-                empatados_rev_ant = [nome for nome, carga in contagem_rev_ant.items() if carga == menor_carga_ant_rev]
-                
-                import random
-                responsavel_revisao = random.choice(empatados_rev_ant)
-            else:
-                import random
-                responsavel_revisao = random.choice(melhores_candidatos)
+        responsavel_revisao = random.choice(empatados_rev)
     
     # Inserção Definitiva
     data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
