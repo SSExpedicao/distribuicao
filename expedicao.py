@@ -179,7 +179,6 @@ def marcar_urgente(numero_processo, expedidores_selecionados, revisores_selecion
             id_proc = p['id']
             tipo_sessao_original = p['tipo_sessao']
 
-            # 1. Filtros de Segurança baseados no Rito Original
             if tipo_sessao_original == "Sessão Administrativa":
                 chefes = [nome for nome, cargo in cargos.items() if cargo == "Chefia"]
                 chefe_ativo = None
@@ -206,10 +205,8 @@ def marcar_urgente(numero_processo, expedidores_selecionados, revisores_selecion
             if not exp_filtrados: exp_filtrados = expedidores_selecionados
             if not rev_filtrados: rev_filtrados = revisores_selecionados
 
-            # 2. Inteligência de Balanceamento (Focada APENAS nos Urgentes Ativos)
             urgentes_ativos = conn.client.table("processos").select("expedicao, revisao").eq("urgente", 1).eq("despachado", 0).execute().data
             
-            # --- Lógica do Expedidor ---
             contagem_exp = {nome: 0 for nome in exp_filtrados}
             for row in urgentes_ativos:
                 exp = row.get('expedicao')
@@ -219,7 +216,7 @@ def marcar_urgente(numero_processo, expedidores_selecionados, revisores_selecion
             empatados_exp = [n for n, c in contagem_exp.items() if c == menor_carga_exp]
             responsavel_expedicao = random.choice(empatados_exp)
 
-            # --- Lógica do Revisor (Regra de Cadeia / EXCLUSIVIDADE 1-PARA-1 NOS URGENTES) ---
+            # --- Lógica do Revisor (RODÍZIO HISTÓRICO GLOBAL + EXCLUSIVIDADE NOS URGENTES) ---
             revisores_deste_expedidor = list(set([row.get('revisao') for row in urgentes_ativos if row.get('expedicao') == responsavel_expedicao and row.get('revisao')]))
             
             if revisores_deste_expedidor:
@@ -237,23 +234,36 @@ def marcar_urgente(numero_processo, expedidores_selecionados, revisores_selecion
                         if not candidatos_rev:
                             candidatos_rev = [responsavel_expedicao]
 
-                contagem_rev = {nome: 0 for nome in candidatos_rev}
-                for row in urgentes_ativos:
-                    rev = row.get('revisao')
-                    if rev in contagem_rev: contagem_rev[rev] += 1
-                    
-                menor_carga_rev = min([contagem_rev[n] for n in candidatos_rev])
-                empatados_rev = [n for n in candidatos_rev if contagem_rev[n] == menor_carga_rev]
-                responsavel_revisao = random.choice(empatados_rev)
+                # 🚀 O MOTOR DO RODÍZIO HISTÓRICO PARA URGENTES 🚀
+                try:
+                    historico_geral = conn.client.table("processos").select("id, expedicao, revisao").execute().data
+                except:
+                    historico_geral = []
 
-            # 3. Atualiza o banco com a redistribuição justa
+                pontuacao_rodizio = []
+                for cand in candidatos_rev:
+                    qtd_revisoes_passadas = sum(1 for row in historico_geral if row.get('expedicao') == responsavel_expedicao and row.get('revisao') == cand)
+                    ids_passados = [row.get('id') for row in historico_geral if row.get('expedicao') == responsavel_expedicao and row.get('revisao') == cand]
+                    ultimo_id = max(ids_passados) if ids_passados else 0
+                    carga_atual = sum(1 for row in urgentes_ativos if row.get('revisao') == cand)
+
+                    pontuacao_rodizio.append({
+                        "nome": cand,
+                        "qtd_historica": qtd_revisoes_passadas,
+                        "ultimo_id": ultimo_id,
+                        "carga_atual": carga_atual
+                    })
+
+                pontuacao_rodizio.sort(key=lambda x: (x['qtd_historica'], x['carga_atual'], x['ultimo_id']))
+                responsavel_revisao = pontuacao_rodizio[0]['nome']
+
             conn.client.table("processos").update({
                 "urgente": 1,
                 "expedicao": responsavel_expedicao,
                 "revisao": responsavel_revisao
             }).eq("id", id_proc).execute()
 
-        return True, f"🚨 Urgente Redistribuído com Sucesso! (Exp: {responsavel_expedicao} ➔ Rev: {responsavel_revisao})"
+        return True, f"🚨 Urgente Redistribuído! Exp: {responsavel_expedicao} ➔ Rev: {responsavel_revisao}"
     except Exception as e: return False, f"❌ Erro: {e}"
         
 def atualizar_processo(id_processo, mudancas):
@@ -572,39 +582,54 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
         else:
             responsavel_expedicao = random.choice(empatados_exp)
 
-    # --- LÓGICA DO REVISOR (REGRA DE CADEIA / EXCLUSIVIDADE 1-PARA-1) ---
+    # --- LÓGICA DO REVISOR (RODÍZIO HISTÓRICO GLOBAL + EXCLUSIVIDADE NA SESSÃO) ---
     revisores_deste_expedidor = list(set([row.get('revisao') for row in res_sessao_atual if row.get('expedicao') == responsavel_expedicao and row.get('revisao')]))
     
     if revisores_deste_expedidor:
-        # Se ele já mandou pra alguém nessa sessão, o sistema trava o mesmo revisor pra ele.
+        # Se na sessão atual ele já tem uma dupla fixa, mantém a dupla
         responsavel_revisao = revisores_deste_expedidor[0]
     else:
-        # Descobre quem já é "exclusivo" de outro colega (Esses não podem ser escolhidos)
         revisores_ocupados = list(set([row.get('revisao') for row in res_sessao_atual if row.get('expedicao') != responsavel_expedicao and row.get('revisao')]))
-        # Descobre quem manda processos para este Expedidor (Impede o ping-pong de casal)
         quem_manda_pra_mim = list(set([row.get('expedicao') for row in res_sessao_atual if row.get('revisao') == responsavel_expedicao and row.get('expedicao')]))
         
-        # Filtro Rigoroso: Tira quem é o próprio expedidor, tira quem já está ocupado com outro, tira quem causaria ping-pong
         candidatos_revisores = [n for n in rev_filtrados if n != responsavel_expedicao and n not in revisores_ocupados and n not in quem_manda_pra_mim]
         
         if not candidatos_revisores:
-            # Afrouxa primeiro a regra do ping-pong se a equipe for muito pequena
             candidatos_revisores = [n for n in rev_filtrados if n != responsavel_expedicao and n not in revisores_ocupados]
             if not candidatos_revisores:
-                # Afrouxa a regra de exclusividade (só acontece se houver muito mais expedidores que revisores)
                 candidatos_revisores = [n for n in rev_filtrados if n != responsavel_expedicao]
                 if not candidatos_revisores: 
-                    candidatos_revisores = [responsavel_expedicao] # Falha crítica de equipe
+                    candidatos_revisores = [responsavel_expedicao]
 
-        contagem_rev_atual = {nome: 0 for nome in candidatos_revisores}
-        for row in res_sessao_atual:
-            rev = row.get('revisao')
-            if rev in contagem_rev_atual: contagem_rev_atual[rev] += 1
+        # 🚀 O MOTOR DO RODÍZIO HISTÓRICO 🚀
+        try:
+            historico_geral = conn.client.table("processos").select("id, expedicao, revisao").execute().data
+        except:
+            historico_geral = []
+
+        pontuacao_rodizio = []
+        for cand in candidatos_revisores:
+            # 1. Quantas vezes na história esse candidato já revisou o expedidor atual? (Obrigatório para o ciclo perfeito)
+            qtd_revisoes_passadas = sum(1 for row in historico_geral if row.get('expedicao') == responsavel_expedicao and row.get('revisao') == cand)
             
-        menor_carga_rev = min([contagem_rev_atual[n] for n in candidatos_revisores])
-        empatados_rev = [n for n in candidatos_revisores if contagem_rev_atual[n] == menor_carga_rev]
+            # 2. Desempate 1: Qual foi a última vez? (Para escolher o que não revisa há mais tempo)
+            ids_passados = [row.get('id') for row in historico_geral if row.get('expedicao') == responsavel_expedicao and row.get('revisao') == cand]
+            ultimo_id = max(ids_passados) if ids_passados else 0
+            
+            # 3. Desempate 2: Carga na sessão atual (Para não sobrecarregar)
+            carga_atual = sum(1 for row in res_sessao_atual if row.get('revisao') == cand)
+
+            pontuacao_rodizio.append({
+                "nome": cand,
+                "qtd_historica": qtd_revisoes_passadas,
+                "ultimo_id": ultimo_id,
+                "carga_atual": carga_atual
+            })
+
+        # ORDENAÇÃO: Prioriza quem revisou menos na vida -> quem tem menos carga hoje -> quem revisou há mais tempo
+        pontuacao_rodizio.sort(key=lambda x: (x['qtd_historica'], x['carga_atual'], x['ultimo_id']))
         
-        responsavel_revisao = random.choice(empatados_rev)
+        responsavel_revisao = pontuacao_rodizio[0]['nome']
     
     # Inserção Definitiva
     data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
@@ -614,7 +639,7 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
             "nome_sessao": nome_sessao, "expedicao": responsavel_expedicao, "revisao": responsavel_revisao, 
             "data_entrada": data_atual, "expedido_ok": 0, "revisado_ok": 0, "despachado": 0, "urgente": 0
         }).execute()
-        return True, f"✅ Distribuído com Sucesso! Exp: {responsavel_expedicao} ➔ Rev: {responsavel_revisao}"
+        return True, f"✅ Distribuído! Exp: {responsavel_expedicao} ➔ Rev: {responsavel_revisao}"
     except Exception as e:
         return False, f"❌ Erro ao salvar no banco: {e}"
 
