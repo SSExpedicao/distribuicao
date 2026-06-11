@@ -60,7 +60,8 @@ def higienizar_dados(processo, relator=""):
     rel_limpo = str(relator).strip().upper()
     mapa_relatores = {
         "RR": "GCRR", "AM": "GCAM", "PT": "GCPT", 
-        "AC": "GCAC", "IM": "GCIM", "MM": "GCMM", "VF": "GAVF", "GAVF / Subst.": "GAVF", "VF / Subst.": "GAVF"
+        "AC": "GCAC", "IM": "GCIM", "MM": "GCMM", "VF": "GAVF", 
+        "GAVF / Subst.": "GAVF", "VF / Subst.": "GAVF", "AT": "GPAT"
     }
     if rel_limpo in mapa_relatores:
         rel_limpo = mapa_relatores[rel_limpo]
