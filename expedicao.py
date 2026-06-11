@@ -128,13 +128,23 @@ def remover_processo(numero_processo, nome_sessao, motivo):
 def apagar_sessao_especifica(tipo_sessao, nome_sessao, motivo):
     agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     try:
+        # Busca os processos antes de apagar para saber o que mandar pra lixeira
         processos_sessao = conn.client.table("processos").select("numero_processo, relator").eq("tipo_sessao", tipo_sessao).eq("nome_sessao", nome_sessao).execute().data
+        
+        if not processos_sessao:
+            return False, f"❌ Nenhuma sessão '{nome_sessao}' do tipo '{tipo_sessao}' foi encontrada."
+            
+        # Se for teste ou inclusão errada, não precisa poluir a auditoria. Senão, salva no histórico de excluídos.
         if motivo not in ["Incluído errado", "Teste"]:
             for proc in processos_sessao:
                 conn.client.table("processos_excluidos").insert({"numero_processo": proc['numero_processo'], "relator": proc['relator'], "data_exclusao": agora, "motivo": motivo}).execute()
+        
+        # O comando Nuclear: Deleta tudo que tem esse nome e esse tipo de uma vez só
         conn.client.table("processos").delete().eq("tipo_sessao", tipo_sessao).eq("nome_sessao", nome_sessao).execute()
+        
+        return True, f"💣 Sucesso! Sessão '{nome_sessao}' apagada. {len(processos_sessao)} processos foram removidos!"
     except Exception as e:
-        st.error(f"Erro ao apagar sessão: {e}")
+        return False, f"❌ Erro ao apagar sessão: {e}"
 
 def carregar_excluidos():
     try: 
@@ -1049,6 +1059,29 @@ with aba_inserir:
                     else: st.error(m)
         
         st.markdown("---")
+
+        # --- APAGAR SESSÃO INTEIRA ---
+        st.markdown("---")
+        st.subheader("💣 Apagar Sessão Inteira (Limpeza em Massa)")
+        col_as1, col_as2, col_as3, col_as4 = st.columns([2, 2, 2, 1])
+        with col_as1:
+            datas_disp_apagar = sorted(df_geral_status['nome_sessao'].unique(), reverse=True) if not df_geral_status.empty else []
+            sessao_para_apagar = st.selectbox("Escolha a Sessão:", datas_disp_apagar, key="del_sessao_nome")
+        with col_as2: 
+            tipo_sessao_apagar = st.selectbox("Tipo da Sessão:", ["Sessão Ordinária", "Sessão Ordinária Virtual", "Sessão Reservada", "Sessão Administrativa", "Urgente"], key="del_sessao_tipo")
+        with col_as3: 
+            motivo_apagar_sessao = st.selectbox("Motivo:", ["Teste", "Incluído errado", "Fora de pauta", "Outros"], key="del_sessao_motivo")
+        with col_as4:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("💣 Apagar Tudo", type="primary", use_container_width=True, key="btn_del_sessao"):
+                if sessao_para_apagar:
+                    ok, msg = apagar_sessao_especifica(tipo_sessao_apagar, sessao_para_apagar, motivo_apagar_sessao)
+                    if ok:
+                        st.success(msg)
+                        time.sleep(1.5)
+                        st.rerun()
+                    else:
+                        st.error(msg)
         
         # --- NOMEAR SESSÃO ---
         st.subheader("🏷️ Identificar / Nomear Sessão")
