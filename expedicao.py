@@ -149,15 +149,83 @@ def processo_existe(numero_processo, nome_sessao):
         return res.count > 0
     except: return False
 
-def marcar_urgente(numero_processo):
+def marcar_urgente(numero_processo, expedidores_selecionados, revisores_selecionados):
+    import random
     numero_processo, _ = higienizar_dados(numero_processo)
     try:
-        res = conn.client.table("processos").select("id").eq("numero_processo", numero_processo).eq("despachado", 0).execute().data
-        if not res: return False, f"❌ Processo {numero_processo} não encontrado nas sessões ativas. Insira-o na sua pauta atual primeiro."
+        res = conn.client.table("processos").select("*").eq("numero_processo", numero_processo).eq("despachado", 0).execute().data
+        if not res: return False, f"❌ Processo {numero_processo} não encontrado nas sessões ativas."
         
+        try:
+            equipe_dados = conn.client.table("equipe").select("nome, cargo").execute().data
+            cargos = {row['nome']: row.get('cargo', 'Assessor') for row in equipe_dados}
+        except:
+            cargos = {}
+
+        ausentes = obter_colaboradores_ausentes_hoje()
+
         for p in res:
-            conn.client.table("processos").update({"urgente": 1}).eq("id", p['id']).execute()
-        return True, f"🚨 Processo {numero_processo} destacado como URGENTE!"
+            id_proc = p['id']
+            tipo_sessao_original = p['tipo_sessao']
+
+            # 1. Filtros de Segurança baseados no Rito Original
+            if tipo_sessao_original == "Sessão Administrativa":
+                if "Jessyca" not in ausentes and "Jessyca" in expedidores_selecionados:
+                    exp_filtrados, rev_filtrados = ["Jessyca"], ["Jessyca"]
+                else:
+                    exp_filtrados = [n for n in ["Elaine", "André"] if n in expedidores_selecionados]
+                    rev_filtrados = [n for n in ["Elaine", "André"] if n in revisores_selecionados]
+                    if not exp_filtrados: exp_filtrados = expedidores_selecionados
+                    if not rev_filtrados: rev_filtrados = revisores_selecionados
+            elif tipo_sessao_original == "Sessão Reservada":
+                exp_filtrados = [n for n in expedidores_selecionados if cargos.get(n) != "Estagiário"]
+                rev_filtrados = [n for n in revisores_selecionados if cargos.get(n) != "Estagiário"]
+            else:
+                exp_filtrados = expedidores_selecionados
+                rev_filtrados = revisores_selecionados
+
+            if not exp_filtrados: exp_filtrados = expedidores_selecionados
+            if not rev_filtrados: rev_filtrados = revisores_selecionados
+
+            # 2. Inteligência de Balanceamento (Focada APENAS nos Urgentes Ativos)
+            urgentes_ativos = conn.client.table("processos").select("expedicao, revisao").eq("urgente", 1).eq("despachado", 0).execute().data
+            
+            # --- Lógica do Expedidor ---
+            contagem_exp = {nome: 0 for nome in exp_filtrados}
+            for row in urgentes_ativos:
+                exp = row.get('expedicao')
+                if exp in contagem_exp: contagem_exp[exp] += 1
+            
+            menor_carga_exp = min(contagem_exp.values())
+            empatados_exp = [n for n, c in contagem_exp.items() if c == menor_carga_exp]
+            responsavel_expedicao = random.choice(empatados_exp)
+
+            # --- Lógica do Revisor (Regra Anti-Casal dos Urgentes) ---
+            candidatos_rev = [n for n in rev_filtrados if n != responsavel_expedicao]
+            if not candidatos_rev: 
+                responsavel_revisao = responsavel_expedicao
+            else:
+                contagem_rev = {nome: 0 for nome in candidatos_rev}
+                for row in urgentes_ativos:
+                    rev = row.get('revisao')
+                    if rev in contagem_rev: contagem_rev[rev] += 1
+                
+                ja_mandei_urgente = [row.get('revisao') for row in urgentes_ativos if row.get('expedicao') == responsavel_expedicao]
+                cand_prioritarios = [n for n in candidatos_rev if n not in ja_mandei_urgente]
+                cand_finais = cand_prioritarios if cand_prioritarios else candidatos_rev
+                
+                menor_carga_rev = min([contagem_rev[n] for n in cand_finais])
+                empatados_rev = [n for n in cand_finais if contagem_rev[n] == menor_carga_rev]
+                responsavel_revisao = random.choice(empatados_rev)
+
+            # 3. Atualiza o banco com a redistribuição justa
+            conn.client.table("processos").update({
+                "urgente": 1,
+                "expedicao": responsavel_expedicao,
+                "revisao": responsavel_revisao
+            }).eq("id", id_proc).execute()
+
+        return True, f"🚨 Urgente Redistribuído com Sucesso! (Exp: {responsavel_expedicao} ➔ Rev: {responsavel_revisao})"
     except Exception as e: return False, f"❌ Erro: {e}"
         
 def atualizar_processo(id_processo, mudancas):
@@ -859,13 +927,12 @@ with aba_inserir:
             nome_sessao_atual = st.text_input("Digite o nome exato (Ex: Sessão 125 - 10/06/2026):", value=hoje)
 
         if tipo_sessao == "Urgente":
-            st.info("🚨 **Modo Urgente:** Marca processos existentes como urgentes (funciona para todos os tipos).")
-            expedidores_ativos, revisores_ativos = [], []
-        else:
-            opcoes_expedicao, opcoes_revisao = EQUIPE_EXPEDICAO.copy(), EQUIPE_REVISAO.copy()
-            col3, col4 = st.columns(2)
-            with col3: expedidores_ativos = st.multiselect("👥 Quem fará a Expedição nesta sessão?", opcoes_expedicao, default=opcoes_expedicao)
-            with col4: revisores_ativos = st.multiselect("👥 Quem fará a Revisão nesta sessão?", opcoes_revisao, default=opcoes_revisao)
+            st.info("🚨 **Modo Urgente:** Destaca o processo e **REDISTRIBUI** a carga urgente igualitariamente entre a equipe ativa selecionada abaixo.")
+            
+        opcoes_expedicao, opcoes_revisao = EQUIPE_EXPEDICAO.copy(), EQUIPE_REVISAO.copy()
+        col3, col4 = st.columns(2)
+        with col3: expedidores_ativos = st.multiselect("👥 Quem fará a Expedição nesta sessão?", opcoes_expedicao, default=opcoes_expedicao)
+        with col4: revisores_ativos = st.multiselect("👥 Quem fará a Revisão nesta sessão?", opcoes_revisao, default=opcoes_revisao)
 
     st.markdown("---")
     st.header("Passo 2: Inserir Processos")
@@ -880,7 +947,7 @@ with aba_inserir:
             if st.form_submit_button("Verificar e Processar", type="primary"):
                 if tipo_sessao == "Urgente":
                     if novo_processo:
-                        ok, msg = marcar_urgente(novo_processo)
+                        ok, msg = marcar_urgente(novo_processo, expedidores_ativos, revisores_ativos)
                         st.success(msg) if ok else st.error(msg)
                 else:
                     if not expedidores_ativos or not revisores_ativos: st.error("❌ Escale a equipe no Passo 1.")
@@ -920,7 +987,7 @@ with aba_inserir:
                     processo_val = str(row.get('Processo', '')).strip() if pd.notna(row.get('Processo')) else ""
                     
                     if tipo_sessao == "Urgente": 
-                        ok, msg = marcar_urgente(processo_val)
+                        ok, msg = marcar_urgente(processo_val, expedidores_ativos, revisores_ativos)
                     else:
                         relator_val = str(row.get('Relator', '')).strip() if pd.notna(row.get('Relator')) else ""
                         ok, msg = salvar_novo_processo(processo_val, relator_val, tipo_sessao, nome_sessao_atual, expedidores_ativos, revisores_ativos)
@@ -1249,18 +1316,25 @@ with aba_sessoes:
         df_urg = carregar_dados_sqlite()
         
         if not df_urg.empty and 'urgente' in df_urg.columns:
+            # Mantém o administrativo fora daqui para ficar isolado na aba da chefia
             df_urg = df_urg[(df_urg['urgente'] == 1) & (df_urg['despachado'] == 0) & (df_urg['tipo_sessao'] != "Sessão Administrativa")]
             
             if colab_painel != "👁️ Ver Todos Os Processos do Setor" and not e_chefia:
                 df_urg = df_urg[(df_urg['expedicao'] == colab_painel) | (df_urg['revisao'] == colab_painel)]
                 
-            sessoes_com_urgentes = sorted(df_urg['nome_sessao'].unique().tolist())
-            
-            if sessoes_com_urgentes:
-                for data in sessoes_com_urgentes:
-                    exibir_tabela_interativa(df_urg[df_urg['nome_sessao'] == data], "urg", data, "Urgente")
+            if not df_urg.empty:
+                # O segredo: Cria uma chave combinando o tipo e a data para separar as tabelas
+                df_urg['chave_agrupamento'] = df_urg['tipo_sessao'] + " | " + df_urg['nome_sessao']
+                sessoes_com_urgentes = sorted(df_urg['chave_agrupamento'].unique().tolist())
+                
+                for chave in sessoes_com_urgentes:
+                    tipo, data = chave.split(" | ")
+                    df_filtrado = df_urg[df_urg['chave_agrupamento'] == chave]
+                    exibir_tabela_interativa(df_filtrado, f"urg_{tipo}_{data}", f"{tipo} ➔ {data}", "Urgente")
             else:
                 st.success("✨ Nenhuma pauta crítica ou urgência pendente no momento!")
+        else:
+            st.success("✨ Nenhuma pauta crítica ou urgência pendente no momento!")
                 
     with sub_aba_ord:
         df_ord = carregar_dados_sqlite("Sessão Ordinária")
@@ -1313,7 +1387,7 @@ with aba_sessoes:
     with sub_aba_adm:
         df_adm = carregar_dados_sqlite("Sessão Administrativa")
         if not df_adm.empty:
-            df_adm = df_adm[df_adm['urgente'] == 0]
+            # A LINHA QUE FILTRAVA OS URGENTES FOI APAGADA AQUI
             
             if colab_painel != "👁️ Ver Todos Os Processos do Setor" and not e_chefia:
                 df_adm = df_adm[(df_adm['expedicao'] == colab_painel) | (df_adm['revisao'] == colab_painel)]
