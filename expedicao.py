@@ -179,6 +179,9 @@ def marcar_urgente(numero_processo, expedidores_selecionados, revisores_selecion
             id_proc = p['id']
             tipo_sessao_original = p['tipo_sessao']
 
+            # ---------------------------------------------------------
+            # 🚨 TRAVA SHORT-CIRCUIT URGENTE: SESSÃO ADMINISTRATIVA
+            # ---------------------------------------------------------
             if tipo_sessao_original == "Sessão Administrativa":
                 chefes = [nome for nome, cargo in cargos.items() if cargo == "Chefia"]
                 chefe_ativo = None
@@ -188,14 +191,28 @@ def marcar_urgente(numero_processo, expedidores_selecionados, revisores_selecion
                         break
                 
                 if chefe_ativo:
-                    exp_filtrados, rev_filtrados = [chefe_ativo], [chefe_ativo]
+                    responsavel_expedicao = chefe_ativo
+                    responsavel_revisao = chefe_ativo
                 else:
                     if expedidores_selecionados:
                         substituto = expedidores_selecionados[0]
-                        exp_filtrados, rev_filtrados = [substituto], [substituto]
+                        responsavel_expedicao = substituto
+                        responsavel_revisao = substituto
                     else:
-                        exp_filtrados, rev_filtrados = expedidores_selecionados, revisores_selecionados
-            elif tipo_sessao_original == "Sessão Reservada":
+                        return False, "❌ A Chefia está ausente para redistribuir a urgência administrativa. Selecione um substituto."
+                
+                # Salva direto e quebra a iteração desse processo no loop (pula o rodízio)
+                conn.client.table("processos").update({
+                    "urgente": 1,
+                    "expedicao": responsavel_expedicao,
+                    "revisao": responsavel_revisao
+                }).eq("id", id_proc).execute()
+                continue
+
+            # ---------------------------------------------------------
+            # FLUXO NORMAL DAS OUTRAS SESSÕES URGENTES
+            # ---------------------------------------------------------
+            if tipo_sessao_original == "Sessão Reservada":
                 exp_filtrados = [n for n in expedidores_selecionados if cargos.get(n) != "Estagiário"]
                 rev_filtrados = [n for n in revisores_selecionados if cargos.get(n) != "Estagiário"]
                 
@@ -229,7 +246,6 @@ def marcar_urgente(numero_processo, expedidores_selecionados, revisores_selecion
                 
                 candidatos_rev = [n for n in rev_filtrados if n != responsavel_expedicao and n not in revisores_ocupados and n not in quem_manda_pra_mim]
                 
-                # 🚨 BUSCA DE SOCORRO NOS URGENTES
                 if not candidatos_rev:
                     if tipo_sessao_original == "Sessão Reservada":
                         pool_socorro = [n for n, c in cargos.items() if c != "Estagiário" and n != responsavel_expedicao and n not in ausentes]
@@ -519,6 +535,7 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
 
     ausentes = obter_colaboradores_ausentes_hoje()
     
+    # Identifica dinamicamente quem é a Chefia atual
     chefes = [nome for nome, cargo in cargos.items() if cargo == "Chefia"]
     chefe_ativo = None
     for c in chefes:
@@ -527,26 +544,39 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
             break
 
     # ---------------------------------------------------------
-    # TRAVA DE SEGURANÇA 1: SESSÃO ADMINISTRATIVA
+    # 🚨 TRAVA SHORT-CIRCUIT: SESSÃO ADMINISTRATIVA (Chefia Revisa Chefia)
     # ---------------------------------------------------------
     if tipo_sessao == "Sessão Administrativa":
         if chefe_ativo:
-            exp_filtrados, rev_filtrados = [chefe_ativo], [chefe_ativo]
+            responsavel_expedicao = chefe_ativo
+            responsavel_revisao = chefe_ativo
         else:
             if expedidores_selecionados:
                 substituto = expedidores_selecionados[0]
-                exp_filtrados, rev_filtrados = [substituto], [substituto]
+                responsavel_expedicao = substituto
+                responsavel_revisao = substituto
             else:
-                return False, "❌ A Chefia está ausente. Selecione 1 substituto no Passo 1."
+                return False, "❌ A Chefia está ausente. Selecione pelo menos 1 substituto na lista do Passo 1."
+        
+        # Insere direto e encerra a função aqui, sem rodar nenhuma lógica de rodízio
+        data_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        try:
+            conn.client.table("processos").insert({
+                "numero_processo": numero_processo, "relator": relator, "tipo_sessao": tipo_sessao, 
+                "nome_sessao": nome_sessao, "expedicao": responsavel_expedicao, "revisao": responsavel_revisao, 
+                "data_entrada": data_atual, "expedido_ok": 0, "revisado_ok": 0, "despachado": 0, "urgente": 0
+            }).execute()
+            return True, f"💼 [Administrativo] Autodespacho gravado! Exp: {responsavel_expedicao} ➔ Rev: {responsavel_revisao}"
+        except Exception as e:
+            return False, f"❌ Erro ao salvar no banco: {e}"
 
     # ---------------------------------------------------------
-    # TRAVA DE SEGURANÇA 2: SESSÃO RESERVADA (BLINDAGEM TOTAL)
+    # TRAVA DE SEGURANÇA 2: SESSÃO RESERVADA (Estagiários Bloqueados)
     # ---------------------------------------------------------
-    elif tipo_sessao == "Sessão Reservada":
+    if tipo_sessao == "Sessão Reservada":
         exp_filtrados = [n for n in expedidores_selecionados if cargos.get(n) != "Estagiário"]
         rev_filtrados = [n for n in revisores_selecionados if cargos.get(n) != "Estagiário"]
         
-        # Se a filtragem zerou a lista da tela, o sistema BUSCA NO BANCO automaticamente
         if not exp_filtrados: exp_filtrados = [n for n, c in cargos.items() if c != "Estagiário" and n not in ausentes]
         if not rev_filtrados: rev_filtrados = [n for n, c in cargos.items() if c != "Estagiário" and n not in ausentes]
     else:
@@ -557,9 +587,8 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
         if not rev_filtrados: rev_filtrados = [n for n in cargos.keys() if n not in ausentes]
 
     # =========================================================
-    # INTELIGÊNCIA DE DISTRIBUIÇÃO E DESEMPATE JUSTO
+    # INTELIGÊNCIA DE DISTRIBUIÇÃO E DESEMPATE JUSTO (Sessões comuns)
     # =========================================================
-    
     res_sessao_atual = conn.client.table("processos").select("expedicao, revisao").eq("nome_sessao", nome_sessao).execute().data
     try:
         res_ultima = conn.client.table("processos").select("nome_sessao").neq("nome_sessao", nome_sessao).order("id", desc=True).limit(1).execute().data
@@ -602,22 +631,16 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
         
         candidatos_revisores = [n for n in rev_filtrados if n != responsavel_expedicao and n not in revisores_ocupados and n not in quem_manda_pra_mim]
         
-        # 🚨 BUSCA DE SOCORRO: Se a lista original esgotou, puxa um salva-vidas válido do banco
         if not candidatos_revisores:
-            if tipo_sessao == "Sessão Reservada":
-                pool_socorro = [n for n, c in cargos.items() if c != "Estagiário" and n != responsavel_expedicao and n not in ausentes]
-            else:
-                pool_socorro = [n for n in cargos.keys() if n != responsavel_expedicao and n not in ausentes]
-                
+            pool_socorro = [n for n in cargos.keys() if n != responsavel_expedicao and n not in ausentes]
             candidatos_revisores = [n for n in pool_socorro if n not in revisores_ocupados and n not in quem_manda_pra_mim]
             
-            # Último recurso se todo mundo estiver ocupado (ignora ocupados, mas MANTÉM a trava de cargo)
             if not candidatos_revisores:
                 candidatos_revisores = pool_socorro
                 if not candidatos_revisores:
                     candidatos_revisores = [responsavel_expedicao]
 
-        # 🚀 O MOTOR DO RODÍZIO HISTÓRICO 🚀
+        # Motor do Rodízio Histórico
         try:
             historico_geral = conn.client.table("processos").select("id, expedicao, revisao").execute().data
         except:
