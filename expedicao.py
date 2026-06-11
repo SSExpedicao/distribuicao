@@ -473,18 +473,30 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
 
     ausentes = obter_colaboradores_ausentes_hoje()
     
+    # Identifica dinamicamente quem é a Chefia atual
+    chefes = [nome for nome, cargo in cargos.items() if cargo == "Chefia"]
+    chefe_ativo = None
+    for c in chefes:
+        if c not in ausentes:
+            chefe_ativo = c
+            break
+
     # ---------------------------------------------------------
-    # TRAVA DE SEGURANÇA 1: SESSÃO ADMINISTRATIVA (Exclusivo da Chefia)
+    # TRAVA DE SEGURANÇA 1: SESSÃO ADMINISTRATIVA (Chefia ou 1 Substituto)
     # ---------------------------------------------------------
     if tipo_sessao == "Sessão Administrativa":
-        if "Jessyca" not in ausentes and "Jessyca" in expedidores_selecionados:
-            exp_filtrados = ["Jessyca"]
-            rev_filtrados = ["Jessyca"]
+        if chefe_ativo:
+            # Se a Chefia está ativa, assume TUDO sozinha. Ninguém mais toca.
+            exp_filtrados = [chefe_ativo]
+            rev_filtrados = [chefe_ativo]
         else:
-            exp_filtrados = [n for n in ["Elaine", "André"] if n in expedidores_selecionados]
-            rev_filtrados = [n for n in ["Elaine", "André"] if n in revisores_selecionados]
-            if not exp_filtrados: exp_filtrados = expedidores_selecionados
-            if not rev_filtrados: rev_filtrados = revisores_selecionados
+            # Chefia está de férias/ausente. Pega EXATAMENTE 1 substituto selecionado no Passo 1
+            if expedidores_selecionados:
+                substituto = expedidores_selecionados[0] # Força ser apenas 1
+                exp_filtrados = [substituto]
+                rev_filtrados = [substituto]
+            else:
+                return False, "❌ A Chefia está ausente. Você precisa selecionar pelo menos 1 substituto na lista do Passo 1."
 
     # ---------------------------------------------------------
     # TRAVA DE SEGURANÇA 2: SESSÃO RESERVADA (Estagiários Bloqueados)
@@ -503,7 +515,7 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
     # INTELIGÊNCIA DE DISTRIBUIÇÃO E DESEMPATE JUSTO
     # =========================================================
     
-    # Busca a sessão atual e identifica qual foi a ÚLTIMA sessão para critério de desempate
+    # Busca a sessão atual e a ÚLTIMA sessão para critério de desempate
     res_sessao_atual = conn.client.table("processos").select("expedicao, revisao").eq("nome_sessao", nome_sessao).execute().data
     try:
         res_ultima = conn.client.table("processos").select("nome_sessao").neq("nome_sessao", nome_sessao).order("id", desc=True).limit(1).execute().data
@@ -523,7 +535,6 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
     if len(empatados_exp) == 1:
         responsavel_expedicao = empatados_exp[0]
     else:
-        # Desempate buscando quem trabalhou menos apenas na ÚLTIMA sessão
         if ultima_sessao_nome:
             contagem_exp_ant = {nome: 0 for nome in empatados_exp}
             res_ant_exp = conn.client.table("processos").select("expedicao").eq("nome_sessao", ultima_sessao_nome).execute().data
@@ -536,7 +547,7 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
         else:
             responsavel_expedicao = random.choice(empatados_exp)
 
-    # --- LÓGICA DO REVISOR (ANTI-CASAL + DESEMPATE) ---
+    # --- LÓGICA DO REVISOR (ANTI-CASAL REFORÇADA + DESEMPATE) ---
     candidatos_revisores = [nome for nome in rev_filtrados if nome != responsavel_expedicao]
     if not candidatos_revisores:
         responsavel_revisao = responsavel_expedicao
@@ -546,18 +557,32 @@ def salvar_novo_processo(numero_processo, relator, tipo_sessao, nome_sessao, exp
             rev = row.get('revisao')
             if rev in contagem_rev_atual: contagem_rev_atual[rev] += 1
             
-        # Proteção anti-casal na mesma sessão
+        # 🚨 REGRA DO CASAL REVISADA:
+        # 1. Quem EU já mandei revisar
         ja_mandei_para = [row.get('revisao') for row in res_sessao_atual if row.get('expedicao') == responsavel_expedicao]
-        candidatos_prioritarios = [nome for nome in candidatos_revisores if nome not in ja_mandei_para]
+        # 2. Quem já mandou para MIM revisar (Impede o ping-pong de casal A <-> B)
+        mandam_para_mim = [row.get('expedicao') for row in res_sessao_atual if row.get('revisao') == responsavel_expedicao]
         
-        candidatos_finais = candidatos_prioritarios if candidatos_prioritarios else candidatos_revisores
+        # Filtro Nível 1: Zero casal. Ninguém que manda pra mim, nem quem eu já mandei
+        candidatos_nivel_1 = [nome for nome in candidatos_revisores if nome not in ja_mandei_para and nome not in mandam_para_mim]
+        
+        # Filtro Nível 2: Se acabar as opções do Nível 1, permite mandar repetido, MAS MANTÉM a trava contra casal recíproco
+        candidatos_nivel_2 = [nome for nome in candidatos_revisores if nome not in mandam_para_mim]
+        
+        if candidatos_nivel_1:
+            candidatos_finais = candidatos_nivel_1
+        elif candidatos_nivel_2:
+            candidatos_finais = candidatos_nivel_2
+        else:
+            # Caso extremo de equipe muito reduzida, solta o filtro
+            candidatos_finais = candidatos_revisores
+
         menor_carga_rev = min([contagem_rev_atual[n] for n in candidatos_finais])
         empatados_rev = [n for n in candidatos_finais if contagem_rev_atual[n] == menor_carga_rev]
 
         if len(empatados_rev) == 1:
             responsavel_revisao = empatados_rev[0]
         else:
-            # Desempate buscando quem revisou menos apenas na ÚLTIMA sessão
             if ultima_sessao_nome:
                 contagem_rev_ant = {nome: 0 for nome in empatados_rev}
                 res_ant_rev = conn.client.table("processos").select("revisao").eq("nome_sessao", ultima_sessao_nome).execute().data
