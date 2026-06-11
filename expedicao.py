@@ -252,6 +252,16 @@ def marcar_urgente(numero_processo, expedidores_selecionados, revisores_selecion
                 melhores_candidatos = [c['nome'] for c in candidatos_pontuados if c['casal'] == melhor_casal and c['carga'] == melhor_carga]
                 
                 responsavel_revisao = random.choice(melhores_candidatos)
+
+            # 3. Atualiza o banco com a redistribuição justa
+            conn.client.table("processos").update({
+                "urgente": 1,
+                "expedicao": responsavel_expedicao,
+                "revisao": responsavel_revisao
+            }).eq("id", id_proc).execute()
+
+        return True, f"🚨 Urgente Redistribuído com Sucesso! (Exp: {responsavel_expedicao} ➔ Rev: {responsavel_revisao})"
+    except Exception as e: return False, f"❌ Erro: {e}"
         
 def atualizar_processo(id_processo, mudancas):
     if not mudancas: return
