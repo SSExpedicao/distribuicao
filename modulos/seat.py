@@ -207,7 +207,7 @@ def renderizar_oficina_nip():
                                 "observacao": "🗣️ Sustentação Oral agendada - Pauta Prioritária",
                                 "data_entrada": datetime.now().strftime("%d/%m/%Y %H:%M")
                             }
-                            conn.client.table("pauta_seat").insert(novo_urgente).execute()
+                            conn.table("pauta_seat").insert(novo_urgente).execute()
                             st.success("✅ Processo catalogado na Pauta de Urgências com sucesso!")
                         except Exception as e:
                             st.error(f"Erro ao salvar urgência: {e}")
@@ -241,7 +241,7 @@ def renderizar_oficina_nip():
                                     "status": "Pendente Análise Contábil",
                                     "data_entrada": datetime.now().strftime("%d/%m/%Y %H:%M")
                                 }
-                                conn.client.table("pauta_sercon").insert(reg_sercon).execute()
+                                conn.table("pauta_sercon").insert(reg_sercon).execute()
                                 st.success("🎯 Processo roteado exclusivamente para a SERCON! Bloqueio para SEXP ativado.")
                             except Exception as e:
                                 st.error(f"Erro ao enviar para SERCON: {e}")
@@ -259,7 +259,7 @@ def renderizar_oficina_nip():
                                     "observacao": f"Gatilho NIP: {al['palavra']}",
                                     "data_entrada": datetime.now().strftime("%d/%m/%Y %H:%M")
                                 }
-                                conn.client.table("pauta_seat").insert(reg_urg).execute()
+                                conn.table("pauta_seat").insert(reg_urg).execute()
                                 st.success("⚡ Processo inserido com prioridade máxima na pauta!")
                             except Exception as e:
                                 st.error(f"Erro ao salvar urgência: {e}")
@@ -310,7 +310,7 @@ def renderizar_pauta_ativa():
                                 "status": "Em Edição",
                                 "data_entrada": datetime.now().strftime("%d/%m/%Y %H:%M")
                             }
-                            conn.client.table("pauta_seat").insert(novo_seat).execute()
+                            conn.table("pauta_seat").insert(novo_seat).execute()
                             st.success("Processo distribuído com sucesso!")
                             st.rerun()
                         except Exception as e:
@@ -368,7 +368,7 @@ def renderizar_pauta_ativa():
                     # Botão 1: Marcar Edição OK
                     if row.get("editado_ok") == 0:
                         if st.button("📝 Concluir Edição", key=f"btn_ed_{row.get('id', idx)}", use_container_width=True):
-                            conn.client.table("pauta_seat").update({"editado_ok": 1, "status": "Em Revisão"}).eq("id", row.get("id")).execute()
+                            conn.table("pauta_seat").update({"editado_ok": 1, "status": "Em Revisão"}).eq("id", row.get("id")).execute()
                             st.success("Edição concluída!")
                             st.rerun()
                             
@@ -376,7 +376,7 @@ def renderizar_pauta_ativa():
                     elif row.get("revisado_ok") == 0:
                         if st.button("🛡️ Concluir Revisão (Mandar p/ SEXP)", key=f"btn_rev_{row.get('id', idx)}", type="primary", use_container_width=True):
                             # 1. Atualiza na SEAT
-                            conn.client.table("pauta_seat").update({"revisado_ok": 1, "status": "Revisado - Enviado SEXP"}).eq("id", row.get("id")).execute()
+                            conn.table("pauta_seat").update({"revisado_ok": 1, "status": "Revisado - Enviado SEXP"}).eq("id", row.get("id")).execute()
                             
                             # 2. Transfere automaticamente para a Pauta da SEXP (S.A.D.E.)
                             try:
@@ -398,7 +398,7 @@ def renderizar_pauta_ativa():
                                     "urgente": row.get("urgente", 0),
                                     "data_entrada": datetime.now().strftime("%d/%m/%Y %H:%M")
                                 }
-                                conn.client.table("pauta_sexp").insert(ponte_sexp).execute()
+                                conn.table("pauta_sexp").insert(ponte_sexp).execute()
                                 st.success("🚀 Revisão concluída! Processo enviada automaticamente para homologação na SEXP.")
                             except Exception as e:
                                 st.warning(f"Revisado na SEAT, mas falha no envio automático para SEXP: {e}")
@@ -439,7 +439,7 @@ def renderizar_pauta_quarta():
                                 "sessao_alvo": "Próxima Quarta-Feira",
                                 "data_registro": datetime.now().strftime("%d/%m/%Y")
                             }
-                            conn.client.table("pauta_quarta").insert(reg_ds).execute()
+                            conn.table("pauta_quarta").insert(reg_ds).execute()
                             st.success("Despacho Singular catalogado!")
                         except Exception as e:
                             st.error(f"Erro ao salvar DS: {e}")
@@ -468,7 +468,7 @@ def renderizar_pauta_quarta():
                                 "sessao_alvo": so_data.strftime("%d/%m/%Y"),
                                 "data_registro": datetime.now().strftime("%d/%m/%Y")
                             }
-                            conn.client.table("pauta_quarta").insert(reg_so).execute()
+                            conn.table("pauta_quarta").insert(reg_so).execute()
                             st.success("Sustentação Oral agendada com sucesso!")
                         except Exception as e:
                             st.error(f"Erro ao salvar SO: {e}")
@@ -509,7 +509,7 @@ def renderizar_tab_publicacao():
                             {"mes": m_ref, "dia_semana": "Sexta-Feira", "dupla": f"{todos[2 % len(todos)]} & {todos[3 % len(todos)]}"},
                             {"mes": m_ref, "dia_semana": "Quarta-Feira (Seguinte)", "dupla": f"{todos[4 % len(todos)]} & {todos[5 % len(todos)]}"}
                         ]
-                        conn.client.table("escala_publicacao").insert(duplas).execute()
+                        conn.table("escala_publicacao").insert(duplas).execute()
                         st.success(f"Ciclo de {m_ref} gerado com sucesso!")
                         st.rerun()
                     else:
