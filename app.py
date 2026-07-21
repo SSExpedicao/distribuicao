@@ -71,7 +71,7 @@ if "modulo_ativo" not in st.session_state:
 def garantir_tabela_usuarios():
     """Verifica se a tabela de usuários existe e popula com a hierarquia inicial do TCDF."""
     try:
-        res = conn.client.table("usuarios_acesso").select("login").limit(1).execute()
+        res = conn.table("usuarios_acesso").select("login").limit(1).execute()
         if not res.data:
             usuarios_iniciais = [
                 {"login": "secretario", "senha": "123", "nome": "Secretário de Sessões", "cargo": "Secretário", "setor": "GAB", "nivel_acesso": "Raiz"},
@@ -84,7 +84,7 @@ def garantir_tabela_usuarios():
                 {"login": "elaine.seat", "senha": "123", "nome": "Elaine", "cargo": "Assessor", "setor": "SEAT", "nivel_acesso": "Operacional"},
                 {"login": "andre.sexp", "senha": "123", "nome": "André", "cargo": "Assessor", "setor": "SEXP", "nivel_acesso": "Operacional"}
             ]
-            conn.client.table("usuarios_acesso").insert(usuarios_iniciais).execute()
+            conn.table("usuarios_acesso").insert(usuarios_iniciais).execute()
     except Exception as e:
         # Se a tabela não existir no Supabase, avisa o administrador silenciosamente
         pass
@@ -98,7 +98,7 @@ garantir_tabela_usuarios()
 def autenticar(login_input, senha_input):
     """Consulta as credenciais no Supabase e estabelece o nível de privilégio."""
     try:
-        res = conn.client.table("usuarios_acesso").select("*").eq("login", login_input.strip()).eq("senha", senha_input.strip()).execute()
+        res = conn.table("usuarios_acesso").select("*").eq("login", login_input.strip()).eq("senha", senha_input.strip()).execute()
         if res.data and len(res.data) > 0:
             user = res.data[0]
             st.session_state.logado = True
