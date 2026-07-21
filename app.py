@@ -1,8 +1,3 @@
-# ==============================================================================
-# ARQUIVO: app.py
-# MISSÃO: Roteador Central, Gestão de Identidade (RBAC) e Portal de Entrada Hub SS
-# ==============================================================================
-
 import streamlit as st
 import importlib
 from db_manager import conn, get_db_connection
