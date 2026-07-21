@@ -1,0 +1,21 @@
+name: Guardiao SADE - Keep Alive Supabase
+
+on:
+  schedule:
+    # Roda todos os dias às 06:00 UTC (03:00 da manhã no horário de Brasília)
+    - cron: '0 6 * * *'
+  # Permite disparar o script manualmente clicando em um botão no GitHub se precisar testar
+  workflow_dispatch:
+
+jobs:
+  ping-supabase:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Realizar consulta de acordar o banco (Ping)
+        run: |
+          echo "Disparando ping de manutenção para o Supabase..."
+          curl -s -o /dev/null -w "%{http_code}" \
+            -H "apikey: ${{ secrets.SUPABASE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_KEY }}" \
+            "${{ secrets.SUPABASE_URL }}/rest/v1/equipe?select=nome&limit=1"
+          echo "Ping concluído com sucesso! Banco ativo."
