@@ -11,7 +11,7 @@ from db_manager import conn, buscar_todos_paginado
 def garantir_tabela_regras():
     """Cria a tabela de palavras-chave dinâmicas no Supabase caso não exista."""
     try:
-        res = conn.client.table("regras_palavras_chave").select("id").limit(1).execute()
+        res = conn.table("regras_palavras_chave").select("id").limit(1).execute()
         if not res.data:
             regras_iniciais = [
                 {"categoria": "URGENCIA", "palavra_chave": "prazo de 5 dias", "setor_alvo": "SEAT", "ativo": True},
@@ -21,7 +21,7 @@ def garantir_tabela_regras():
                 {"categoria": "SERCON", "palavra_chave": "cobrança", "setor_alvo": "SERCON", "ativo": True},
                 {"categoria": "SERCON", "palavra_chave": "multa", "setor_alvo": "SERCON", "ativo": True}
             ]
-            conn.client.table("regras_palavras_chave").insert(regras_iniciais).execute()
+            conn.table("regras_palavras_chave").insert(regras_iniciais).execute()
     except Exception:
         pass
 
@@ -50,7 +50,7 @@ def renderizar_tab_dicionario():
                         "setor_alvo": setor_destino,
                         "ativo": True
                     }
-                    conn.client.table("regras_palavras_chave").insert(nova_regra).execute()
+                    conn.table("regras_palavras_chave").insert(nova_regra).execute()
                     st.success(f"Regra '{termo_novo}' cadastrada com sucesso!")
                     st.rerun()
                 except Exception as e:
@@ -79,7 +79,7 @@ def renderizar_tab_dicionario():
             with col_del2:
                 st.markdown("<br>", unsafe_allow_html=True)
                 if st.button("🗑️ Remover Regra", type="secondary", use_container_width=True):
-                    conn.client.table("regras_palavras_chave").delete().eq("id", id_excluir).execute()
+                    conn.table("regras_palavras_chave").delete().eq("id", id_excluir).execute()
                     st.success("Regra removida!")
                     st.rerun()
         else:
@@ -125,7 +125,7 @@ def renderizar_tab_equipes():
                             "data_inicio": dt_ini.strftime("%d/%m/%Y"),
                             "data_fim": dt_fim.strftime("%d/%m/%Y")
                         }
-                        conn.client.table("afastamentos").insert(dados_afast).execute()
+                        conn.table("afastamentos").insert(dados_afast).execute()
                         st.success(f"Afastamento de {colab_sel} registrado com sucesso!")
                     except Exception as e:
                         st.error(f"Erro ao registrar: {e}")
@@ -165,7 +165,7 @@ def renderizar_tab_inclusao_avulsa():
                             "observacao": obs.strip(),
                             "data_entrada": datetime.now().strftime("%d/%m/%Y %H:%M")
                         }
-                        conn.client.table(tabela_alvo).insert(novo_reg).execute()
+                        conn.table(tabela_alvo).insert(novo_reg).execute()
                         st.success(f"Processo {num_proc} injetado na esteira da {setor_destino}!")
                     except Exception as e:
                         st.error(f"Erro ao inserir na tabela '{tabela_alvo}': {e}. Verifique se a tabela existe no Supabase.")
