@@ -10,7 +10,7 @@ from datetime import datetime
 from db_manager import conn, buscar_todos_paginado, carregar_equipes, obter_colaboradores_ausentes_hoje
 
 # ------------------------------------------------------------------------------
-# 1. COMPONENTE REUTILIZÁVEL: CARTOES DE TRABALHO (ESTEIRA A EXPEDE / B REVISA)
+# 1. COMPONENTE REUTILIZÁVEL: CARTÕES DE TRABALHO (ESTEIRA A EXPEDE / B REVISA)
 # ------------------------------------------------------------------------------
 def renderizar_cartoes_expedicao(df_processos, tipo_painel="geral"):
     """Renderiza os cartões de trabalho iterativos com fluxo sequencial sem burocracia."""
@@ -23,12 +23,12 @@ def renderizar_cartoes_expedicao(df_processos, tipo_painel="geral"):
     for idx, row in df_processos.iterrows():
         status_atual = row.get("status", "Em Expedição")
         e_urgente = row.get("urgente", 0) == 1
+        id_reg = row.get("id")
         
         with st.container(border=True):
             col_info, col_responsaveis, col_acao = st.columns([2.2, 1.8, 1.5])
             
             with col_info:
-                # Alerta visual para urgentes em sessões mistas (Adm/Reservada)
                 badge_urg = "🚨 **[URGENTE]** " if e_urgente and tipo_painel == "misto" else ""
                 st.markdown(f"#### {badge_urg}`{row.get('processo', 'S/N')}`")
                 st.markdown(f"**Relator:** `{row.get('relator', 'GAB')}` | **Sessão:** {row.get('sessao', 'Ordinária')}")
@@ -40,11 +40,13 @@ def renderizar_cartoes_expedicao(df_processos, tipo_painel="geral"):
                 st.markdown("<br>", unsafe_allow_html=True)
                 st.markdown(f"**Expedidor (A):** 👤 `{row.get('expedidor', 'N/A')}`")
                 st.markdown(f"**Revisor (B):** 🛡️ `{row.get('revisor', 'N/A')}`")
-                st.markdown(f"**Status:** <span style='color: #2B6CB0; font-weight: 500;'>{status_atual}</span>", unsafe_allow_html=True)
+                
+                # Cores de status adaptativas para guiar o olhar do operador
+                cor_status = "#2B6CB0" if status_atual == "Liberado p/ Expedição" else "#DD6B20" if "Revisão" in status_atual else "#319795"
+                st.markdown(f"**Status:** <span style='color: {cor_status}; font-weight: 600;'>{status_atual}</span>", unsafe_allow_html=True)
                 
             with col_acao:
                 st.markdown("<br>", unsafe_allow_html=True)
-                id_reg = row.get("id")
                 
                 # FASE 1: EXPEDIÇÃO DO OFÍCIO (Colaborador A)
                 if status_atual in ["Em Expedição", "Aguardando Expedição", "Liberado p/ Expedição"]:
@@ -76,7 +78,7 @@ def renderizar_cartoes_expedicao(df_processos, tipo_painel="geral"):
                     if st.button("⚠️ Devolver c/ Correção", key=f"btn_dev_{id_reg}_{idx}", type="secondary", use_container_width=True):
                         try:
                             conn.table("pauta_sexp").update({
-                                "status": "Em Expedição",
+                                "status": "Liberado p/ Expedição",
                                 "observacao": "⚠️ Devolvido pela revisão para ajustes no ofício."
                             }).eq("id", id_reg).execute()
                             st.warning("Processo devolvido para a mesa do Expedidor.")
@@ -123,23 +125,46 @@ def renderizar_homologacao_chefia():
                         
                 st.markdown("---")
                 
-                # Homologação ou Retirada Individual
+                expedidores, revisores, todos = carregar_equipes()
+                ausentes = obter_colaboradores_ausentes_hoje()
+                disponiveis = [c for c in todos if c not in ausentes] if todos else ["André", "Elaine"]
+                
+                # Homologação ou Retirada Individual com opção de troca de dupla
                 for idx, row in df_pend.iterrows():
+                    id_row = row["id"]
                     with st.container(border=True):
-                        c1, c2, c3 = st.columns([2, 1.2, 1.5])
+                        c1, c2, c3 = st.columns([2.2, 1.8, 1.2])
                         with c1:
                             bg_urg = "🚨 " if row.get("urgente") == 1 else ""
                             st.markdown(f"**{bg_urg}{row.get('processo')}** (`{row.get('relator')}`)")
-                            st.caption(f"Sessão: {row.get('sessao')} | Dupla: {row.get('expedidor')} & {row.get('revisor')}")
+                            st.caption(f"Sessão: {row.get('sessao')} | Entrada: {row.get('data_entrada', '')}")
                         with c2:
-                            st.markdown("<br>", unsafe_allow_html=True)
-                            if st.button("🚀 Liberar", key=f"lib_{row['id']}"):
-                                conn.table("pauta_sexp").update({"status": "Liberado p/ Expedição"}).eq("id", row["id"]).execute()
-                                st.rerun()
+                            # Permite ao gestor ajustar quem expede e quem revisa antes de soltar na esteira
+                            exp_atual = row.get("expedidor", disponiveis[0] if disponiveis else "André")
+                            rev_atual = row.get("revisor", disponiveis[1] if len(disponiveis) > 1 else exp_atual)
+                            
+                            idx_exp = disponiveis.index(exp_atual) if exp_atual in disponiveis else 0
+                            idx_rev = disponiveis.index(rev_atual) if rev_atual in disponiveis else (1 if len(disponiveis) > 1 else 0)
+                            
+                            novo_exp = st.selectbox("Expedidor:", disponiveis, index=idx_exp, key=f"sel_exp_{id_row}")
+                            opcoes_rev = [c for c in disponiveis if c != novo_exp]
+                            novo_rev = st.selectbox("Revisor:", opcoes_rev if opcoes_rev else disponiveis, key=f"sel_rev_{id_row}")
+                            
                         with c3:
                             st.markdown("<br>", unsafe_allow_html=True)
-                            if st.button("🚫 Retirar de Pauta", key=f"ret_{row['id']}", type="secondary"):
-                                conn.table("pauta_sexp").update({"status": "Retirado de Pauta", "observacao": "🚫 Retirado pela Chefia na SEXP"}).eq("id", row["id"]).execute()
+                            if st.button("🚀 Liberar", key=f"lib_{id_row}", type="primary", use_container_width=True):
+                                conn.table("pauta_sexp").update({
+                                    "status": "Liberado p/ Expedição",
+                                    "expedidor": novo_exp,
+                                    "revisor": novo_rev
+                                }).eq("id", id_row).execute()
+                                st.rerun()
+                                
+                            if st.button("🚫 Retirar", key=f"ret_{id_row}", type="secondary", use_container_width=True):
+                                conn.table("pauta_sexp").update({
+                                    "status": "Retirado de Pauta",
+                                    "observacao": "🚫 Retirado pela Chefia na SEXP"
+                                }).eq("id", id_row).execute()
                                 st.warning(f"Processo {row.get('processo')} retirado da pauta!")
                                 st.rerun()
             else:
@@ -193,7 +218,7 @@ def renderizar_homologacao_chefia():
                         st.warning("Informe o número do processo.")
 
 # ------------------------------------------------------------------------------
-# 3. ABAS OPERACIONAIS: PAINAIS DE EXPEDIÇÃO E HISTÓRICO
+# 3. ABAS OPERACIONAIS: PAINÉIS DE EXPEDIÇÃO E HISTÓRICO
 # ------------------------------------------------------------------------------
 def renderizar_painel_ordinario():
     st.markdown("### 📬 Painel Ativo — Sessões Ordinárias (Pauta Comum)")
@@ -217,7 +242,7 @@ def renderizar_painel_ordinario():
         st.error(f"Erro no painel ordinário: {e}")
 
 def renderizar_painel_urgentes():
-    st.markdown("### 🚨 Pauta de Urgências — Sessões Ordinárias (Segregado)")
+    st.markdown("### 🚨 Pauta de Urgências — Sessões Ordinárias (Segregada)")
     st.caption("Mesa de alta prioridade! Processos com prazos curtos (ex: 5 dias), liminares cautelares ou sustentações orais.")
     
     try:
