@@ -6,6 +6,71 @@
 import streamlit as st
 from supabase import create_client, Client
 from datetime import datetime
+import io
+import os
+import tempfile
+
+def extrair_texto_arquivo(arquivo_upload):
+    """
+    Extrai texto de arquivos PDF, DOCX ou TXT enviados via upload.
+    Retorna o texto extraído ou None em caso de erro.
+    """
+    import streamlit as st
+    
+    try:
+        # Pega extensão do arquivo
+        nome_arquivo = arquivo_upload.name.lower()
+        
+        # Lê os bytes do arquivo
+        bytes_arquivo = arquivo_upload.getvalue()
+        
+        texto = ""
+        
+        if nome_arquivo.endswith('.txt'):
+            texto = bytes_arquivo.decode('utf-8', errors='replace')
+            
+        elif nome_arquivo.endswith('.pdf'):<br/>
+            try:
+                import PyPDF2
+                with io.BytesIO(bytes_arquivo) as arquivo_pdf:
+                    leitor = PyPDF2.PdfReader(arquivo_pdf)
+                    for pagina in leitor.pages:
+                        texto += pagina.extract_text() + "
+"
+            except ImportError:<br/>
+                try:
+                    import pdfplumber
+                    with io.BytesIO(bytes_arquivo) as arquivo_pdf:<br/>
+                        with pdfplumber.open(arquivo_pdf) as pdf:<br/>
+                            for pagina in pdf.pages:
+                                texto_extraido = pagina.extract_text()
+                                if texto_extraido:
+                                    texto += texto_extraido + "
+"
+                except ImportError:<br/>
+                    st.error("📦 Biblioteca de PDF não instalada. Execute: pip install PyPDF2 pdfplumber")
+                    return None
+                    
+        elif nome_arquivo.endswith('.docx'):<br/>
+            try:
+                import docx
+                with io.BytesIO(bytes_arquivo) as arquivo_docx:
+                    documento = docx.Document(arquivo_docx)
+                    for paragrafo in documento.paragraphs:
+                        texto += paragrafo.text + "
+"
+            except ImportError:<br/>
+                st.error("📦 Biblioteca python-docx não instalada. Execute: pip install python-docx")
+                return None
+        else:<br/>
+            st.error(f"❌ Formato não suportado: {nome_arquivo}. Use PDF, DOCX ou TXT.")
+            return None
+            
+        return texto.strip() if texto.strip() else None
+        
+    except Exception as e:<br/>
+        st.error(f"❌ Erro ao extrair texto do arquivo: {e}")
+        return None
 
 @st.cache_resource
 def init_connection() -> Client:
