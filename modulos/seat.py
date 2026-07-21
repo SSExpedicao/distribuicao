@@ -8,7 +8,7 @@ import pandas as pd
 import re
 import random
 from datetime import datetime, timedelta
-from db_manager import conn, buscar_todos_paginado, carregar_equipes, obter_colaboradores_ausentes_hoje
+from db_manager import conn, buscar_todos_paginado, carregar_equipes, obter_colaboradores_ausentes_hoje, extrair_texto_arquivo
 
 # ------------------------------------------------------------------------------
 # 1. MOTOR NIP — INTELIGÊNCIA ARTIFICIAL DE PURIFICAÇÃO E TELEPROMPTER
@@ -171,100 +171,147 @@ def varrer_regras_inteligentes(texto):
 # ------------------------------------------------------------------------------
 # 3. INTERFACE OPERACIONAL — ABA 1: OFICINA NIP (EDIÇÃO & TRIAGEM)
 # ------------------------------------------------------------------------------
-def renderizar_oficina_nip():
-    st.markdown("### 🛠️ Oficina NIP — Núcleo de Integração Processual")
-    st.caption("Cole o texto bruto do voto ou importe o documento. O Motor NIP purificará a liturgia e fará a triagem de destino em milissegundos.")
+def oficina_nip():
+    """Oficina NIP — Motor de Inteligência Processual com Upload de Documentos."""
     
-    col_in, col_out = st.columns([1, 1])
+    st.markdown("### 🛠 Oficina NIP — Núcleo de Integração Processual")
+    st.markdown("Faça o upload do documento (PDF, DOCX ou TXT). O Motor NIP identificará automaticamente os trechos que precisam de edição com base nas regras cadastradas.")
     
-    with col_in:
-        st.markdown("#### 📥 Entrada de Documento Bruto")
-        num_proc_nip = st.text_input("Nº do Processo / Relator:", placeholder="Ex: 00600-00006383/2026-07-e - GCRR", key="nip_proc")
-        texto_bruto = st.text_area("Texto do Relatório e Voto (Cole aqui o conteúdo do PDF):", height=380, placeholder="Cole aqui o texto extraído do sistema e-TCDF...")
-        btn_processar = st.button("⚡ Processar no Motor NIP", type="primary", use_container_width=True)
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        st.markdown("#### 📥 Entrada de Documento")
         
-    with col_out:
-        st.markdown("#### 📤 Teleprompter Contínuo (Pronto para o Plenário)")
+        # Upload de arquivo
+        arquivo = st.file_uploader(
+            "Selecione o documento (PDF, DOCX ou TXT)",
+            type=["pdf", "docx", "txt"],
+            key="nip_upload"
+        )
         
-        if btn_processar and texto_bruto:
-            texto_editado, tipo_doc, flags = processar_motor_nip(texto_bruto)
-            
-            # 1. BYPASS DE SUSTENTAÇÃO ORAL
-            if tipo_doc == "TIPO_3_SUSTENTACAO":
-                st.warning("🗣️ **SUSTENTAÇÃO ORAL DETECTADA!**")
-                st.info("Este documento é estritamente expositivo e não requer edição litúrgica nem corte de relatório. Ele deve ser roteado imediatamente para a Pauta Prioritária de Urgências.")
+        num_processo = st.text_input(
+            "Nº do Processo / Relator:",<br/>
+            placeholder="Ex: 00600-00006383/2026-07-e - GCRR",
+            key="nip_processo"
+        )
+        
+        processar = st.button("⚡ Processar no Motor NIP", type="primary", use_container_width=True)
+    
+    with col2:
+        st.markdown("#### 📋 Teleprompter Contínuo (Pronto para o Plenário)")
+        placeholder_resultado = st.empty()
+    
+    if processar:<br/>
+        if not arquivo:
+            st.error("❌ Nenhum arquivo selecionado. Faça o upload de um documento primeiro.")
+            return
+        
+        if not num_processo.strip():
+            st.warning("⚠️ Informe o Nº do Processo / Relator para continuar.")
+        
+        with st.spinner("🔍 Processando documento no Motor NIP..."):<br/>
+            try:
+                # 1. Extrair texto do arquivo
+                texto_extraido = extrair_texto_arquivo(arquivo)
                 
-                with st.form("form_urg_sustentacao"):
-                    proc_alvo = st.text_input("Confirmar Nº do Processo:", value=num_proc_nip)
-                    if st.form_submit_button("🚀 Enviar Direto para Pauta de Urgências", type="primary"):
-                        try:
-                            novo_urgente = {
-                                "processo": proc_alvo.strip() if proc_alvo else "Não informado",
-                                "relator": "GAB",
-                                "sessao": "Sessão Ordinária",
-                                "urgente": 1,
-                                "status": "Aprovado - Sustentação Oral",
-                                "observacao": "🗣️ Sustentação Oral agendada - Pauta Prioritária",
-                                "data_entrada": datetime.now().strftime("%d/%m/%Y %H:%M")
-                            }
-                            conn.table("pauta_seat").insert(novo_urgente).execute()
-                            st.success("✅ Processo catalogado na Pauta de Urgências com sucesso!")
-                        except Exception as e:
-                            st.error(f"Erro ao salvar urgência: {e}")
+                if not texto_extraido:
+                    st.error("❌ Não foi possível extrair texto do documento. Verifique se o arquivo não está protegido ou escaneado (imagem).")
+                    return
+                
+                # 2. Buscar regras de palavras-chave
+                try:
+                    regras = conn.table("regras_palavras_chave").select("*").execute()
+                    lista_regras = regras.data if regras.data else []
+                except Exception:
+                    lista_regras = []
+                
+                # 3. Identificar trechos com base nas regras
+                trechos_encontrados = []
+                texto_lower = texto_extraido.lower()
+                
+                for regra in lista_regras:
+                    palavra = regra.get("palavra_chave", "").lower()
+                    if palavra and palavra in texto_lower:
+                        import re
+                        for match in re.finditer(re.escape(palavra), texto_lower):
+                            inicio = max(0, match.start() - 100)
+                            fim = min(len(texto_extraido), match.end() + 200)
+                            trecho = texto_extraido[inicio:fim]
+                            trechos_encontrados.append({
+                                "palavra": regra.get("palavra_chave"),<br/>
+                                "categoria": regra.get("categoria"),<br/>
+                                "setor_alvo": regra.get("setor_alvo"),<br/>
+                                "trecho": trecho,<br/>
+                                "inicio": inicio,<br/>
+                                "fim": fim
+                            })
+                
+                # 4. Armazenar na sessão
+                st.session_state.nip_texto_original = texto_extraido
+                st.session_state.nip_trechos = trechos_encontrados
+                st.session_state.nip_processado = True
+                st.session_state.nip_num_processo = num_processo
+                
+                st.success(f"✅ Documento processado! {len(trechos_encontrados)} trechos identificados para edição.")
+                
+            except Exception as e:<br/>
+                st.error(f"❌ Erro ao processar documento: {e}")
                 return
-
-            # 2. EXIBIÇÃO DO TELEPROMPTER PURIFICADO
-            badge_tipo = {"TIPO_1_COMUM": "🔵 Voto Comum de Plenário", "TIPO_2_COMPOSTO": "🟣 Referendo Monocrático (Composto)", "TIPO_2_SIMPLES": "🟣 Referendo Monocrático (Simples)"}.get(tipo_doc, "⚪ Documento Processado")
-            st.markdown(f"**Classificação Automática:** `{badge_tipo}`")
-            
-            with st.container(border=True):
-                st.markdown(texto_editado)
-                
-            st.text_area("Cópia Rápida (Texto Limpo para Área de Transferência):", value=texto_editado, height=150)
-            
-            # 3. RADAR DE ALERTAS E DESVIOS DE ROTA (URGÊNCIA OU SERCON)
-            alertas_encontrados = varrer_regras_inteligentes(texto_editado)
-            
-            if alertas_encontrados:
-                st.markdown("---")
-                for al in alertas_encontrados:
-                    if al["setor_alvo"] == "SERCON" or al["categoria"] == "SERCON":
-                        st.error(f"⚖️ **ALERTA DE DESVIO SERCON DETECTADO!** [Palavra-chave: `{al['palavra']}`]")
-                        st.caption("A matéria envolve Tomada de Contas, Cobrança ou Multa. Pela Regra de Exclusão Mútua, este processo não irá para a expedição de ofícios da SEXP.")
-                        
-                        if st.button(f"🚀 Homologar Desvio Exclusivo para a SERCON ({num_proc_nip})", key=f"btn_sercon_{random.randint(1,999)}"):
-                            try:
-                                reg_sercon = {
-                                    "processo": num_proc_nip if num_proc_nip else "Sem número",
-                                    "relator": "GAB",
-                                    "motivo_gatilho": f"Palavra detectada: {al['palavra']}",
-                                    "status": "Pendente Análise Contábil",
-                                    "data_entrada": datetime.now().strftime("%d/%m/%Y %H:%M")
-                                }
-                                conn.table("pauta_sercon").insert(reg_sercon).execute()
-                                st.success("🎯 Processo roteado exclusivamente para a SERCON! Bloqueio para SEXP ativado.")
-                            except Exception as e:
-                                st.error(f"Erro ao enviar para SERCON: {e}")
-                                
-                    elif al["categoria"] == "URGENCIA":
-                        st.warning(f"🚨 **GATILHO DE URGÊNCIA DETECTADO!** [Palavra-chave: `{al['palavra']}`]")
-                        if st.button(f"⚡ Catalogar na Lista de Urgentes da Sessão", key=f"btn_urg_{random.randint(1,999)}"):
-                            try:
-                                reg_urg = {
-                                    "processo": num_proc_nip if num_proc_nip else "Sem número",
-                                    "relator": "GAB",
-                                    "sessao": "Sessão Ordinária",
-                                    "urgente": 1,
-                                    "status": "Triado - Urgente",
-                                    "observacao": f"Gatilho NIP: {al['palavra']}",
-                                    "data_entrada": datetime.now().strftime("%d/%m/%Y %H:%M")
-                                }
-                                conn.table("pauta_seat").insert(reg_urg).execute()
-                                st.success("⚡ Processo inserido com prioridade máxima na pauta!")
-                            except Exception as e:
-                                st.error(f"Erro ao salvar urgência: {e}")
+    
+    if st.session_state.get("nip_processado"):
+        texto_original = st.session_state.nip_texto_original
+        trechos = st.session_state.nip_trechos
+        
+        st.markdown("---")
+        st.markdown("### 🔍 Trechos Identificados para Revisão")
+        
+        if not trechos:
+            st.info("✅ Nenhum trecho com regras de edição foi encontrado. O documento está em conformidade.")
+            with placeholder_resultado.container():
+                st.markdown("#### 📄 Texto Extraído")
+                st.text_area("Conteúdo do documento:", texto_original, height=400, key="nip_texto_final")<br/>
         else:
-            st.info("👈 Cole o texto bruto ao lado e clique em Processar para visualizar o resultado purificado.")
+            st.warning(f"⚠️ {len(trechos)} trecho(s) encontrado(s) com base nas regras cadastradas.")
+            
+            texto_editado = texto_original
+            edicoes = {}
+            
+            for idx, trecho in enumerate(trechos):<br/>
+                with st.expander(f"📌 [{trecho['categoria']}] Palavra-chave: '{trecho['palavra']}' — Setor: {trecho['setor_alvo']}", expanded=(idx == 0)):<br/>
+                    st.markdown("**Trecho original:**")
+                    st.code(trecho['trecho'], language="text")
+                    
+                    edicao = st.text_area(
+                        f"Editar trecho #{idx + 1}:",
+                        value=trecho['trecho'],
+                        height=150,
+                        key=f"edit_trecho_{idx}"
+                    )
+                    edicoes[idx] = edicao
+            
+            col_salvar, _ = st.columns([1, 3])
+            with col_salvar:<br/>
+                if st.button("💾 Salvar Edições e Gerar Texto Final", type="primary", use_container_width=True):
+                    texto_final = texto_original
+                    for idx, trecho in enumerate(trechos):
+                        texto_final = texto_final.replace(trecho['trecho'], edicoes.get(idx, trecho['trecho']))
+                    
+                    st.session_state.nip_texto_final = texto_final
+                    st.success("✅ Edições aplicadas com sucesso!")
+                    st.rerun()
+            
+            if "nip_texto_final" in st.session_state:<br/>
+                with placeholder_resultado.container():
+                    st.markdown("#### 📄 Texto Final Editado")
+                    st.text_area("Conteúdo final:", st.session_state.nip_texto_final, height=400, key="nip_resultado_final")
+                    
+                    st.download_button(
+                        "📥 Baixar Texto Editado (TXT)",
+                        data=st.session_state.nip_texto_final,
+                        file_name=f"editado_{st.session_state.get('nip_num_processo', 'documento')}.txt",
+                        mime="text/plain",
+                        use_container_width=True
+                    )
 
 # ------------------------------------------------------------------------------
 # 4. INTERFACE OPERACIONAL — ABA 2: DISTRIBUIÇÃO E PAUTA ATIVA
