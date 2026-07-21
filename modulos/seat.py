@@ -171,7 +171,7 @@ def varrer_regras_inteligentes(texto):
 # ------------------------------------------------------------------------------
 # 3. INTERFACE OPERACIONAL — ABA 1: OFICINA NIP (EDIÇÃO & TRIAGEM)
 # ------------------------------------------------------------------------------
-def oficina_nip():
+def renderizar_oficina_nip():
     """Oficina NIP - Motor de Inteligencia Processual com Upload de Documentos."""
 
     st.markdown("### Oficina NIP - Nucleo de Integracao Processual")
@@ -228,7 +228,6 @@ def oficina_nip():
                 for regra in lista_regras:
                     palavra = regra.get("palavra_chave", "").lower()
                     if palavra and palavra in texto_lower:
-                        import re
                         for match in re.finditer(re.escape(palavra), texto_lower):
                             inicio = max(0, match.start() - 100)
                             fim = min(len(texto_extraido), match.end() + 200)
@@ -268,7 +267,6 @@ def oficina_nip():
         else:
             st.warning(f"{len(trechos)} trecho(s) encontrado(s) com base nas regras cadastradas.")
 
-            texto_editado = texto_original
             edicoes = {}
 
             for idx, trecho in enumerate(trechos):
@@ -307,6 +305,7 @@ def oficina_nip():
                         mime="text/plain",
                         use_container_width=True
                     )
+                    
 # ------------------------------------------------------------------------------
 # 4. INTERFACE OPERACIONAL — ABA 2: DISTRIBUIÇÃO E PAUTA ATIVA
 # ------------------------------------------------------------------------------
