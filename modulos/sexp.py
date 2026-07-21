@@ -50,7 +50,7 @@ def renderizar_cartoes_expedicao(df_processos, tipo_painel="geral"):
                 if status_atual in ["Em Expedição", "Aguardando Expedição", "Liberado p/ Expedição"]:
                     if st.button("📝 Marcar Expedido", key=f"btn_exp_{id_reg}_{idx}", type="primary", use_container_width=True):
                         try:
-                            conn.client.table("pauta_sexp").update({
+                            conn.table("pauta_sexp").update({
                                 "status": "Expedido - Aguardando Revisão",
                                 "data_expedicao": datetime.now().strftime("%d/%m/%Y %H:%M")
                             }).eq("id", id_reg).execute()
@@ -63,7 +63,7 @@ def renderizar_cartoes_expedicao(df_processos, tipo_painel="geral"):
                 elif status_atual == "Expedido - Aguardando Revisão":
                     if st.button("🛡️ Validar Revisão (Concluir)", key=f"btn_rev_sexp_{id_reg}_{idx}", type="primary", use_container_width=True):
                         try:
-                            conn.client.table("pauta_sexp").update({
+                            conn.table("pauta_sexp").update({
                                 "status": "Concluído",
                                 "data_conclusao": datetime.now().strftime("%d/%m/%Y %H:%M")
                             }).eq("id", id_reg).execute()
@@ -75,7 +75,7 @@ def renderizar_cartoes_expedicao(df_processos, tipo_painel="geral"):
                     # Botão secundário para quarentena de erro (devolver para o expedidor A)
                     if st.button("⚠️ Devolver c/ Correção", key=f"btn_dev_{id_reg}_{idx}", type="secondary", use_container_width=True):
                         try:
-                            conn.client.table("pauta_sexp").update({
+                            conn.table("pauta_sexp").update({
                                 "status": "Em Expedição",
                                 "observacao": "⚠️ Devolvido pela revisão para ajustes no ofício."
                             }).eq("id", id_reg).execute()
@@ -115,7 +115,7 @@ def renderizar_homologacao_chefia():
                 if st.button("🚀 Homologar e Liberar TODOS para a Esteira", type="primary", use_container_width=True):
                     try:
                         for idx, item in df_pend.iterrows():
-                            conn.client.table("pauta_sexp").update({"status": "Liberado p/ Expedição"}).eq("id", item["id"]).execute()
+                            conn.table("pauta_sexp").update({"status": "Liberado p/ Expedição"}).eq("id", item["id"]).execute()
                         st.success(f"🚀 Comporta aberta! {len(df_pend)} processos liberados para a equipe da SEXP.")
                         st.rerun()
                     except Exception as e:
@@ -134,12 +134,12 @@ def renderizar_homologacao_chefia():
                         with c2:
                             st.markdown("<br>", unsafe_allow_html=True)
                             if st.button("🚀 Liberar", key=f"lib_{row['id']}"):
-                                conn.client.table("pauta_sexp").update({"status": "Liberado p/ Expedição"}).eq("id", row["id"]).execute()
+                                conn.table("pauta_sexp").update({"status": "Liberado p/ Expedição"}).eq("id", row["id"]).execute()
                                 st.rerun()
                         with c3:
                             st.markdown("<br>", unsafe_allow_html=True)
                             if st.button("🚫 Retirar de Pauta", key=f"ret_{row['id']}", type="secondary"):
-                                conn.client.table("pauta_sexp").update({"status": "Retirado de Pauta", "observacao": "🚫 Retirado pela Chefia na SEXP"}).eq("id", row["id"]).execute()
+                                conn.table("pauta_sexp").update({"status": "Retirado de Pauta", "observacao": "🚫 Retirado pela Chefia na SEXP"}).eq("id", row["id"]).execute()
                                 st.warning(f"Processo {row.get('processo')} retirado da pauta!")
                                 st.rerun()
             else:
@@ -184,7 +184,7 @@ def renderizar_homologacao_chefia():
                                 "observacao": f"⚡ Inclusão Avulsa Chefia: {av_obs}",
                                 "data_entrada": datetime.now().strftime("%d/%m/%Y %H:%M")
                             }
-                            conn.client.table("pauta_sexp").insert(novo_avulso).execute()
+                            conn.table("pauta_sexp").insert(novo_avulso).execute()
                             st.success("Processo injetado diretamente no Painel Ativo da SEXP!")
                             st.rerun()
                         except Exception as e:
