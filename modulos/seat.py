@@ -7,7 +7,7 @@ import streamlit as st
 import pandas as pd
 import re
 import random
-from datetime import datetime, timedelta
+from datetime import datetime
 from db_manager import conn, buscar_todos_paginado, carregar_equipes, obter_colaboradores_ausentes_hoje, extrair_texto_arquivo
 
 # ------------------------------------------------------------------------------
@@ -15,7 +15,6 @@ from db_manager import conn, buscar_todos_paginado, carregar_equipes, obter_cola
 # ------------------------------------------------------------------------------
 def aplicar_tranca_lgpd(texto):
     """Mascara CPFs no formato ***.XXX.XXX-** respeitando a LGPD."""
-    # Regex flexível para capturar CPFs com ou sem pontos/espaços errados
     padrao_cpf = r'\b(\d{3})\s*\.?\s*(\d{3})\s*\.?\s*(\d{3})\s*-?\s*(\d{2})\b'
     def mascarar(match):
         g2, g3 = match.group(2), match.group(3)
@@ -56,7 +55,6 @@ def aplicar_destaque_visual(texto):
     texto_destacado = texto
     for termo in termos_destaque:
         texto_destacado = re.sub(f'({termo})', r'**\1**', texto_destacado, flags=re.IGNORECASE)
-    # Limpa marcações duplas de negrito que possam acontecer
     return texto_destacado.replace('****', '**')
 
 def processar_motor_nip(texto_bruto):
@@ -68,7 +66,6 @@ def processar_motor_nip(texto_bruto):
         return "", "VAZIO", []
 
     texto_limpo = texto_bruto.strip()
-    gatilhos_detectados = []
     
     # --------------------------------------------------------------------------
     # VERIFICAÇÃO TIPO 3: SUSTENTAÇÃO ORAL (BYPASS TOTAL DE EDIÇÃO)
@@ -83,20 +80,16 @@ def processar_motor_nip(texto_bruto):
     e_referendo = re.search(r'(referende o Despacho Singular|ad referendum|Despacho Singular nº)', texto_limpo, re.IGNORECASE)
     
     if e_referendo:
-        # Extrai o recheio do Despacho (entre DECIDO e VOTO/Relatei)
         match_despacho = re.search(r'(?:DECIDO|decidir)(.*?)(?:Relatei\.|VOTO)', texto_limpo, re.DOTALL | re.IGNORECASE)
         recheio_despacho = match_despacho.group(1).strip() if match_despacho else ""
         
-        # Limpa o recheio sem quebrar os algarismos romanos internos
         recheio_despacho = re.sub(r'\s+', ' ', recheio_despacho)
         recheio_despacho = aplicar_tranca_lgpd(recheio_despacho)
         recheio_despacho = aplicar_destaque_visual(recheio_despacho)
         
-        # Verifica se há ordens complementares no Voto (Referendo Composto vs Simples)
         match_voto_extra = re.search(r'VOTO no sentido de que.*?:(.*)$', texto_limpo, re.DOTALL | re.IGNORECASE)
         voto_final = match_voto_extra.group(1).strip() if match_voto_extra else ""
         
-        # Se tiver itens além de referendar, é Tipo 2 Composto (numeração arábica 1), 2))
         itens_extras = [i.strip() for i in re.split(r'\b[I|V|X]+[\s|-]+|\b\d+\)\s*', voto_final) if i.strip() and not re.search(r'referende o Despacho', i, re.IGNORECASE)]
         
         if len(itens_extras) > 0:
@@ -113,7 +106,6 @@ def processar_motor_nip(texto_bruto):
             teleprompter = preambulo + item_1 + "".join(itens_formatados)
             return teleprompter.strip(), "TIPO_2_COMPOSTO", []
         else:
-            # Referendo Simples: Preâmbulo no passado, sem numeração externa
             preambulo = "**O Tribunal, por unanimidade, referendou o mencionado despacho singular, proferido nos seguintes termos:** "
             teleprompter = f"{preambulo}\"{recheio_despacho}\""
             return teleprompter.strip(), "TIPO_2_SIMPLES", []
@@ -121,19 +113,13 @@ def processar_motor_nip(texto_bruto):
     # --------------------------------------------------------------------------
     # VERIFICAÇÃO TIPO 1: VOTO COMUM DE PLENÁRIO (BUSCA REVERSA)
     # --------------------------------------------------------------------------
-    # Corta o relatório buscando a âncora final de deliberação
     match_voto = re.search(r'(?:VOTO no sentido de que|ACORDAM|decidiu:)(.*?)$', texto_limpo, re.DOTALL | re.IGNORECASE)
     bloco_deliberativo = match_voto.group(1).strip() if match_voto else texto_limpo
     
-    # Transposição litúrgica e limpeza LGPD
     bloco_deliberativo = transpor_verbos_liturgicos(bloco_deliberativo)
     bloco_deliberativo = aplicar_tranca_lgpd(bloco_deliberativo)
     bloco_deliberativo = aplicar_destaque_visual(bloco_deliberativo)
-    
-    # Formatação contínua (Teleprompter sem parágrafos)
     bloco_deliberativo = re.sub(r'\s+', ' ', bloco_deliberativo)
-    
-    # Converte incisos Romanos externos em formatação padrão em negrito
     bloco_deliberativo = re.sub(r'\b([I|V|X]+)\s*[\.-]\s*', r'**\1 -** ', bloco_deliberativo)
     
     preambulo = "**O Tribunal, por unanimidade, de acordo com o voto do Relator, decidiu:** "
@@ -144,9 +130,6 @@ def processar_motor_nip(texto_bruto):
         
     return teleprompter.strip(), "TIPO_1_COMUM", []
 
-# ------------------------------------------------------------------------------
-# 2. RADAR INTELIGENTE DE PALAVRAS-CHAVE E DESVIOS DE ROTA
-# ------------------------------------------------------------------------------
 def varrer_regras_inteligentes(texto):
     """Cruza o texto editado com a base de regras do GAB para detectar Urgência ou SERCON."""
     alertas = []
@@ -169,256 +152,218 @@ def varrer_regras_inteligentes(texto):
     return alertas
 
 # ------------------------------------------------------------------------------
-# 3. INTERFACE OPERACIONAL — ABA 1: OFICINA NIP (EDIÇÃO & TRIAGEM)
+# 2. INTERFACE OPERACIONAL — ABA 1: OFICINA NIP (EDIÇÃO EXPANDIDA 700PX)
 # ------------------------------------------------------------------------------
 def renderizar_oficina_nip():
-    """Oficina NIP - Motor de Inteligencia Processual com Upload de Documentos."""
-
-    st.markdown("### Oficina NIP - Nucleo de Integracao Processual")
-    st.markdown("Faca o upload do documento (PDF, DOCX ou TXT). O Motor NIP identificara automaticamente os trechos que precisam de edicao com base nas regras cadastradas.")
-
-    col1, col2 = st.columns([1, 1])
-
-    with col1:
-        st.markdown("#### Entrada de Documento")
-
-        arquivo = st.file_uploader(
-            "Selecione o documento (PDF, DOCX ou TXT)",
-            type=["pdf", "docx", "txt"],
-            key="nip_upload"
-        )
-
-        num_processo = st.text_input(
-            "N do Processo / Relator:",
-            placeholder="Ex: 00600-00006383/2026-07-e - GCRR",
-            key="nip_processo"
-        )
-
-        processar = st.button("Processar no Motor NIP", type="primary", use_container_width=True)
-
-    with col2:
-        st.markdown("#### Teleprompter Continuo (Pronto para o Plenario)")
-        placeholder_resultado = st.empty()
-
-    if processar:
+    st.markdown("### 🛠️ Oficina NIP — Núcleo de Integração Processual")
+    st.caption("O Motor NIP aplica Busca Reversa, corta relatórios antigos, transpõe verbos e aplica a tranca LGPD em milissegundos.")
+    
+    col_up, col_info = st.columns([1.5, 1])
+    with col_up:
+        arquivo = st.file_uploader("📂 Carregar Documento (PDF, DOCX ou TXT):", type=["pdf", "docx", "txt"], key="nip_file_upload")
+    with col_info:
+        st.markdown("<br>", unsafe_allow_html=True)
+        num_processo = st.text_input("Nº do Processo / Relator:", placeholder="Ex: 00600-00006383/2026-07-e - GCRR", key="nip_proc_val")
+        btn_executar = st.button("🚀 Processar Purificação Litúrgica", type="primary", use_container_width=True)
+        
+    if btn_executar:
         if not arquivo:
-            st.error("Nenhum arquivo selecionado. Faca o upload de um documento primeiro.")
+            st.error("🚨 Nenhum arquivo selecionado. Por favor, carregue o PDF ou DOCX do processo.")
             return
-
         if not num_processo.strip():
-            st.warning("Informe o N do Processo / Relator para continuar.")
-
-        with st.spinner("Processando documento no Motor NIP..."):
+            st.warning("⚠️ Informe o número do processo para cadastrar a edição.")
+            return
+            
+        with st.spinner("🧠 Executando Busca Reversa, Tranca LGPD e Transposição de Verbos..."):
             try:
-                texto_extraido = extrair_texto_arquivo(arquivo)
-
-                if not texto_extraido:
-                    st.error("Nao foi possivel extrair texto do documento. Verifique se o arquivo nao esta protegido ou escaneado (imagem).")
+                texto_bruto = extrair_texto_arquivo(arquivo)
+                if not texto_bruto:
+                    st.error("🚨 Não foi possível ler o arquivo. Verifique se o documento não está protegido por senha ou digitalizado sem OCR.")
                     return
-
-                try:
-                    regras = conn.table("regras_palavras_chave").select("*").execute()
-                    lista_regras = regras.data if regras.data else []
-                except Exception:
-                    lista_regras = []
-
-                trechos_encontrados = []
-                texto_lower = texto_extraido.lower()
-
-                for regra in lista_regras:
-                    palavra = regra.get("palavra_chave", "").lower()
-                    if palavra and palavra in texto_lower:
-                        for match in re.finditer(re.escape(palavra), texto_lower):
-                            inicio = max(0, match.start() - 100)
-                            fim = min(len(texto_extraido), match.end() + 200)
-                            trecho = texto_extraido[inicio:fim]
-                            trechos_encontrados.append({
-                                "palavra": regra.get("palavra_chave"),
-                                "categoria": regra.get("categoria"),
-                                "setor_alvo": regra.get("setor_alvo"),
-                                "trecho": trecho,
-                                "inicio": inicio,
-                                "fim": fim
-                            })
-
-                st.session_state.nip_texto_original = texto_extraido
-                st.session_state.nip_trechos = trechos_encontrados
-                st.session_state.nip_processado = True
-                st.session_state.nip_num_processo = num_processo
-
-                st.success(f"Documento processado! {len(trechos_encontrados)} trechos identificados para edicao.")
-
+                
+                texto_puro, tipo_doc, flags_nip = processar_motor_nip(texto_bruto)
+                alertas_radar = varrer_regras_inteligentes(texto_puro)
+                
+                st.session_state.nip_original = texto_bruto
+                st.session_state.nip_editado = texto_puro
+                st.session_state.nip_tipo = tipo_doc
+                st.session_state.nip_alertas = alertas_radar
+                st.session_state.nip_num_proc = num_processo.strip()
+                st.session_state.nip_ativo = True
+                
+                st.success(f"✨ Processamento Concluído! Classificação automática: **{tipo_doc}**")
             except Exception as e:
-                st.error(f"Erro ao processar documento: {e}")
+                st.error(f"🚨 Erro interno no processamento NIP: {e}")
                 return
 
-    if st.session_state.get("nip_processado"):
-        texto_original = st.session_state.nip_texto_original
-        trechos = st.session_state.nip_trechos
-
+    # EXIBIÇÃO COMPARATIVA EM TELA CHEIA (ALTURA DE 700PX)
+    if st.session_state.get("nip_ativo"):
         st.markdown("---")
-        st.markdown("### Trechos Identificados para Revisao")
+        
+        # Alertas de Roteamento (Encruzilhada SERCON vs SEXP ou Urgência)
+        alertas = st.session_state.get("nip_alertas", [])
+        if alertas:
+            setores_dest = [a["setor_alvo"] for a in alertas]
+            if "SERCON" in setores_dest:
+                st.error("🚨 **GATILHO DE EXCLUSÃO MÚTUA ATIVADO:** O radar identificou matéria contábil (Cobrança/TCE/Multa). Este processo deverá ser encaminhado **EXCLUSIVAMENTE para a SERCON**.")
+            elif "SEAT" in setores_dest or any(a["categoria"] == "URGENCIA" for a in alertas):
+                st.warning("⚡ **ALERTA DE URGÊNCIA:** Prazos curtos ou liminar detectados. O processo receberá selo prioritário na distribuição.")
+                
+        col_orig, col_edit = st.columns(2)
+        with col_orig:
+            st.markdown("#### 📄 Texto Bruto Extraído (Original)")
+            st.text_area("Confira o teor antes do corte do relatório:", value=st.session_state.get("nip_original", ""), height=700, key="txt_nip_original_700")
+            
+        with col_edit:
+            st.markdown("#### 📺 Teleprompter Purificado (Editado)")
+            texto_editado_atual = st.text_area("Faça a conferência fina ou ajuste manual na liturgia:", value=st.session_state.get("nip_editado", ""), height=700, key="txt_nip_editado_700")
+            
+            # Botão para salvar alterações manuais na conferência
+            col_save, col_down = st.columns([1, 1])
+            with col_save:
+                if st.button("💾 Confirmar Edição na Memória", type="primary", use_container_width=True):
+                    st.session_state.nip_editado = texto_editado_atual
+                    st.success("✔ Ajustes manuais gravados!")
+            with col_down:
+                st.download_button(
+                    "📥 Baixar Teleprompter (TXT)",
+                    data=texto_editado_atual,
+                    file_name=f"VOTO_EDITADO_{st.session_state.get('nip_num_proc', 'PROCESSO').replace('/', '_')}.txt",
+                    mime="text/plain",
+                    use_container_width=True
+                )
 
-        if not trechos:
-            st.info("Nenhum trecho com regras de edicao foi encontrado. O documento esta em conformidade.")
-            with placeholder_resultado.container():
-                st.markdown("#### Texto Extraido")
-                st.text_area("Conteudo do documento:", texto_original, height=400, key="nip_texto_final")
-        else:
-            st.warning(f"{len(trechos)} trecho(s) encontrado(s) com base nas regras cadastradas.")
-
-            edicoes = {}
-
-            for idx, trecho in enumerate(trechos):
-                with st.expander(f"[{trecho['categoria']}] Palavra-chave: '{trecho['palavra']}' - Setor: {trecho['setor_alvo']}", expanded=(idx == 0)):
-                    st.markdown("**Trecho original:**")
-                    st.code(trecho['trecho'], language="text")
-
-                    edicao = st.text_area(
-                        f"Editar trecho #{idx + 1}:",
-                        value=trecho['trecho'],
-                        height=150,
-                        key=f"edit_trecho_{idx}"
-                    )
-                    edicoes[idx] = edicao
-
-            col_salvar, _ = st.columns([1, 3])
-            with col_salvar:
-                if st.button("Salvar Edicoes e Gerar Texto Final", type="primary", use_container_width=True):
-                    texto_final = texto_original
-                    for idx, trecho in enumerate(trechos):
-                        texto_final = texto_final.replace(trecho['trecho'], edicoes.get(idx, trecho['trecho']))
-
-                    st.session_state.nip_texto_final = texto_final
-                    st.success("Edicoes aplicadas com sucesso!")
-                    st.rerun()
-
-            if "nip_texto_final" in st.session_state:
-                with placeholder_resultado.container():
-                    st.markdown("#### Texto Final Editado")
-                    st.text_area("Conteudo final:", st.session_state.nip_texto_final, height=400, key="nip_resultado_final")
-
-                    st.download_button(
-                        "Baixar Texto Editado (TXT)",
-                        data=st.session_state.nip_texto_final,
-                        file_name=f"editado_{st.session_state.get('nip_num_processo', 'documento')}.txt",
-                        mime="text/plain",
-                        use_container_width=True
-                    )
-                    
 # ------------------------------------------------------------------------------
-# 4. INTERFACE OPERACIONAL — ABA 2: DISTRIBUIÇÃO E PAUTA ATIVA
+# 3. INTERFACE OPERACIONAL — ABA 2: DISTRIBUIÇÃO EQUALITÁRIA & PAUTA
 # ------------------------------------------------------------------------------
 def renderizar_pauta_ativa():
-    st.markdown("### 📋 Pauta Ativa e Distribuição Equalitária")
-    st.caption("Distribuição aleatória sem auto-revisão. Ao marcar 'Revisado OK', o processo é roteado automaticamente para a mesa de homologação da SEXP.")
+    st.markdown("### 📋 Pauta Ativa e Distribuição Equalitária sem Auto-Revisão")
+    st.caption("Selecione os colaboradores presentes na sessão e distribua a pauta com divisão matemática exata. Marque as caixas para concluir tarefas.")
     
-    col_dist1, col_dist2 = st.columns([2, 1])
-    
-    with col_dist1:
-        with st.expander("➕ Inserir Novo Processo na Pauta da SEAT", expanded=False):
-            with st.form("form_add_seat"):
-                c1, c2, c3 = st.columns(3)
+    # BOX 1: GERADOR DE DISTRIBUIÇÃO EM LOTE EQUALITÁRIA
+    with st.expander("⚖️ Gerar Distribuição Equalitária de Lote para a Sessão", expanded=False):
+        _, _, todos_colabs = carregar_equipes()
+        ausentes = obter_colaboradores_ausentes_hoje()
+        disponiveis = [c for c in todos_colabs if c not in ausentes]
+        
+        st.markdown("#### 1️⃣ Selecione os Colaboradores Participantes do Rodízio Hoje:")
+        colabs_selecionados = st.multiselect("Equipe Escalada para Edição e Revisão:", disponiveis, default=disponiveis, key="multi_colab_dist")
+        
+        if len(colabs_selecionados) < 2:
+            st.warning("⚠️ Selecione pelo menos 2 colaboradores para garantir a regra de Não Auto-Revisão (A edita, B/C/D revisa).")
+        else:
+            st.markdown("#### 2️⃣ Inserir Processos para Distribuição:")
+            with st.form("form_distribuicao_igualitaria"):
+                c1, c2 = st.columns([2, 1])
                 with c1:
-                    p_num = st.text_input("Nº do Processo:")
-                    p_rel = st.selectbox("Relator:", ["GCRR", "GCAM", "GCPT", "GCAC", "GCIM", "GCMM", "GAVF", "GPAT"])
+                    lote_txt = st.text_area("Lista de Processos (Cole 1 número de processo por linha):", placeholder="00600-00001111/2026-00\n00600-00002222/2026-00\n00600-00003333/2026-00", height=150)
                 with c2:
-                    p_ses = st.selectbox("Sessão:", ["Sessão Ordinária", "Ordinária Virtual", "Sessão Administrativa", "Sessão Reservada"])
-                    p_urg = st.checkbox("🚨 É Processo Urgente?")
-                with c3:
-                    expedidores, revisores, todos_colabs = carregar_equipes()
-                    ausentes = obter_colaboradores_ausentes_hoje()
-                    disponiveis = [c for c in todos_colabs if c not in ausentes]
+                    rel_lote = st.selectbox("Relator Predominante:", ["GCRR", "GCAM", "GCPT", "GCAC", "GCIM", "GCMM", "GAVF", "GPAT"])
+                    ses_lote = st.selectbox("Sessão Alvo:", ["Sessão Ordinária", "Ordinária Virtual", "Sessão Administrativa", "Sessão Reservada"])
+                    urg_lote = st.checkbox("🚨 Todos são Urgentes?")
                     
-                    # Garantia de não auto-revisão no sorteio inicial
-                    editor_sel = st.selectbox("Editor Atribuído:", disponiveis if disponiveis else ["Equipe Vazia"])
-                    opcoes_revisor = [c for c in disponiveis if c != editor_sel]
-                    revisor_sel = st.selectbox("Revisor Atribuído:", opcoes_revisor if opcoes_revisor else ["Equipe Vazia"])
-                    
-                if st.form_submit_button("📥 Distribuir Processo", type="primary"):
-                    if p_num.strip():
-                        try:
-                            novo_seat = {
-                                "processo": p_num.strip(),
-                                "relator": p_rel,
-                                "sessao": p_ses,
-                                "editor": editor_sel,
-                                "revisor": revisor_sel,
+                if st.form_submit_button("⚖️ Executar Distribuição Equalitária", type="primary"):
+                    linhas_processos = [p.strip() for p in lote_txt.split("\n") if p.strip()]
+                    if not linhas_processos:
+                        st.warning("⚠️ Cole pelo menos 1 número de processo na caixa de texto.")
+                    else:
+                        num_colabs = len(colabs_selecionados)
+                        novos_registros = []
+                        
+                        for idx, proc in enumerate(linhas_processos):
+                            # Sorteio Equalitário circular (Garante divisão exata)
+                            editor_atribuido = colabs_selecionados[idx % num_colabs]
+                            
+                            # Exclusão Mútua: O Revisor NUNCA pode ser o próprio Editor
+                            opcoes_revisor = [c for c in colabs_selecionados if c != editor_atribuido]
+                            revisor_atribuido = random.choice(opcoes_revisor)
+                            
+                            novos_registros.append({
+                                "processo": proc,
+                                "relator": rel_lote,
+                                "sessao": ses_lote,
+                                "editor": editor_atribuido,
+                                "revisor": revisor_atribuido,
                                 "editado_ok": 0,
                                 "revisado_ok": 0,
-                                "urgente": 1 if p_urg else 0,
+                                "urgente": 1 if urg_lote else 0,
                                 "status": "Em Edição",
                                 "data_entrada": datetime.now().strftime("%d/%m/%Y %H:%M")
-                            }
-                            conn.table("pauta_seat").insert(novo_seat).execute()
-                            st.success("Processo distribuído com sucesso!")
+                            })
+                            
+                        try:
+                            conn.table("pauta_seat").insert(novos_registros).execute()
+                            st.success(f"✨ Sucesso! {len(novos_registros)} processos foram distribuídos com perfeição entre os {num_colabs} colaboradores.")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Erro ao distribuir: {e}")
-                    else:
-                        st.warning("Informe o número do processo.")
+                            st.error(f"🚨 Erro na gravação do lote no Supabase: {e}")
 
     st.markdown("---")
+    st.markdown("#### 📋 Pauta de Julgamento (Controle com Checagem em Tempo Real)")
     
-    # Filtros de visualização de pauta
-    col_f1, col_f2 = st.columns([2, 1])
-    with col_f1:
-        filtro_sessao = st.multiselect("Filtrar por Sessão:", ["Sessão Ordinária", "Ordinária Virtual", "Sessão Administrativa", "Sessão Reservada"], default=["Sessão Ordinária", "Ordinária Virtual"])
-    with col_f2:
-        filtro_urgente = st.toggle("🚨 Mostrar Apenas Urgentes")
-        
     try:
         dados_seat = buscar_todos_paginado("pauta_seat")
         if not dados_seat:
-            st.info("Nenhum processo na pauta ativa da SEAT.")
+            st.info("✨ Nenhuma pendência na pauta ativa da SEAT no momento.")
             return
             
         df_seat = pd.DataFrame(dados_seat)
+        df_ativos = df_seat[~df_seat["status"].isin(["Revisado - Enviado SEXP", "Concluído"])]
         
-        # Aplicação dos filtros
-        if filtro_sessao and "sessao" in df_seat.columns:
-            df_seat = df_seat[df_seat["sessao"].isin(filtro_sessao)]
-        if filtro_urgente and "urgente" in df_seat.columns:
-            df_seat = df_seat[df_seat["urgente"] == 1]
-            
-        if df_seat.empty:
-            st.warning("Nenhum processo corresponde aos filtros selecionados.")
+        if df_ativos.empty:
+            st.success("✨ Todos os processos da SEAT já foram editados, revisados e roteados para a SEXP!")
             return
-
-        st.markdown(f"**Total de Processos Listados:** `{len(df_seat)}`")
+            
+        st.markdown(f"**Volume em Edição/Revisão:** `{len(df_ativos)} processo(s)`")
         
-        # Exibição iterativa para permitir marcação dos botões de OK
-        for idx, row in df_seat.iterrows():
+        # TABELA ERGONÔMICA COM CAIXAS DE SELEÇÃO INSTANTÂNEAS
+        for idx, row in df_ativos.iterrows():
+            id_reg = row.get("id")
+            e_urgente = row.get("urgente", 0) == 1
+            edit_ok = row.get("editado_ok", 0) == 1
+            rev_ok = row.get("revisado_ok", 0) == 1
+            
             with st.container(border=True):
-                c_info, c_status, c_acao = st.columns([2.5, 1.5, 1.5])
-                with c_info:
-                    badge_urg = "🚨 **URGENTE** | " if row.get("urgente") == 1 else ""
-                    st.markdown(f"### {badge_urg}`{row.get('processo', 'S/N')}`")
-                    st.markdown(f"**Relator:** `{row.get('relator', 'GAB')}` | **Sessão:** {row.get('sessao', 'Ordinária')}")
-                    st.caption(f"Editor: **{row.get('editor', 'N/A')}** ➔ Revisor: **{row.get('revisor', 'N/A')}** | Entrada: {row.get('data_entrada', '')}")
+                c_proc, c_resp, c_check_ed, c_check_rev, c_gatilho = st.columns([2.2, 1.8, 1.2, 1.2, 1.6])
+                
+                with c_proc:
+                    badge = "🚨 **[URGENTE]** <br>" if e_urgente else ""
+                    st.markdown(f"{badge}**`{row.get('processo', 'S/N')}`**", unsafe_allow_html=True)
+                    st.caption(f"Relator: **{row.get('relator', 'GAB')}** | {row.get('sessao', 'Ordinária')}")
                     
-                with c_status:
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    st_ed = "✅ Editado" if row.get("editado_ok") == 1 else "⏳ Pendente Edição"
-                    st_rev = "✅ Revisado" if row.get("revisado_ok") == 1 else "⏳ Pendente Revisão"
-                    st.markdown(f"**Edição:** {st_ed}<br>**Revisão:** {st_rev}", unsafe_allow_html=True)
+                with c_resp:
+                    st.markdown(f"📝 **Editor:** `{row.get('editor', 'N/A')}`")
+                    st.markdown(f"🛡️ **Revisor:** `{row.get('revisor', 'N/A')}`")
                     
-                with c_acao:
+                with c_check_ed:
                     st.markdown("<br>", unsafe_allow_html=True)
-                    # Botão 1: Marcar Edição OK
-                    if row.get("editado_ok") == 0:
-                        if st.button("📝 Concluir Edição", key=f"btn_ed_{row.get('id', idx)}", use_container_width=True):
-                            conn.table("pauta_seat").update({"editado_ok": 1, "status": "Em Revisão"}).eq("id", row.get("id")).execute()
-                            st.success("Edição concluída!")
-                            st.rerun()
+                    # Checkbox interativo de Edição
+                    nova_edicao = st.checkbox("✔ Editado", value=edit_ok, key=f"chk_ed_{id_reg}")
+                    if nova_edicao != edit_ok:
+                        conn.table("pauta_seat").update({
+                            "editado_ok": 1 if nova_edicao else 0,
+                            "status": "Em Revisão" if nova_edicao else "Em Edição"
+                        }).eq("id", id_reg).execute()
+                        st.rerun()
+                        
+                with c_check_rev:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    # Checkbox interativo de Revisão
+                    nova_revisao = st.checkbox("✔ Revisado", value=rev_ok, key=f"chk_rev_{id_reg}", disabled=not edit_ok)
+                    if nova_revisao != rev_ok:
+                        conn.table("pauta_seat").update({
+                            "revisado_ok": 1 if nova_revisao else 0,
+                            "status": "Aguardando Envio SEXP" if nova_revisao else "Em Revisão"
+                        }).eq("id", id_reg).execute()
+                        st.rerun()
+                        
+                with c_gatilho:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    if rev_ok:
+                        if st.button("🚀 Enviar p/ SEXP", key=f"btn_send_{id_reg}", type="primary", use_container_width=True):
+                            # Gatilho de Ponte Automática SEAT -> SEXP
+                            conn.table("pauta_seat").update({"status": "Revisado - Enviado SEXP"}).eq("id", id_reg).execute()
                             
-                    # Botão 2: Marcar Revisão OK + Gatilho Automático para a SEXP
-                    elif row.get("revisado_ok") == 0:
-                        if st.button("🛡️ Concluir Revisão (Mandar p/ SEXP)", key=f"btn_rev_{row.get('id', idx)}", type="primary", use_container_width=True):
-                            # 1. Atualiza na SEAT
-                            conn.table("pauta_seat").update({"revisado_ok": 1, "status": "Revisado - Enviado SEXP"}).eq("id", row.get("id")).execute()
-                            
-                            # 2. Transfere automaticamente para a Pauta da SEXP (S.A.D.E.)
                             try:
                                 exp, revs, todos = carregar_equipes()
                                 aus = obter_colaboradores_ausentes_hoje()
@@ -439,171 +384,182 @@ def renderizar_pauta_ativa():
                                     "data_entrada": datetime.now().strftime("%d/%m/%Y %H:%M")
                                 }
                                 conn.table("pauta_sexp").insert(ponte_sexp).execute()
-                                st.success("🚀 Revisão concluída! Processo enviada automaticamente para homologação na SEXP.")
+                                st.success("🚀 Roteado para o S.A.D.E.!")
                             except Exception as e:
-                                st.warning(f"Revisado na SEAT, mas falha no envio automático para SEXP: {e}")
+                                st.error(f"Erro na ponte SEXP: {e}")
                             st.rerun()
                     else:
-                        st.success("✨ Processo Finalizado na SEAT")
+                        st.caption("⏳ Conclua a edição e revisão para habilitar o envio.")
 
     except Exception as e:
-        st.error(f"Erro ao processar pauta ativa: {e}")
+        st.error(f"🚨 Erro na leitura da Pauta da SEAT: {e}")
 
 # ------------------------------------------------------------------------------
-# 5. INTERFACE OPERACIONAL — ABA 3: DESPACHOS SINGULARES & SUSTENTAÇÃO ORAL
+# 4. INTERFACE OPERACIONAL — ABA 3: DESPACHOS SINGULARES & SUSTENTAÇÃO ORAL
 # ------------------------------------------------------------------------------
 def renderizar_pauta_quarta():
     st.markdown("### 📅 Pauta de Quarta-Feira (Despachos Singulares & Sustentação Oral)")
-    st.caption("Controle de decisões monocráticas e defesas orais. Processos confirmados entram automaticamente no radar de prioridades da sessão do Plenário.")
+    st.caption("Decisões monocráticas (qui-ter) e defesas orais agendadas. Entram automaticamente na pauta prioritária do Plenário.")
     
     col_ds, col_so = st.columns(2)
-    
     with col_ds:
         with st.container(border=True):
             st.markdown("#### 📜 Despachos Singulares (DS)")
-            st.caption("Decisões emitidas entre quinta e terça que irão a referendo na quarta-feira.")
-            
-            with st.form("form_ds"):
-                ds_num = st.text_input("Nº do Processo (DS):")
-                ds_rel = st.selectbox("Relator DO Despacho:", ["GCRR", "GCAM", "GCPT", "GCAC", "GCIM", "GCMM", "GAVF", "GPAT"], key="ds_rel")
-                ds_status = st.radio("Status de Pauta:", ["✅ Confirmado em Pauta", "🚫 Retirado de Pauta"], horizontal=True)
-                
-                if st.form_submit_button("📌 Registrar Despacho Singular", type="primary"):
+            with st.form("form_ds_seat"):
+                ds_num = st.text_input("Nº do Processo (DS):", placeholder="00600-00000000/2026-00")
+                ds_rel = st.selectbox("Relator do Despacho:", ["GCRR", "GCAM", "GCPT", "GCAC", "GCIM", "GCMM", "GAVF", "GPAT"], key="rel_ds_seat")
+                ds_stat = st.radio("Status no Plenário:", ["✅ Confirmado em Pauta", "🚫 Retirado / Adiado"], horizontal=True)
+                if st.form_submit_button("📌 Cadastrar Despacho Singular", type="primary"):
                     if ds_num.strip():
                         try:
-                            reg_ds = {
+                            reg = {
                                 "processo": ds_num.strip(),
                                 "relator": ds_rel,
                                 "tipo_pauta": "Despacho Singular",
-                                "status": "Confirmado" if "Confirmado" in ds_status else "Retirado",
+                                "status": "Confirmado" if "Confirmado" in ds_stat else "Retirado",
                                 "sessao_alvo": "Próxima Quarta-Feira",
                                 "data_registro": datetime.now().strftime("%d/%m/%Y")
                             }
-                            conn.table("pauta_quarta").insert(reg_ds).execute()
-                            st.success("Despacho Singular catalogado!")
+                            conn.table("pauta_quarta").insert(reg).execute()
+                            st.success("Despacho Singular inserido na pauta de Quarta!")
                         except Exception as e:
-                            st.error(f"Erro ao salvar DS: {e}")
+                            st.error(f"Erro ao salvar: {e}")
                     else:
                         st.warning("Informe o processo.")
 
     with col_so:
         with st.container(border=True):
             st.markdown("#### 🗣️ Sustentações Orais (SO)")
-            st.caption("Advogados e interessados com defesa oral agendada no Plenário.")
-            
-            with st.form("form_so"):
-                so_num = st.text_input("Nº do Processo (SO):")
-                so_adv = st.text_input("Advogado / Orador:", placeholder="Dr(a). Nome do Advogado - OAB/DF")
-                so_data = st.date_input("Data Específica da Sessão:")
-                so_status = st.radio("Status do Agendamento:", ["✅ Confirmado (Pauta Prioritária)", "🚫 Retirado / Adiado"], horizontal=True)
-                
+            with st.form("form_so_seat"):
+                so_num = st.text_input("Nº do Processo (SO):", placeholder="00600-00000000/2026-00")
+                so_adv = st.text_input("Advogado / Orador:", placeholder="Dr(a). Nome do Advogado")
+                so_dt = st.date_input("Data da Sessão do Plenário:")
+                so_stat = st.radio("Status do Orador:", ["✅ Confirmado (Pauta Prioritária)", "🚫 Retirado"], horizontal=True)
                 if st.form_submit_button("🎙️ Agendar Sustentação Oral", type="primary"):
                     if so_num.strip():
                         try:
-                            reg_so = {
+                            reg = {
                                 "processo": so_num.strip(),
                                 "relator": so_adv if so_adv else "Orador não informado",
                                 "tipo_pauta": "Sustentação Oral",
-                                "status": "Confirmado" if "Confirmado" in so_status else "Retirado",
-                                "sessao_alvo": so_data.strftime("%d/%m/%Y"),
+                                "status": "Confirmado" if "Confirmado" in so_stat else "Retirado",
+                                "sessao_alvo": so_dt.strftime("%d/%m/%Y"),
                                 "data_registro": datetime.now().strftime("%d/%m/%Y")
                             }
-                            conn.table("pauta_quarta").insert(reg_so).execute()
-                            st.success("Sustentação Oral agendada com sucesso!")
+                            conn.table("pauta_quarta").insert(reg).execute()
+                            st.success("Sustentação Oral agendada com prioridade!")
                         except Exception as e:
-                            st.error(f"Erro ao salvar SO: {e}")
+                            st.error(f"Erro ao salvar: {e}")
                     else:
                         st.warning("Informe o processo.")
 
     st.markdown("---")
-    st.markdown("#### 👁️ Painel Consolidado do Plenário")
+    st.markdown("#### 👁️ Painel Consolidado de Quarta-Feira")
     try:
-        pauta_q = buscar_todos_paginado("pauta_quarta")
-        if pauta_q:
-            df_q = pd.DataFrame(pauta_q)
+        dados_q = buscar_todos_paginado("pauta_quarta")
+        if dados_q:
+            df_q = pd.DataFrame(dados_q)
             st.dataframe(df_q[["processo", "tipo_pauta", "relator", "sessao_alvo", "status"]], use_container_width=True, hide_index=True)
         else:
-            st.info("Nenhum Despacho ou Sustentação Oral agendado para a próxima sessão.")
+            st.info("Nenhum Despacho Singular ou Sustentação Oral catalogado para a próxima sessão.")
     except Exception:
-        st.info("Tabela de Pauta do Plenário aguardando primeiros registros.")
+        st.info("Tabela de Quarta-Feira aguardando registros.")
 
 # ------------------------------------------------------------------------------
-# 6. INTERFACE OPERACIONAL — ABA 4: RODÍZIO DE DUPLAS DE PUBLICAÇÃO
+# 5. INTERFACE OPERACIONAL — ABA 4: ESCALA ALTERNADA DE DUPLAS (DODF)
 # ------------------------------------------------------------------------------
 def renderizar_tab_publicacao():
-    st.markdown("### 📰 Escala de Duplas de Publicação no DODF")
-    st.caption("O sistema gera ciclos automáticos para o mês (Quarta e Sexta), repetindo a ordem ou permitindo trocas manuais da gerência.")
+    st.markdown("### 📰 Escala Alternada de Duplas para Publicação no DODF")
+    st.caption("O gerador intercala rigorosamente a equipe em duplas alternando entre as sessões de Quarta-Feira e publicações de Sexta-Feira.")
     
-    col_gerar, col_escala = st.columns([1, 2])
-    
+    col_gerar, col_tabela = st.columns([1.2, 1.8])
     with col_gerar:
         with st.container(border=True):
-            st.markdown("#### 🔄 Gerar Novo Ciclo")
-            m_ref = st.selectbox("Mês de Referência:", ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"])
-            if st.button("🚀 Gerar Rodízio Automático do Mês", type="primary", use_container_width=True):
+            st.markdown("#### 🔄 Gerar Novo Ciclo Mensal")
+            mes_alvo = st.selectbox("Mês de Referência:", ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"])
+            
+            if st.button("🚀 Gerar Escala Alternada (Quarta / Sexta)", type="primary", use_container_width=True):
                 try:
                     _, _, todos = carregar_equipes()
-                    if len(todos) >= 2:
-                        duplas = [
-                            {"mes": m_ref, "dia_semana": "Quarta-Feira (Sessão)", "dupla": f"{todos[0]} & {todos[1]}"},
-                            {"mes": m_ref, "dia_semana": "Sexta-Feira", "dupla": f"{todos[2 % len(todos)]} & {todos[3 % len(todos)]}"},
-                            {"mes": m_ref, "dia_semana": "Quarta-Feira (Seguinte)", "dupla": f"{todos[4 % len(todos)]} & {todos[5 % len(todos)]}"}
-                        ]
-                        conn.table("escala_publicacao").insert(duplas).execute()
-                        st.success(f"Ciclo de {m_ref} gerado com sucesso!")
-                        st.rerun()
-                    else:
-                        st.warning("É necessário pelo menos 2 colaboradores na equipe para gerar duplas.")
-                except Exception as e:
-                    st.error(f"Erro ao gerar escala: {e}")
+                    ausentes = obter_colaboradores_ausentes_hoje()
+                    ativos = [c for c in todos if c not in ausentes]
                     
-    with col_escala:
-        st.markdown("#### 📋 Escala Ativa de Publicação")
+                    if len(ativos) < 2:
+                        st.warning("⚠️ É necessário pelo menos 2 colaboradores ativos para formar duplas no DODF.")
+                    else:
+                        # Algoritmo de revezamento alternado
+                        escala_gerada = []
+                        dias_ciclo = ["Quarta-Feira (1ª Sessão)", "Sexta-Feira (1ª Publicação)", "Quarta-Feira (2ª Sessão)", "Sexta-Feira (2ª Publicação)", "Quarta-Feira (3ª Sessão)", "Sexta-Feira (3ª Publicação)"]
+                        
+                        num_a = len(ativos)
+                        for idx, dia in enumerate(dias_ciclo):
+                            colab1 = ativos[(idx * 2) % num_a]
+                            colab2 = ativos[((idx * 2) + 1) % num_a]
+                            escala_gerada.append({
+                                "mes": mes_alvo,
+                                "dia_semana": dia,
+                                "dupla": f"{colab1} & {colab2}"
+                            })
+                            
+                        conn.table("escala_publicacao").insert(escala_gerada).execute()
+                        st.success(f"✨ Escala de {mes_alvo} gerada e revezada com sucesso!")
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"🚨 Erro ao gerar escala: {e}")
+                    
+    with col_tabela:
+        st.markdown("#### 📋 Escala Ativa do DODF")
         try:
-            escala = buscar_todos_paginado("escala_publicacao")
-            if escala:
-                df_esc = pd.DataFrame(escala)
+            dados_esc = buscar_todos_paginado("escala_publicacao")
+            if dados_esc:
+                df_esc = pd.DataFrame(dados_esc)
                 st.dataframe(df_esc[["mes", "dia_semana", "dupla"]], use_container_width=True, hide_index=True)
+                
+                # Opção para limpar escala anterior
+                if st.button("🗑️ Limpar Toda a Escala", type="secondary"):
+                    for item in dados_esc:
+                        conn.table("escala_publicacao").delete().eq("id", item["id"]).execute()
+                    st.rerun()
             else:
-                st.info("Nenhuma escala de publicação gerada para este período.")
-        except Exception:
-            st.info("Tabela de escala aguardando inicialização.")
+                st.info("Nenhuma escala de publicação gerada para este mês.")
+        except Exception as e:
+            st.error(f"Erro ao ler escala: {e}")
 
 # ------------------------------------------------------------------------------
-# 7. FUNÇÃO PRINCIPAL DO MÓDULO (PONTO DE ENTRADA DO ROTEADOR)
+# 6. FUNÇÃO PRINCIPAL DO MÓDULO (PONTO DE ENTRADA DO ROTEADOR)
 # ------------------------------------------------------------------------------
 def run():
-    st.markdown("<div style='font-size: 26px; font-weight: bold; color: #1E3A8A;'>📝 SEAT — Setor de Edição e Triagem</div>", unsafe_allow_html=True)
-    st.markdown("<div style='font-size: 14px; color: #4B5563; margin-bottom: 20px; border-bottom: 2px solid #E5E7EB; padding-bottom: 8px;'>Purificação Litúrgica de Votos, Pauta do Plenário e Distribuição Equalitária</div>", unsafe_allow_html=True)
+    st.markdown("<div class='main-header'>📝 SEAT — Setor de Edição e Triagem</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sub-header'>Purificação Litúrgica de Votos (Motor NIP), Pauta do Plenário e Distribuição Equalitária sem Auto-Revisão</div>", unsafe_allow_html=True)
     
-    tab_nip, tab_ativa, tab_quarta, tab_pub, tab_ferias = st.tabs([
-        "🛠️ Oficina NIP (Motor AI)",
+    t_nip, t_ativa, t_quarta, t_pub, t_ferias = st.tabs([
+        "🛠️ Oficina NIP (Tela 700px)",
         "📋 Pauta Ativa & Distribuição",
         "📅 Pauta de Quarta (DS / SO)",
-        "📰 Duplas de Publicação",
-        "🏝️ Quadro de Férias / Ausências"
+        "📰 Escala DODF (Quarta/Sexta)",
+        "🏝️ Afastamentos (Leitura)"
     ])
     
-    with tab_nip:
+    with t_nip:
         renderizar_oficina_nip()
-    with tab_ativa:
+    with t_ativa:
         renderizar_pauta_ativa()
-    with tab_quarta:
+    with t_quarta:
         renderizar_pauta_quarta()
-    with tab_pub:
+    with t_pub:
         renderizar_tab_publicacao()
-    with tab_ferias:
-        st.markdown("### 🏝️ Quadro Visual de Afastamentos")
-        st.caption("Colaboradores listados abaixo são automaticamente excluídos do sorteio de distribuição de novos processos.")
+    with t_ferias:
+        st.markdown("### 🏝️ Quadro Visual de Afastamentos (Modo Leitura)")
+        st.caption("Colaboradores listados abaixo são automaticamente excluídos do sorteio equalitário da Pauta Ativa.")
         try:
             afast = buscar_todos_paginado("afastamentos")
             if afast:
                 df_af = pd.DataFrame(afast)
                 st.dataframe(df_af[["usuario", "motivo", "data_inicio", "data_fim"]], use_container_width=True, hide_index=True)
             else:
-                st.success("✨ Nenhum colaborador de férias ou afastado no momento. Equipe 100% disponível!")
+                st.success("✨ Toda a equipe da SEAT está ativa e disponível para o rodízio!")
         except Exception:
-            st.info("Quadro de férias sem registros ativos.")
+            st.info("Quadro de férias sem registros ativos no momento.")
 
 if __name__ == "__main__":
     run()
