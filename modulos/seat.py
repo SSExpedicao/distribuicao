@@ -77,7 +77,7 @@ def processar_motor_nip(texto_bruto):
     # --------------------------------------------------------------------------
     # VERIFICAÇÃO TIPO 2: DESPACHO SINGULAR / REFERENDO MONOCRÁTICO
     # --------------------------------------------------------------------------
-    e_referendo = re.search(r'(referende o Despacho Singular|ad referendum|Despacho Singular nº)', texto_limpo, re.IGNORECASE)
+    e_referendo = re.search(r'(referende o(?: mencionado)? Despacho Singular|ad referendum[a-z\s,]*DECIDO|referendar o Despacho Singular)', texto_limpo, re.IGNORECASE)
     
     if e_referendo:
         match_despacho = re.search(r'(?:DECIDO|decidir)(.*?)(?:Relatei\.|VOTO)', texto_limpo, re.DOTALL | re.IGNORECASE)
