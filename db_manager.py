@@ -18,6 +18,10 @@ def init_connection() -> Client:
         st.error("🚨 Erro de Conexão: Verifique se SUPABASE_URL e SUPABASE_KEY estão configurados no Secrets do Streamlit Cloud ou no arquivo .streamlit/secrets.toml local.")
         st.stop()
 
+def get_db_connection() -> Client:
+    """Retorna a instância da conexão com o banco de dados (Alias para compatibilidade)."""
+    return init_connection()
+
 # Conexão Global
 conn = init_connection()
 
@@ -62,7 +66,6 @@ def obter_colaboradores_ausentes_hoje():
         
         for reg in afastados:
             try:
-                # Tenta converter as datas de formato textual DD/MM/AAAA para comparação
                 dt_ini = datetime.strptime(reg["data_inicio"], "%d/%m/%Y")
                 dt_fim = datetime.strptime(reg["data_fim"], "%d/%m/%Y")
                 if dt_ini <= hoje <= dt_fim:
