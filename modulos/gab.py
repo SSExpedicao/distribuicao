@@ -1,8 +1,3 @@
-# ==============================================================================
-# ARQUIVO: modulos/gab.py
-# MISSÃO: Torre de Controle Gerencial, Dicionário de Regras e Gestão de Equipes
-# ==============================================================================
-
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -66,13 +61,11 @@ def renderizar_tab_dicionario():
         if regras:
             df_regras = pd.DataFrame(regras)
             
-            # Formatação limpa de exibição
             df_exibicao = df_regras[["id", "categoria", "palavra_chave", "setor_alvo", "ativo"]].copy()
             df_exibicao.columns = ["ID", "Categoria", "Termo Monitorado", "Setor Alvo", "Status Ativo"]
             
             st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
             
-            # Opção de exclusão rápida
             col_del1, col_del2 = st.columns([3, 1])
             with col_del1:
                 id_excluir = st.selectbox("Selecione o ID da regra para remover ou desativar:", df_exibicao["ID"].tolist())
@@ -88,29 +81,97 @@ def renderizar_tab_dicionario():
         st.error(f"Erro ao carregar regras: {e}")
 
 def renderizar_tab_equipes():
-    """Aba de gestão de pessoal, atribuição de rodízio e controle de afastamentos."""
-    st.markdown("### 👥 Gestão Operacional e Escala de Trabalho")
-    st.caption("Controle a lotação, as permissões de rodízio (Editor/Revisor/Expedidor) e registre férias ou atestadaos.")
+    """Aba de gestão unificada de pessoal, controle de acessos (login/senha) e afastamentos."""
+    st.markdown("### 👥 Gestão de Pessoal e Credenciais de Acesso")
+    st.caption("Cadastre colaboradores, atribua lotação, crie senhas de acesso e gerencie o quadro de rodízio.")
     
-    col_tabela, col_form = st.columns([1.8, 1.2])
+    # BOX 1: CADASTRO UNIFICADO DE COLABORADOR (USUARIOS_ACESSO + EQUIPE)
+    with st.expander("➕ Cadastrar Novo Colaborador (Acesso & Rodízio)", expanded=True):
+        with st.form("form_cadastro_colaborador"):
+            st.markdown("#### 👤 Dados Identificadores e Lotação")
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                new_nome = st.text_input("Nome Completo / Guerra:", placeholder="Ex: André Silva")
+                new_cargo = st.selectbox("Cargo / Função:", ["Assessor", "Estagiário", "Gerente", "Assessor Especial", "Secretário", "Subsecretário"])
+            with c2:
+                new_setor = st.selectbox("Setor de Lotação:", ["SEAT", "SEXP", "SERCON", "SEMAND", "GAB"])
+                new_nivel = st.selectbox("Nível de Privilégio (RBAC):", ["Operacional", "Gerente", "Raiz"])
+            with c3:
+                new_login = st.text_input("Login de Acesso:", placeholder="Ex: andre.sexp")
+                new_senha = st.text_input("Senha Inicial:", type="password", placeholder="••••••••")
+                
+            st.markdown("#### ⚙️ Aptidão para Rodízio Operacional")
+            c_apt1, c_apt2, _ = st.columns([1, 1, 2])
+            with c_apt1:
+                apt_exp = st.checkbox("Participa da Expedição?", value=True)
+            with c_apt2:
+                apt_rev = st.checkbox("Participa da Revisão?", value=True)
+                
+            if st.form_submit_button("🛡️ Cadastrar e Ativar Colaborador", type="primary"):
+                if new_nome.strip() and new_login.strip() and new_senha.strip():
+                    try:
+                        # 1. Grava na tabela de autenticação (usuarios_acesso)
+                        dados_acesso = {
+                            "login": new_login.strip().lower(),
+                            "senha": new_senha.strip(),
+                            "nome": new_nome.strip(),
+                            "cargo": new_cargo,
+                            "setor": new_setor,
+                            "nivel_acesso": new_nivel,
+                            "ativo": True
+                        }
+                        conn.table("usuarios_acesso").insert(dados_acesso).execute()
+                        
+                        # 2. Grava na tabela de rodízio operacional (equipe)
+                        dados_equipe = {
+                            "nome": new_nome.strip(),
+                            "cargo": new_cargo,
+                            "setor": new_setor,
+                            "expedicao": "Sim" if apt_exp else "Não",
+                            "revisao": "Sim" if apt_rev else "Não",
+                            "ativo": True
+                        }
+                        conn.table("equipe").insert(dados_equipe).execute()
+                        
+                        st.success(f"✨ Colaborador(a) **{new_nome}** cadastrado com sucesso! Login: `{new_login.lower()}`")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"🚨 Erro ao cadastrar colaborador: {e}. Verifique se o login já existe no sistema.")
+                else:
+                    st.warning("⚠️ Os campos Nome, Login e Senha são obrigatórios.")
+
+    st.markdown("---")
+    col_tabela, col_form = st.columns([2, 1.2])
     
     with col_tabela:
-        st.markdown("#### 📋 Quadro de Colaboradores Ativos")
+        st.markdown("#### 📋 Quadro de Colaboradores e Credenciais")
         try:
-            equipe = buscar_todos_paginado("equipe")
-            if equipe:
-                df_eq = pd.DataFrame(equipe)
-                if "nome" in df_eq.columns:
-                    cols_show = [c for c in ["nome", "cargo", "expedicao", "revisao"] if c in df_eq.columns]
-                    st.dataframe(df_eq[cols_show], use_container_width=True, hide_index=True)
+            usuarios = buscar_todos_paginado("usuarios_acesso")
+            if str(usuarios) != "[]" and usuarios:
+                df_usr = pd.DataFrame(usuarios)
+                cols_usr = [c for c in ["id", "nome", "login", "setor", "cargo", "nivel_acesso", "ativo"] if c in df_usr.columns]
+                st.dataframe(df_usr[cols_usr], use_container_width=True, hide_index=True)
+                
+                # Exclusão ou desativação rápida de acesso
+                col_del_u1, col_del_u2 = st.columns([2, 1])
+                with col_del_u1:
+                    usr_del = st.selectbox("Selecione o Login para desativar/remover:", df_usr["login"].tolist(), key="sel_del_usr")
+                with col_del_u2:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    if st.button("🗑️ Excluir Acesso", type="secondary", use_container_width=True):
+                        conn.table("usuarios_acesso").delete().eq("login", usr_del).execute()
+                        conn.table("equipe").delete().eq("nome", df_usr[df_usr["login"] == usr_del]["nome"].values[0]).execute()
+                        st.success(f"Colaborador {usr_del} removido do sistema!")
+                        st.rerun()
             else:
-                st.warning("Tabela de equipe vazia. Utilize a inicialização no conector.")
+                st.info("Nenhum usuário cadastrado além das credenciais iniciais do sistema.")
         except Exception as e:
-            st.error(f"Erro na leitura da equipe: {e}")
+            st.error(f"Erro na leitura dos usuários: {e}")
             
     with col_form:
         with st.container(border=True):
             st.markdown("#### 🏝️ Registro de Ausência / Férias")
+            st.caption("Afastamentos removem o servidor automaticamente do sorteio de distribuição.")
             colab_sel = st.text_input("Nome do Colaborador:", placeholder="Ex: Elaine, André")
             motivo = st.selectbox("Motivo do Afastamento:", ["Férias Regulamentares", "Atestado Médico", "Abono / Licença", "Recesso Institucional"])
             dt_ini = st.date_input("Data de Início:")
@@ -127,6 +188,7 @@ def renderizar_tab_equipes():
                         }
                         conn.table("afastamentos").insert(dados_afast).execute()
                         st.success(f"Afastamento de {colab_sel} registrado com sucesso!")
+                        st.rerun()
                     except Exception as e:
                         st.error(f"Erro ao registrar: {e}")
                 else:
@@ -192,7 +254,6 @@ def renderizar_tab_panoramica():
     """Painel de métricas e acompanhamento global da Corte para o Secretário e Gestores."""
     st.markdown("### 📊 Torre de Controle e Produtividade Institucional")
     
-    # Cards de indicadores em tempo real
     col_m1, col_m2, col_m3, col_m4 = st.columns(4)
     with col_m1:
         with st.container(border=True):
@@ -218,7 +279,7 @@ def run():
     aba1, aba2, aba3, aba4 = st.tabs([
         "📊 Visão Panorâmica", 
         "⚙️ Dicionário de Regras (Motor NIP)", 
-        "👥 Equipe & Afastamentos", 
+        "👥 Equipe & Acessos", 
         "📥 Válvula de Inclusão Avulsa"
     ])
     
