@@ -71,7 +71,7 @@ def renderizar_esteira_sercon():
                     # Botão de progressão de fase
                     if status_atual == "Pendente Análise Contábil":
                         if st.button("🔎 Iniciar Instrução", key=f"btn_inst_{id_reg}_{idx}", type="primary", use_container_width=True):
-                            conn.client.table("pauta_sercon").update({
+                            conn.table("pauta_sercon").update({
                                 "status": "Em Monitoramento de Prazo",
                                 "analista_responsavel": st.session_state.get("usuario_nome", "Analista SERCON")
                             }).eq("id", id_reg).execute()
@@ -80,7 +80,7 @@ def renderizar_esteira_sercon():
                             
                     elif status_atual == "Em Monitoramento de Prazo":
                         if st.button("💰 Emitir Cobrança / Acórdão", key=f"btn_cob_{id_reg}_{idx}", type="primary", use_container_width=True):
-                            conn.client.table("pauta_sercon").update({
+                            conn.table("pauta_sercon").update({
                                 "status": "Aguardando Recolhimento / Cobrança"
                             }).eq("id", id_reg).execute()
                             st.success("Fase avançada para cobrança!")
@@ -88,7 +88,7 @@ def renderizar_esteira_sercon():
                             
                     elif status_atual == "Aguardando Recolhimento / Cobrança":
                         if st.button("✨ Atestar Cumprimento (Arquivar)", key=f"btn_arq_{id_reg}_{idx}", type="primary", use_container_width=True):
-                            conn.client.table("pauta_sercon").update({
+                            conn.table("pauta_sercon").update({
                                 "status": "Concluído - Arquivado",
                                 "data_conclusao": datetime.now().strftime("%d/%m/%Y %H:%M")
                             }).eq("id", id_reg).execute()
@@ -97,7 +97,7 @@ def renderizar_esteira_sercon():
                             
                     # Opção de devoluçao para GAB ou SEAT caso tenha sido falso positivo
                     if st.button("↩️ Devolver (Não é Contas)", key=f"btn_dev_sercon_{id_reg}_{idx}", type="secondary", use_container_width=True):
-                        conn.client.table("pauta_sercon").update({
+                        conn.table("pauta_sercon").update({
                             "status": "Retirado de Pauta",
                             "motivo_gatilho": "Devolvido pela SERCON - Matéria não contábil"
                         }).eq("id", id_reg).execute()
@@ -147,7 +147,7 @@ def renderizar_injecao_sercon():
                             "analista_responsavel": analista.strip() if analista else "Não atribuído",
                             "data_entrada": datetime.now().strftime("%d/%m/%Y %H:%M")
                         }
-                        conn.client.table("pauta_sercon").insert(novo_sercon).execute()
+                        conn.table("pauta_sercon").insert(novo_sercon).execute()
                         st.success(f"Processo {num_proc} catalogado com sucesso na base da SERCON!")
                         st.rerun()
                     except Exception as e:
