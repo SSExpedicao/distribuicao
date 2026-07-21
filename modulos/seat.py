@@ -172,63 +172,59 @@ def varrer_regras_inteligentes(texto):
 # 3. INTERFACE OPERACIONAL — ABA 1: OFICINA NIP (EDIÇÃO & TRIAGEM)
 # ------------------------------------------------------------------------------
 def oficina_nip():
-    """Oficina NIP — Motor de Inteligência Processual com Upload de Documentos."""
-    
-    st.markdown("### 🛠 Oficina NIP — Núcleo de Integração Processual")
-    st.markdown("Faça o upload do documento (PDF, DOCX ou TXT). O Motor NIP identificará automaticamente os trechos que precisam de edição com base nas regras cadastradas.")
-    
+    """Oficina NIP - Motor de Inteligencia Processual com Upload de Documentos."""
+
+    st.markdown("### Oficina NIP - Nucleo de Integracao Processual")
+    st.markdown("Faca o upload do documento (PDF, DOCX ou TXT). O Motor NIP identificara automaticamente os trechos que precisam de edicao com base nas regras cadastradas.")
+
     col1, col2 = st.columns([1, 1])
-    
+
     with col1:
-        st.markdown("#### 📥 Entrada de Documento")
-        
-        # Upload de arquivo
+        st.markdown("#### Entrada de Documento")
+
         arquivo = st.file_uploader(
             "Selecione o documento (PDF, DOCX ou TXT)",
             type=["pdf", "docx", "txt"],
             key="nip_upload"
         )
-        
+
         num_processo = st.text_input(
-            "Nº do Processo / Relator:",<br/>
+            "N do Processo / Relator:",
             placeholder="Ex: 00600-00006383/2026-07-e - GCRR",
             key="nip_processo"
         )
-        
-        processar = st.button("⚡ Processar no Motor NIP", type="primary", use_container_width=True)
-    
+
+        processar = st.button("Processar no Motor NIP", type="primary", use_container_width=True)
+
     with col2:
-        st.markdown("#### 📋 Teleprompter Contínuo (Pronto para o Plenário)")
+        st.markdown("#### Teleprompter Continuo (Pronto para o Plenario)")
         placeholder_resultado = st.empty()
-    
-    if processar:<br/>
+
+    if processar:
         if not arquivo:
-            st.error("❌ Nenhum arquivo selecionado. Faça o upload de um documento primeiro.")
+            st.error("Nenhum arquivo selecionado. Faca o upload de um documento primeiro.")
             return
-        
+
         if not num_processo.strip():
-            st.warning("⚠️ Informe o Nº do Processo / Relator para continuar.")
-        
-        with st.spinner("🔍 Processando documento no Motor NIP..."):<br/>
+            st.warning("Informe o N do Processo / Relator para continuar.")
+
+        with st.spinner("Processando documento no Motor NIP..."):
             try:
-                # 1. Extrair texto do arquivo
                 texto_extraido = extrair_texto_arquivo(arquivo)
-                
+
                 if not texto_extraido:
-                    st.error("❌ Não foi possível extrair texto do documento. Verifique se o arquivo não está protegido ou escaneado (imagem).")
+                    st.error("Nao foi possivel extrair texto do documento. Verifique se o arquivo nao esta protegido ou escaneado (imagem).")
                     return
-                
-                # 2. Buscar regras de palavras-chave
+
                 try:
                     regras = conn.table("regras_palavras_chave").select("*").execute()
                     lista_regras = regras.data if regras.data else []
                 except Exception:
                     lista_regras = []
-                
-                # 3. Identificar trechos com base nas regras
+
                 trechos_encontrados = []
                 texto_lower = texto_extraido.lower()
-                
+
                 for regra in lista_regras:
                     palavra = regra.get("palavra_chave", "").lower()
                     if palavra and palavra in texto_lower:
@@ -238,49 +234,48 @@ def oficina_nip():
                             fim = min(len(texto_extraido), match.end() + 200)
                             trecho = texto_extraido[inicio:fim]
                             trechos_encontrados.append({
-                                "palavra": regra.get("palavra_chave"),<br/>
-                                "categoria": regra.get("categoria"),<br/>
-                                "setor_alvo": regra.get("setor_alvo"),<br/>
-                                "trecho": trecho,<br/>
-                                "inicio": inicio,<br/>
+                                "palavra": regra.get("palavra_chave"),
+                                "categoria": regra.get("categoria"),
+                                "setor_alvo": regra.get("setor_alvo"),
+                                "trecho": trecho,
+                                "inicio": inicio,
                                 "fim": fim
                             })
-                
-                # 4. Armazenar na sessão
+
                 st.session_state.nip_texto_original = texto_extraido
                 st.session_state.nip_trechos = trechos_encontrados
                 st.session_state.nip_processado = True
                 st.session_state.nip_num_processo = num_processo
-                
-                st.success(f"✅ Documento processado! {len(trechos_encontrados)} trechos identificados para edição.")
-                
-            except Exception as e:<br/>
-                st.error(f"❌ Erro ao processar documento: {e}")
+
+                st.success(f"Documento processado! {len(trechos_encontrados)} trechos identificados para edicao.")
+
+            except Exception as e:
+                st.error(f"Erro ao processar documento: {e}")
                 return
-    
+
     if st.session_state.get("nip_processado"):
         texto_original = st.session_state.nip_texto_original
         trechos = st.session_state.nip_trechos
-        
+
         st.markdown("---")
-        st.markdown("### 🔍 Trechos Identificados para Revisão")
-        
+        st.markdown("### Trechos Identificados para Revisao")
+
         if not trechos:
-            st.info("✅ Nenhum trecho com regras de edição foi encontrado. O documento está em conformidade.")
+            st.info("Nenhum trecho com regras de edicao foi encontrado. O documento esta em conformidade.")
             with placeholder_resultado.container():
-                st.markdown("#### 📄 Texto Extraído")
-                st.text_area("Conteúdo do documento:", texto_original, height=400, key="nip_texto_final")<br/>
+                st.markdown("#### Texto Extraido")
+                st.text_area("Conteudo do documento:", texto_original, height=400, key="nip_texto_final")
         else:
-            st.warning(f"⚠️ {len(trechos)} trecho(s) encontrado(s) com base nas regras cadastradas.")
-            
+            st.warning(f"{len(trechos)} trecho(s) encontrado(s) com base nas regras cadastradas.")
+
             texto_editado = texto_original
             edicoes = {}
-            
-            for idx, trecho in enumerate(trechos):<br/>
-                with st.expander(f"📌 [{trecho['categoria']}] Palavra-chave: '{trecho['palavra']}' — Setor: {trecho['setor_alvo']}", expanded=(idx == 0)):<br/>
+
+            for idx, trecho in enumerate(trechos):
+                with st.expander(f"[{trecho['categoria']}] Palavra-chave: '{trecho['palavra']}' - Setor: {trecho['setor_alvo']}", expanded=(idx == 0)):
                     st.markdown("**Trecho original:**")
                     st.code(trecho['trecho'], language="text")
-                    
+
                     edicao = st.text_area(
                         f"Editar trecho #{idx + 1}:",
                         value=trecho['trecho'],
@@ -288,31 +283,30 @@ def oficina_nip():
                         key=f"edit_trecho_{idx}"
                     )
                     edicoes[idx] = edicao
-            
+
             col_salvar, _ = st.columns([1, 3])
-            with col_salvar:<br/>
-                if st.button("💾 Salvar Edições e Gerar Texto Final", type="primary", use_container_width=True):
+            with col_salvar:
+                if st.button("Salvar Edicoes e Gerar Texto Final", type="primary", use_container_width=True):
                     texto_final = texto_original
                     for idx, trecho in enumerate(trechos):
                         texto_final = texto_final.replace(trecho['trecho'], edicoes.get(idx, trecho['trecho']))
-                    
+
                     st.session_state.nip_texto_final = texto_final
-                    st.success("✅ Edições aplicadas com sucesso!")
+                    st.success("Edicoes aplicadas com sucesso!")
                     st.rerun()
-            
-            if "nip_texto_final" in st.session_state:<br/>
+
+            if "nip_texto_final" in st.session_state:
                 with placeholder_resultado.container():
-                    st.markdown("#### 📄 Texto Final Editado")
-                    st.text_area("Conteúdo final:", st.session_state.nip_texto_final, height=400, key="nip_resultado_final")
-                    
+                    st.markdown("#### Texto Final Editado")
+                    st.text_area("Conteudo final:", st.session_state.nip_texto_final, height=400, key="nip_resultado_final")
+
                     st.download_button(
-                        "📥 Baixar Texto Editado (TXT)",
+                        "Baixar Texto Editado (TXT)",
                         data=st.session_state.nip_texto_final,
                         file_name=f"editado_{st.session_state.get('nip_num_processo', 'documento')}.txt",
                         mime="text/plain",
                         use_container_width=True
                     )
-
 # ------------------------------------------------------------------------------
 # 4. INTERFACE OPERACIONAL — ABA 2: DISTRIBUIÇÃO E PAUTA ATIVA
 # ------------------------------------------------------------------------------
