@@ -74,7 +74,7 @@ def renderizar_fila_mandados():
                     # Botão de progressão de fase do mandado
                     if status_atual == "Aguardando Expedição de Mandado":
                         if st.button("📨 Emitir Mandado", key=f"btn_emit_{id_reg}_{idx}", type="primary", use_container_width=True):
-                            conn.client.table("pauta_semand").update({
+                            conn.table("pauta_semand").update({
                                 "status": "Em Cumprimento / Diligência",
                                 "oficial_responsavel": st.session_state.get("usuario_nome", "Analista SEMAND")
                             }).eq("id", id_reg).execute()
@@ -83,7 +83,7 @@ def renderizar_fila_mandados():
                             
                     elif status_atual == "Em Cumprimento / Diligência":
                         if st.button("📫 Registrar Envio / AR", key=f"btn_ar_{id_reg}_{idx}", type="primary", use_container_width=True):
-                            conn.client.table("pauta_semand").update({
+                            conn.table("pauta_semand").update({
                                 "status": "Aguardando Aviso de Recebimento (AR)"
                             }).eq("id", id_reg).execute()
                             st.success("Envio registrado! Aguardando retorno do AR.")
@@ -91,7 +91,7 @@ def renderizar_fila_mandados():
                             
                     elif status_atual == "Aguardando Aviso de Recebimento (AR)":
                         if st.button("✨ Atestar Cumprimento", key=f"btn_cump_{id_reg}_{idx}", type="primary", use_container_width=True):
-                            conn.client.table("pauta_semand").update({
+                            conn.table("pauta_semand").update({
                                 "status": "Cumprido - Arquivado",
                                 "data_conclusao": datetime.now().strftime("%d/%m/%Y %H:%M")
                             }).eq("id", id_reg).execute()
@@ -99,7 +99,7 @@ def renderizar_fila_mandados():
                             st.rerun()
                             
                     if st.button("🚫 Cancelar Mandado", key=f"btn_canc_{id_reg}_{idx}", type="secondary", use_container_width=True):
-                        conn.client.table("pauta_semand").update({
+                        conn.table("pauta_semand").update({
                             "status": "Cancelado / Devolvido",
                             "observacao": "🚫 Cancelado/Devolvido pela SEMAND"
                         }).eq("id", id_reg).execute()
@@ -147,7 +147,7 @@ def renderizar_injecao_semand():
                             "oficial_responsavel": "Não atribuído",
                             "data_entrada": datetime.now().strftime("%d/%m/%Y %H:%M")
                         }
-                        conn.client.table("pauta_semand").insert(novo_mandado).execute()
+                        conn.table("pauta_semand").insert(novo_mandado).execute()
                         st.success(f"Mandado para o processo {num_proc} registrado na SEMAND!")
                         st.rerun()
                     except Exception as e:
