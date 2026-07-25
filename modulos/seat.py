@@ -815,8 +815,125 @@ def _renderizar_card_processo(processo: dict, modo_edicao: bool):
 
         st.markdown("---")
 
+def _renderizar_resumo_carga(modo_edicao: bool, usuario: dict = None):
+    """
+    Renderiza tabela de resumo de carga por colaborador.
+    
+    - Operacionais: veem apenas sua propria linha
+    - Gerente e acima: veem todos os membros da equipe
+    """
+    import pandas as pd
+
+    cargo_usuario = usuario.get("cargo", "operacional") if usuario else "operacional"
+    nome_usuario = usuario.get("nome", "") if usuario else ""
+    filtrar_por_usuario = (cargo_usuario == "operacional" and nome_usuario)
+
+    # Buscar todos os processos
+    todos_processos = db_manager.buscar_todos("pauta_seat")
+
+    # Buscar equipe SEAT
+    equipe = _obter_equipe_seat()
+
+    if not equipe:
+        return
+
+    # Se operacional, filtrar so o proprio nome
+    if filtrar_por_usuario:
+        nome_norm = _normalizar_texto(nome_usuario)
+        equipe_filtrada = [n for n in equipe if _normalizar_texto(n) == nome_norm]
+    else:
+        equipe_filtrada = equipe
+
+    # Calcular carga de cada membro
+    dados_resumo = []
+    for nome in equipe_filtrada:
+        nome_norm = _normalizar_texto(nome)
+
+        para_editar = 0
+        editados = 0
+        para_revisar = 0
+        revisados = 0
+
+        for p in todos_processos:
+            editor_p = _normalizar_texto(p.get("editor", "") or "")
+            revisor_p = _normalizar_texto(p.get("revisor", "") or "")
+            editado_p = bool(p.get("editado", False))
+            revisado_p = bool(p.get("revisado", False))
+
+            if editor_p == nome_norm:
+                if editado_p:
+                    editados += 1
+                else:
+                    para_editar += 1
+
+            if revisor_p == nome_norm:
+                if revisado_p:
+                    revisados += 1
+                else:
+                    para_revisar += 1
+
+        faltam = para_editar + para_revisar
+
+        dados_resumo.append({
+            "Nome": nome,
+            "Para Editar": para_editar,
+            "Editados": editados,
+            "Para Revisar": para_revisar,
+            "Revisados": revisados,
+            "Faltam": faltam,
+        })
+
+    if not dados_resumo:
+        return
+
+    df_resumo = pd.DataFrame(dados_resumo)
+
+    # Totais
+    total_para_editar = df_resumo["Para Editar"].sum()
+    total_editados = df_resumo["Editados"].sum()
+    total_para_revisar = df_resumo["Para Revisar"].sum()
+    total_revisados = df_resumo["Revisados"].sum()
+    total_faltam = df_resumo["Faltam"].sum()
+
+    # Titulo
+    if filtrar_por_usuario:
+        st.markdown(f"### 📊 Meu Resumo")
+    else:
+        st.markdown(f"### 📊 Resumo da Equipe")
+
+    # Tabela
+    st.dataframe(
+        df_resumo,
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Nome": st.column_config.TextColumn("Nome", width="medium"),
+            "Para Editar": st.column_config.NumberColumn("Para Editar", format="%d", width="small"),
+            "Editados": st.column_config.NumberColumn("Editados", format="%d", width="small"),
+            "Para Revisar": st.column_config.NumberColumn("Para Revisar", format="%d", width="small"),
+            "Revisados": st.column_config.NumberColumn("Revisados", format="%d", width="small"),
+            "Faltam": st.column_config.NumberColumn("Faltam", format="%d", width="small"),
+        },
+    )
+
+    # Linha de totais (apenas para gerente e acima)
+    if not filtrar_por_usuario:
+        st.markdown(
+            f"**Totais:** "
+            f"Para Editar: **{total_para_editar}** | "
+            f"Editados: **{total_editados}** | "
+            f"Para Revisar: **{total_para_revisar}** | "
+            f"Revisados: **{total_revisados}** | "
+            f"Faltam: **{total_faltam}**"
+        )
+
+    st.markdown("---")
+
 def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
     """Renderiza a aba de Pauta Ativa com filtros e lista de processos."""
+
+    # Resumo de carga no topo
+    _renderizar_resumo_carga(modo_edicao, usuario)
 
     # Determinar se precisa filtrar por usuario
     cargo_usuario = usuario.get("cargo", "operacional") if usuario else "operacional"
@@ -824,6 +941,7 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
     filtrar_por_usuario = (cargo_usuario == "operacional" and nome_usuario)
 
     col_f1, col_f2, col_f3 = st.columns(3)
+    # ... resto da função permanece igual ...
 
     with col_f1:
         busca = st.text_input(
