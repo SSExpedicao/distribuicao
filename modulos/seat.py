@@ -673,6 +673,60 @@ def _remover_processo(id_processo: int, numero: str):
         st.warning(f"Confirme a remocao do processo {numero} clicando novamente.")
         st.rerun()
 
+def _marcar_editado(id_processo: int, valor: bool):
+    """Marca/desmarca o checkbox de editado e atualiza o status automaticamente."""
+    processo = db_manager.buscar_por_id("pauta_seat", id_processo)
+    if not processo:
+        return
+
+    revisado = processo.get("revisado", False)
+
+    if valor and revisado:
+        novo_status = "encaminhado"
+    elif valor and not revisado:
+        novo_status = "em_revisao"
+    elif not valor:
+        novo_status = "em_edicao"
+    else:
+        novo_status = "em_edicao"
+
+    db_manager.atualizar("pauta_seat", id_processo, {
+        "editado": valor,
+        "status": novo_status,
+    })
+    st.rerun()
+
+def _marcar_revisado(id_processo: int, valor: bool):
+    """Marca/desmarca o checkbox de revisado e atualiza o status automaticamente."""
+    processo = db_manager.buscar_por_id("pauta_seat", id_processo)
+    if not processo:
+        return
+
+    editado = processo.get("editado", False)
+
+    if valor and editado:
+        novo_status = "encaminhado"
+    elif valor and not editado:
+        novo_status = "encaminhado"
+    elif not valor and editado:
+        novo_status = "em_revisao"
+    else:
+        novo_status = "em_edicao"
+
+    db_manager.atualizar("pauta_seat", id_processo, {
+        "revisado": valor,
+        "status": novo_status,
+    })
+    st.rerun()
+
+def _salvar_comentario(id_processo: int, comentario: str):
+    """Salva o comentario de um processo."""
+    db_manager.atualizar("pauta_seat", id_processo, {
+        "comentario": comentario.strip(),
+    })
+    st.success("Comentario salvo.")
+    st.rerun()
+
 def _renderizar_card_processo(processo: dict, modo_edicao: bool):
     """Renderiza um card individual de processo na pauta ativa."""
     id_proc = processo.get("id")
@@ -681,24 +735,22 @@ def _renderizar_card_processo(processo: dict, modo_edicao: bool):
     dia_sessao = _formatar_data_curta(processo.get("dia_sessao"))
     tipo_sessao = processo.get("tipo_sessao", "") or "-"
     relator = processo.get("relator", "") or "-"
-    status = processo.get("status", "inclusao")
     editor = processo.get("editor", "") or "-"
     revisor = processo.get("revisor", "") or "-"
+    editado = processo.get("editado", False)
+    revisado = processo.get("revisado", False)
+    comentario = processo.get("comentario", "") or ""
     data_entrada = _formatar_data(processo.get("data_entrada"))
-    data_conclusao = _formatar_data(processo.get("data_conclusao"))
-    observacoes = processo.get("observacoes", "") or ""
-
-    info_status = STATUS_FLOW.get(status, STATUS_FLOW["inclusao"])
 
     with st.container():
-        col_num, col_status = st.columns([3, 2])
-
-        with col_num:
+        # Linha 1: Processo + Relator
+        col_proc, col_rel = st.columns([3, 2])
+        with col_proc:
             st.markdown(f"### {numero}")
+        with col_rel:
+            st.markdown(f"**Relator:** {relator}")
 
-        with col_status:
-            st.markdown(f"**Status:** {info_status['label']}")
-
+        # Linha 2: Sessao + Tipo + Data
         col1, col2, col3 = st.columns(3)
         with col1:
             st.markdown(f"**Sessao:** {numero_sessao}")
@@ -707,39 +759,60 @@ def _renderizar_card_processo(processo: dict, modo_edicao: bool):
         with col3:
             st.markdown(f"**Data:** {dia_sessao}")
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.markdown(f"**Relator:** {relator}")
-        with col2:
-            st.markdown(f"**Editor:** {editor}")
-        with col3:
-            st.markdown(f"**Revisor:** {revisor}")
-
+        # Linha 3: Editor + Revisor
         col1, col2 = st.columns(2)
         with col1:
-            st.caption(f"Entrada: {data_entrada}")
+            st.markdown(f"**Editor:** {editor}")
         with col2:
-            st.caption(f"Conclusao: {data_conclusao}")
+            st.markdown(f"**Revisor:** {revisor}")
 
-        if observacoes:
-            st.markdown(f"*Obs: {observacoes}*")
-
+        # Linha 4: Checkboxes Editado / Revisado
         if modo_edicao:
-            col_btn1, col_btn2, col_btn3 = st.columns(3)
+            col_chk1, col_chk2 = st.columns(2)
+            with col_chk1:
+                novo_editado = st.checkbox(
+                    "Editado", value=editado, key=f"chk_editado_{id_proc}"
+                )
+                if novo_editado != editado:
+                    _marcar_editado(id_proc, novo_editado)
+            with col_chk2:
+                novo_revisado = st.checkbox(
+                    "Revisado", value=revisado, key=f"chk_revisado_{id_proc}"
+                )
+                if novo_revisado != revisado:
+                    _marcar_revisado(id_proc, novo_revisado)
+        else:
+            col_chk1, col_chk2 = st.columns(2)
+            with col_chk1:
+                st.markdown(f"{'☑' if editado else '☐'} Editado")
+            with col_chk2:
+                st.markdown(f"{'☑' if revisado else '☐'} Revisado")
 
-            with col_btn1:
-                if info_status["proximo"]:
-                    if st.button(info_status["acao_proximo"], key=f"avancar_{id_proc}"):
-                        _avancar_status(id_proc, status)
+        # Linha 5: Comentario (caixa de texto livre)
+        if modo_edicao:
+            novo_comentario = st.text_area(
+                "Comentario",
+                value=comentario,
+                placeholder="Deixe um comentario sobre o processo...",
+                height=60,
+                key=f"comentario_{id_proc}",
+            )
+            if st.button("Salvar Comentario", key=f"btn_comentario_{id_proc}"):
+                if novo_comentario.strip() != comentario:
+                    _salvar_comentario(id_proc, novo_comentario)
+        else:
+            if comentario:
+                st.markdown(f"**Comentario:** {comentario}")
+            else:
+                st.caption("Sem comentario.")
 
-            with col_btn2:
-                if status != "inclusao":
-                    if st.button("Voltar Etapa", key=f"voltar_{id_proc}"):
-                        _voltar_status(id_proc, status)
+        # Rodape
+        st.caption(f"Entrada: {data_entrada}")
 
-            with col_btn3:
-                if st.button("Remover", key=f"remover_{id_proc}"):
-                    _remover_processo(id_proc, numero)
+        # Botao de remover
+        if modo_edicao:
+            if st.button("Remover", key=f"remover_{id_proc}"):
+                _remover_processo(id_proc, numero)
 
         st.markdown("---")
 
@@ -955,6 +1028,165 @@ def _renderizar_distribuicao(modo_edicao: bool):
                         st.warning("Nenhum processo foi distribuido. Verifique as condicoes.")
 
     st.markdown("---")
+
+    # --- SECAO 2: EDITAR DISTRIBUICAO ---
+    st.markdown("### Editar Distribuicao")
+
+    if not sessoes_distribuidas:
+        st.info("Nao ha processos distribuidos para editar.")
+    else:
+        sessao_editar = st.selectbox(
+            "Selecione a sessao para editar",
+            options=list(sessoes_distribuidas.keys()),
+            key="sel_sessao_editar",
+        )
+
+        processos_distribuidos = sessoes_distribuidas[sessao_editar]
+
+        disponiveis = _obter_equipe_seat()
+
+        if not disponiveis:
+            st.warning("Nao ha membros da equipe cadastrados.")
+        else:
+            if PANDAS_OK and modo_edicao:
+                # Montar DataFrame com os campos atualizados
+                df_dados = []
+                for p in processos_distribuidos:
+                    df_dados.append({
+                        "id": p.get("id"),
+                        "processo_numero": p.get("processo_numero", ""),
+                        "relator": p.get("relator", "") or "",
+                        "editor": p.get("editor", "") or "",
+                        "revisor": p.get("revisor", "") or "",
+                        "editado": bool(p.get("editado", False)),
+                        "revisado": bool(p.get("revisado", False)),
+                        "comentario": p.get("comentario", "") or "",
+                    })
+
+                df = pd.DataFrame(df_dados)
+
+                # Data editor com colunas atualizadas
+                edited_df = st.data_editor(
+                    df,
+                    column_config={
+                        "id": None,
+                        "processo_numero": st.column_config.TextColumn("Processo", disabled=True),
+                        "relator": st.column_config.TextColumn("Relator", disabled=True),
+                        "editor": st.column_config.SelectboxColumn("Editor", options=disponiveis, required=True),
+                        "revisor": st.column_config.SelectboxColumn("Revisor", options=disponiveis, required=True),
+                        "editado": st.column_config.CheckboxColumn("Editado", default=False),
+                        "revisado": st.column_config.CheckboxColumn("Revisado", default=False),
+                        "comentario": st.column_config.TextColumn("Comentario", width="medium"),
+                    },
+                    hide_index=True,
+                    use_container_width=True,
+                    key="editor_distribuicao_seat",
+                )
+
+                # Botao para salvar alteracoes
+                if st.button("Salvar Alteracoes", key="btn_salvar_distribuicao"):
+                    erros_validacao = []
+                    salvos = 0
+
+                    for _, row in edited_df.iterrows():
+                        editor_atual = row["editor"]
+                        revisor_atual = row["revisor"]
+
+                        # Validar editor != revisor
+                        if editor_atual == revisor_atual and editor_atual:
+                            erros_validacao.append(
+                                f"{row['processo_numero']}: editor e revisor nao podem ser a mesma pessoa."
+                            )
+                            continue
+
+                        # Buscar valor original
+                        original = next((p for p in processos_distribuidos if p.get("id") == row["id"]), None)
+                        if not original:
+                            continue
+
+                        # Detectar mudancas campo por campo
+                        mudancas = {}
+
+                        if (original.get("editor") or "") != editor_atual:
+                            mudancas["editor"] = editor_atual if editor_atual else None
+
+                        if (original.get("revisor") or "") != revisor_atual:
+                            mudancas["revisor"] = revisor_atual if revisor_atual else None
+
+                        editado_original = bool(original.get("editado", False))
+                        editado_novo = bool(row["editado"])
+                        if editado_original != editado_novo:
+                            mudancas["editado"] = editado_novo
+
+                        revisado_original = bool(original.get("revisado", False))
+                        revisado_novo = bool(row["revisado"])
+                        if revisado_original != revisado_novo:
+                            mudancas["revisado"] = revisado_novo
+
+                        comentario_original = original.get("comentario", "") or ""
+                        comentario_novo = row["comentario"] or ""
+                        if comentario_original != comentario_novo:
+                            mudancas["comentario"] = comentario_novo.strip()
+
+                        # Recalcular status automaticamente baseado nos checkboxes
+                        if "editado" in mudancas or "revisado" in mudancas:
+                            editado_val = mudancas.get("editado", editado_original)
+                            revisado_val = mudancas.get("revisado", revisado_original)
+
+                            if revisado_val and editado_val:
+                                mudancas["status"] = "encaminhado"
+                            elif editado_val and not revisado_val:
+                                mudancas["status"] = "em_revisao"
+                            elif not editado_val and not revisado_val:
+                                mudancas["status"] = "em_edicao"
+                            elif revisado_val and not editado_val:
+                                mudancas["status"] = "encaminhado"
+
+                        # Salvar se houve mudancas
+                        if mudancas:
+                            resultado = db_manager.atualizar("pauta_seat", row["id"], mudancas)
+                            if resultado:
+                                salvos += 1
+
+                    # Feedback
+                    if erros_validacao:
+                        for erro in erros_validacao:
+                            st.error(erro)
+
+                    if salvos > 0:
+                        st.success(f"{salvos} alteracao(oes) salva(s) com sucesso!")
+                        st.rerun()
+                    elif not erros_validacao:
+                        st.info("Nenhuma alteracao detectada.")
+
+            elif PANDAS_OK:
+                # Modo visualizacao: tabela estatica com as novas colunas
+                df_dados = []
+                for p in processos_distribuidos:
+                    df_dados.append({
+                        "Processo": p.get("processo_numero", ""),
+                        "Relator": p.get("relator", "") or "-",
+                        "Editor": p.get("editor", "") or "-",
+                        "Revisor": p.get("revisor", "") or "-",
+                        "Editado": "Sim" if p.get("editado", False) else "Nao",
+                        "Revisado": "Sim" if p.get("revisado", False) else "Nao",
+                        "Comentario": p.get("comentario", "") or "-",
+                    })
+                df = pd.DataFrame(df_dados)
+                st.dataframe(df, hide_index=True, use_container_width=True)
+
+            else:
+                # Fallback sem pandas
+                for p in processos_distribuidos:
+                    st.write(
+                        f"- {p.get('processo_numero', '')} | "
+                        f"Relator: {p.get('relator', '-') or '-'} | "
+                        f"Editor: {p.get('editor', '-') or '-'} | "
+                        f"Revisor: {p.get('revisor', '-') or '-'} | "
+                        f"Editado: {'Sim' if p.get('editado') else 'Nao'} | "
+                        f"Revisado: {'Sim' if p.get('revisado') else 'Nao'} | "
+                        f"Comentario: {p.get('comentario', '') or '-'}"
+                    )
 
     # --- SECAO 2: EDITAR DISTRIBUICAO ---
     st.markdown("### Editar Distribuicao")
