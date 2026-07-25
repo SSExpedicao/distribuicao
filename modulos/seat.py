@@ -730,8 +730,10 @@ def renderizar_sidebar(usuario: dict, modo_edicao: bool = False):
     """
     Renderiza tabelas de carga na barra lateral.
     
+    - Filtra apenas as sessoes mais recentes de cada tipo (Ordinaria, Reservada, Administrativa, Ordinaria Virtual)
+    - Mostra apenas membros que participaram da distribuicao (tem pelo menos 1 processo atribuido)
     - Operacionais: veem apenas seus proprios dados
-    - Gerente e acima: veem todos os membros
+    - Gerente e acima: veem todos os membros que participaram
     """
     import pandas as pd
 
@@ -740,17 +742,74 @@ def renderizar_sidebar(usuario: dict, modo_edicao: bool = False):
     filtrar_por_usuario = (cargo_usuario == "operacional" and nome_usuario)
 
     todos_processos = db_manager.buscar_todos("pauta_seat")
-    equipe = _obter_equipe_seat()
 
-    if not equipe:
+    if not todos_processos:
         return
 
+    # Tipos de sessao que queremos filtrar (exclui Urgente)
+    tipos_relevantes = ["Ordinaria", "Reservada", "Administrativa", "Ordinaria Virtual"]
+
+    # Encontrar a data mais recente de cada tipo de sessao
+    datas_recentes = {}
+    for p in todos_processos:
+        tipo = p.get("tipo_sessao", "")
+        dia = p.get("dia_sessao")
+        if not tipo or not dia:
+            continue
+        if tipo not in tipos_relevantes:
+            continue
+        dia_str = str(dia)[:10]  # Pegar apenas YYYY-MM-DD
+        if tipo not in datas_recentes or dia_str > datas_recentes[tipo]:
+            datas_recentes[tipo] = dia_str
+
+    if not datas_recentes:
+        return
+
+    # Filtrar processos apenas das sessoes mais recentes de cada tipo
+    processos_recentes = []
+    for p in todos_processos:
+        tipo = p.get("tipo_sessao", "")
+        dia = p.get("dia_sessao")
+        if not tipo or not dia:
+            continue
+        dia_str = str(dia)[:10]
+        if tipo in datas_recentes and dia_str == datas_recentes[tipo]:
+            processos_recentes.append(p)
+
+    if not processos_recentes:
+        return
+
+    # Descobrir quem participou da distribuicao (tem editor ou revisor preenchido)
+    nomes_participantes = set()
+    for p in processos_recentes:
+        editor = (p.get("editor") or "").strip()
+        revisor = (p.get("revisor") or "").strip()
+        if editor:
+            nomes_participantes.add(_normalizar_texto(editor))
+        if revisor:
+            nomes_participantes.add(_normalizar_texto(revisor))
+
+    if not nomes_participantes:
+        return
+
+    # Buscar equipe SEAT e filtrar apenas os que participaram
+    equipe = _obter_equipe_seat()
+    equipe_participante = []
+    for nome in equipe:
+        if _normalizar_texto(nome) in nomes_participantes:
+            equipe_participante.append(nome)
+
+    if not equipe_participante:
+        return
+
+    # Se operacional, filtrar so o proprio nome
     if filtrar_por_usuario:
         nome_norm = _normalizar_texto(nome_usuario)
-        equipe_filtrada = [n for n in equipe if _normalizar_texto(n) == nome_norm]
+        equipe_filtrada = [n for n in equipe_participante if _normalizar_texto(n) == nome_norm]
     else:
-        equipe_filtrada = equipe
+        equipe_filtrada = equipe_participante
 
+    # Calcular carga de cada membro (apenas dos processos recentes)
     dados_edicao = []
     dados_revisao = []
 
@@ -762,7 +821,7 @@ def renderizar_sidebar(usuario: dict, modo_edicao: bool = False):
         qtd_revisar = 0
         faltam_revisar = 0
 
-        for p in todos_processos:
+        for p in processos_recentes:
             editor_p = _normalizar_texto(p.get("editor", "") or "")
             revisor_p = _normalizar_texto(p.get("revisor", "") or "")
             editado_p = bool(p.get("editado", False))
@@ -792,10 +851,12 @@ def renderizar_sidebar(usuario: dict, modo_edicao: bool = False):
         df_ed = pd.concat([df_ed, pd.DataFrame([{"Resp.": "Total", "Qtd": df_ed["Qtd"].sum(), "Faltam": df_ed["Faltam"].sum()}])], ignore_index=True)
         df_rev = pd.concat([df_rev, pd.DataFrame([{"Resp.": "Total", "Qtd": df_rev["Qtd"].sum(), "Faltam": df_rev["Faltam"].sum()}])], ignore_index=True)
 
-    st.markdown("**Edicao**")
+    # Titulo indicando quais sessoes estao sendo exibidas
+    tipos_presentes = sorted(datas_recentes.keys())
+    st.markdown(f"**Edicao** ({', '.join(tipos_presentes)})")
     st.dataframe(df_ed, hide_index=True, use_container_width=True, height=len(df_ed) * 35 + 40)
 
-    st.markdown("**Revisao**")
+    st.markdown(f"**Revisao** ({', '.join(tipos_presentes)})")
     st.dataframe(df_rev, hide_index=True, use_container_width=True, height=len(df_rev) * 35 + 40)
 
 def _renderizar_card_processo(processo: dict, modo_edicao: bool):
