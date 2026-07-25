@@ -730,8 +730,9 @@ def renderizar_sidebar(usuario: dict, modo_edicao: bool = False):
     """
     Renderiza tabelas de carga na barra lateral.
     
-    - Filtra apenas as sessoes mais recentes de cada tipo (Ordinaria, Reservada, Administrativa, Ordinaria Virtual)
-    - Mostra apenas membros que participaram da distribuicao (tem pelo menos 1 processo atribuido)
+    - Filtra apenas as sessoes mais recentes de cada tipo
+    - Exclui Urgente (rito diferente)
+    - Mostra apenas membros que participaram da distribuicao
     - Operacionais: veem apenas seus proprios dados
     - Gerente e acima: veem todos os membros que participaram
     """
@@ -746,21 +747,22 @@ def renderizar_sidebar(usuario: dict, modo_edicao: bool = False):
     if not todos_processos:
         return
 
-    # Tipos de sessao que queremos filtrar (exclui Urgente)
-    tipos_relevantes = ["Ordinaria", "Reservada", "Administrativa", "Ordinaria Virtual"]
-
     # Encontrar a data mais recente de cada tipo de sessao
+    # Excluir Urgente (rito diferente)
     datas_recentes = {}
     for p in todos_processos:
         tipo = p.get("tipo_sessao", "")
         dia = p.get("dia_sessao")
         if not tipo or not dia:
             continue
-        if tipo not in tipos_relevantes:
+        # Excluir urgentes
+        if "urgente" in _normalizar_texto(tipo):
             continue
-        dia_str = str(dia)[:10]  # Pegar apenas YYYY-MM-DD
-        if tipo not in datas_recentes or dia_str > datas_recentes[tipo]:
-            datas_recentes[tipo] = dia_str
+        dia_str = str(dia)[:10]
+        # Usar o tipo normalizado como chave para agrupar variacoes de escrita
+        tipo_key = _normalizar_texto(tipo)
+        if tipo_key not in datas_recentes or dia_str > datas_recentes[tipo_key]:
+            datas_recentes[tipo_key] = dia_str
 
     if not datas_recentes:
         return
@@ -773,7 +775,8 @@ def renderizar_sidebar(usuario: dict, modo_edicao: bool = False):
         if not tipo or not dia:
             continue
         dia_str = str(dia)[:10]
-        if tipo in datas_recentes and dia_str == datas_recentes[tipo]:
+        tipo_key = _normalizar_texto(tipo)
+        if tipo_key in datas_recentes and dia_str == datas_recentes[tipo_key]:
             processos_recentes.append(p)
 
     if not processos_recentes:
@@ -851,12 +854,10 @@ def renderizar_sidebar(usuario: dict, modo_edicao: bool = False):
         df_ed = pd.concat([df_ed, pd.DataFrame([{"Resp.": "Total", "Qtd": df_ed["Qtd"].sum(), "Faltam": df_ed["Faltam"].sum()}])], ignore_index=True)
         df_rev = pd.concat([df_rev, pd.DataFrame([{"Resp.": "Total", "Qtd": df_rev["Qtd"].sum(), "Faltam": df_rev["Faltam"].sum()}])], ignore_index=True)
 
-    # Titulo indicando quais sessoes estao sendo exibidas
-    tipos_presentes = sorted(datas_recentes.keys())
-    st.markdown(f"**Edicao** ({', '.join(tipos_presentes)})")
+    st.markdown("**Edicao**")
     st.dataframe(df_ed, hide_index=True, use_container_width=True, height=len(df_ed) * 35 + 40)
 
-    st.markdown(f"**Revisao** ({', '.join(tipos_presentes)})")
+    st.markdown("**Revisao**")
     st.dataframe(df_rev, hide_index=True, use_container_width=True, height=len(df_rev) * 35 + 40)
 
 def _renderizar_card_processo(processo: dict, modo_edicao: bool):
