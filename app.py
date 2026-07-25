@@ -1,248 +1,310 @@
+"""
+app.py
+Roteador Central do Hub SS - Secretaria das Sessoes - TCDF
+
+Arquitetura: Python + Streamlit + Supabase
+Funcao: Porta de entrada do sistema. Autentica usuarios, aplica RBAC
+        em 3 niveis (Raiz, Gerente, Operacional) e roteia para o
+        modulo correspondente na pasta modulos/.
+
+Principios:
+- Nao conhece logica de negocio (Motor NIP, pautas, distribuicao)
+- Apenas autentica, verifica permissoes e direciona
+- Carregamento dinamico de modulos (importlib)
+- Graceful degradation: se um modulo falha, o resto continua funcionando
+"""
+
 import streamlit as st
 import importlib
-from db_manager import conn, get_db_connection
+from datetime import datetime
 
-# ------------------------------------------------------------------------------
-# 1. CONFIGURAÇÃO DA PÁGINA E IDENTIDADE VISUAL DO TCDF
-# ------------------------------------------------------------------------------
+# ============================================================
+# CONFIGURACAO DA PAGINA (deve ser o primeiro comando Streamlit)
+# ============================================================
 st.set_page_config(
-    page_title="Hub SS - Tribunal de Contas do DF",
-    page_icon="🏛️",
+    page_title="Hub SS - TCDF",
+    page_icon="⚖️",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# Estilo CSS Institucional Limpo e Moderno
-st.markdown("""
-    <style>
-    .main-header {
-        font-size: 28px;
-        font-weight: bold;
-        color: #1A365D;
-        margin-bottom: 0px;
-    }
-    .sub-header {
-        font-size: 14px;
-        color: #4A5568;
-        margin-top: 0px;
-        margin-bottom: 20px;
-        border-bottom: 2px solid #E2E8F0;
-        padding-bottom: 10px;
-    }
-    .stButton>button {
-        width: 100%;
-        border-radius: 6px;
-        font-weight: 600;
-    }
-    .box-boas-vindas {
-        background-color: #F7FAFC;
-        border-left: 4px solid #2B6CB0;
-        padding: 15px;
-        border-radius: 4px;
-        margin-bottom: 20px;
-    }
-    </style>
-""", unsafe_allow_html=True)
+# ============================================================
+# IMPORTACAO DO GERENCIADOR DE BANCO
+# ============================================================
+import db_manager
 
-# ------------------------------------------------------------------------------
-# 2. INICIALIZAÇÃO DE ESTADO DA SESSÃO (MEMÓRIA DO NAVEGADOR)
-# ------------------------------------------------------------------------------
-if "logado" not in st.session_state:
-    st.session_state.logado = False
-if "usuario_nome" not in st.session_state:
-    st.session_state.usuario_nome = ""
-if "usuario_cargo" not in st.session_state:
-    st.session_state.usuario_cargo = ""
-if "usuario_setor" not in st.session_state:
-    st.session_state.usuario_setor = ""
-if "nivel_acesso" not in st.session_state:
-    st.session_state.nivel_acesso = ""  # "Raiz", "Gerente", "Operacional"
-if "modulo_ativo" not in st.session_state:
-    st.session_state.modulo_ativo = "gab"
-
-# ------------------------------------------------------------------------------
-# 3. ROTINA DE AUTO-SEMEADURA DE SEGURANÇA (GARANTIA DE ACESSO INICIAL)
-# ------------------------------------------------------------------------------
-def garantir_tabela_usuarios():
-    """Verifica se a tabela de usuários existe e popula com a hierarquia inicial do TCDF."""
+# ============================================================
+# INICIALIZACAO DO BANCO (semeadura automatica)
+# ============================================================
+def inicializar_banco():
+    """
+    Garante que o banco tenha usuarios iniciais e regras padrao.
+    Executado uma vez por sessao.
+    Seguro: se ja existirem registros, nao faz nada.
+    """
     try:
-        res = conn.table("usuarios_acesso").select("login").limit(1).execute()
-        if not res.data:
-            usuarios_iniciais = [
-                {"login": "secretario", "senha": "123", "nome": "Secretário de Sessões", "cargo": "Secretário", "setor": "GAB", "nivel_acesso": "Raiz"},
-                {"login": "subsecretario", "senha": "123", "nome": "Subsecretário", "cargo": "Subsecretário", "setor": "GAB", "nivel_acesso": "Raiz"},
-                {"login": "assessor.especial", "senha": "123", "nome": "Assessor Especial", "cargo": "Assessor Especial", "setor": "GAB", "nivel_acesso": "Raiz"},
-                {"login": "gerente.seat", "senha": "123", "nome": "Gestor SEAT", "cargo": "Gerente", "setor": "SEAT", "nivel_acesso": "Gerente"},
-                {"login": "gerente.sexp", "senha": "123", "nome": "Gestor SEXP", "cargo": "Gerente", "setor": "SEXP", "nivel_acesso": "Gerente"},
-                {"login": "gerente.sercon", "senha": "123", "nome": "Gestor SERCON", "cargo": "Gerente", "setor": "SERCON", "nivel_acesso": "Gerente"},
-                {"login": "gerente.semand", "senha": "123", "nome": "Gestor SEMAND", "cargo": "Gerente", "setor": "SEMAND", "nivel_acesso": "Gerente"},
-                {"login": "elaine.seat", "senha": "123", "nome": "Elaine", "cargo": "Assessor", "setor": "SEAT", "nivel_acesso": "Operacional"},
-                {"login": "andre.sexp", "senha": "123", "nome": "André", "cargo": "Assessor", "setor": "SEXP", "nivel_acesso": "Operacional"}
-            ]
-            conn.table("usuarios_acesso").insert(usuarios_iniciais).execute()
+        db_manager.semear_usuarios_iniciais()
+        db_manager.semear_regras_padrao()
     except Exception as e:
-        # Se a tabela não existir no Supabase, avisa o administrador silenciosamente
-        pass
+        st.error(f"Erro ao inicializar banco: {e}")
 
-# Executa a checagem de segurança em segundo plano
-garantir_tabela_usuarios()
+# ============================================================
+# DEFINICAO DE PERMISSOES POR CARGO (RBAC)
+# ============================================================
 
-# ------------------------------------------------------------------------------
-# 4. MOTOR DE AUTENTICAÇÃO E LOGOUT
-# ------------------------------------------------------------------------------
-def autenticar(login_input, senha_input):
-    """Consulta as credenciais no Supabase e estabelece o nível de privilégio."""
-    try:
-        res = conn.table("usuarios_acesso").select("*").eq("login", login_input.strip()).eq("senha", senha_input.strip()).execute()
-        if res.data and len(res.data) > 0:
-            user = res.data[0]
-            st.session_state.logado = True
-            st.session_state.usuario_nome = user["nome"]
-            st.session_state.usuario_cargo = user["cargo"]
-            st.session_state.usuario_setor = user["setor"]
-            st.session_state.nivel_acesso = user["nivel_acesso"]
-            
-            # Roteamento padrão no login: Raiz vai pro GAB, Gerente/Operacional vai pro seu setor
-            if user["nivel_acesso"] == "Raiz":
-                st.session_state.modulo_ativo = "gab"
-            else:
-                st.session_state.modulo_ativo = user["setor"].lower()
-            st.rerun()
-        else:
-            st.error("🚨 Credenciais inválidas. Verifique seu login e senha.")
-    except Exception as e:
-        st.error(f"Erro de comunicação no login: {e}. Verifique se a tabela 'usuarios_acesso' foi criada no Supabase.")
+# Modulos disponiveis no sistema (chave = nome do arquivo em modulos/)
+MODULOS_SISTEMA = {
+    "SEAT": {
+        "arquivo": "seat",
+        "descricao": "Edicao e Triagem",
+        "icone": "📝",
+    },
+    "SEXP": {
+        "arquivo": "sexp",
+        "descricao": "Expedicao (S.A.D.E.)",
+        "icone": "📤",
+    },
+    "SERCON": {
+        "arquivo": "sercon",
+        "descricao": "Contas, Acordaos e Cobrancas",
+        "icone": "💰",
+    },
+    "SEMAND": {
+        "arquivo": "semand",
+        "descricao": "Mandados e Diligencias",
+        "icone": "📋",
+    },
+    "GAB": {
+        "arquivo": "gab",
+        "descricao": "Torre de Controle (Gabinete)",
+        "icone": "🏛️",
+    },
+}
 
-def fazer_logout():
-    """Limpa a memória da sessão e encerra o acesso com segurança."""
-    st.session_state.logado = False
-    st.session_state.usuario_nome = ""
-    st.session_state.usuario_cargo = ""
-    st.session_state.usuario_setor = ""
-    st.session_state.nivel_acesso = ""
-    st.rerun()
+def obter_modulos_permitidos(cargo: str, setor: str) -> list:
+    """
+    Define quais modulos o usuario pode ver na barra lateral,
+    baseado no cargo e setor.
 
-# ------------------------------------------------------------------------------
-# 5. TELA DE LOGIN (EXIBIDA APENAS SE NÃO ESTIVER AUTENTICADO)
-# ------------------------------------------------------------------------------
-if not st.session_state.logado:
+    RBAC em 3 niveis:
+    - Raiz: ve todos os modulos
+    - Gerente: ve seu modulo de lotacao + GAB (como espectador)
+    - Operacional: ve apenas seu modulo de lotacao
+    """
+    if cargo == "raiz":
+        return ["SEAT", "SEXP", "SERCON", "SEMAND", "GAB"]
+
+    elif cargo == "gerente":
+        # Gerente ve seu setor + GAB
+        modulos = [setor] if setor in MODULOS_SISTEMA else []
+        modulos.append("GAB")
+        return modulos
+
+    else:  # operacional
+        return [setor] if setor in MODULOS_SISTEMA else []
+
+# ============================================================
+# TELA DE LOGIN
+# ============================================================
+def tela_login():
+    """
+    Renderiza a tela de login.
+    Se autenticado, guarda dados do usuario em session_state.
+    """
+    st.markdown("## ⚖️ Hub SS - Secretaria das Sessoes")
+    st.markdown("### Tribunal de Contas do Distrito Federal")
+    st.markdown("---")
+
     col1, col2, col3 = st.columns([1, 2, 1])
+
     with col2:
-        st.markdown("<div style='text-align: center; margin-top: 50px;'>", unsafe_allow_html=True)
-        st.markdown("### 🏛️ TRIBUNAL DE CONTAS DO DISTRITO FEDERAL")
-        st.markdown("#### **HUB SS — Sistema Integrado da Secretaria de Sessões**")
-        st.markdown("</div>", unsafe_allow_html=True)
-        
+        st.markdown("#### 🔐 Acesso ao Sistema")
+
         with st.form("form_login"):
-            st.markdown("🔒 **Acesso Restrito ao Pessoal Autorizado**")
-            login_user = st.text_input("Usuário de Acesso (Login):", placeholder="Ex: secretario, gerente.seat, elaine.seat")
-            senha_user = st.text_input("Senha de Segurança:", type="password", placeholder="••••••••")
-            submit_login = st.form_submit_button("🛡️ Entrar no Sistema", type="primary")
-            
-            if submit_login:
-                if login_user and senha_user:
-                    autenticar(login_user, senha_user)
+            email = st.text_input("E-mail", placeholder="seu.email@tcdf.gov.br")
+            senha = st.text_input("Senha", type="password", placeholder="Digite sua senha")
+            submit = st.form_submit_button("Entrar", use_container_width=True)
+
+            if submit:
+                if not email or not senha:
+                    st.warning("Preencha e-mail e senha.")
+                    return False
+
+                usuario = db_manager.autenticar_usuario(email.strip(), senha.strip())
+
+                if usuario:
+                    st.session_state["usuario"] = usuario
+                    st.session_state["logado"] = True
+                    st.session_state["login_time"] = datetime.now()
+                    st.rerun()
                 else:
-                    st.warning("Por favor, preencha todos os campos para continuar.")
-        
-        with st.expander("ℹ️ Informações sobre Credenciais Iniciais (Ambiente de Homologação)"):
-            st.markdown("""
-            **Logins pré-configurados para testes:**
-            * 👑 **Nível Raiz:** `secretario` | Senha: `123`
-            * 🛡️ **Nível Gerente SEAT:** `gerente.seat` | Senha: `123`
-            * 🛡️ **Nível Gerente SEXP:** `gerente.sexp` | Senha: `123`
-            * 👤 **Nível Operacional:** `elaine.seat` ou `andre.sexp` | Senha: `123`
-            """)
-    st.stop()
+                    st.error("E-mail ou senha incorretos. Verifique suas credenciais.")
+                    return False
 
-# ------------------------------------------------------------------------------
-# 6. BARRA LATERAL DE NAVEGAÇÃO INTELIGENTE (PÓS-LOGIN)
-# ------------------------------------------------------------------------------
-with st.sidebar:
-    st.markdown("### 🏛️ **HUB SS - TCDF**")
-    st.markdown(f"**Colaborador(a):** {st.session_state.usuario_nome}")
-    st.markdown(f"**Cargo:** {st.session_state.usuario_cargo} | **Setor:** `{st.session_state.usuario_setor}`")
-    st.markdown(f"**Privilégio:** 🔐 `{st.session_state.nivel_acesso}`")
-    st.markdown("---")
-    
-    st.markdown("#### 🧭 NAVEGAÇÃO")
-    
-    # OPÇÃO 1: NÍVEL RAIZ (Acesso total a todos os andares e painéis)
-    if st.session_state.nivel_acesso == "Raiz":
-        if st.button("📊 GAB - Administração Geral", type="primary" if st.session_state.modulo_ativo == "gab" else "secondary"):
-            st.session_state.modulo_ativo = "gab"
-            st.rerun()
-        if st.button("📝 SEAT - Edição e Triagem", type="primary" if st.session_state.modulo_ativo == "seat" else "secondary"):
-            st.session_state.modulo_ativo = "seat"
-            st.rerun()
-        if st.button("📬 SEXP - Expedição (SADE)", type="primary" if st.session_state.modulo_ativo == "sexp" else "secondary"):
-            st.session_state.modulo_ativo = "sexp"
-            st.rerun()
-        if st.button("⚖️ SERCON - Acórdãos/Contas", type="primary" if st.session_state.modulo_ativo == "sercon" else "secondary"):
-            st.session_state.modulo_ativo = "sercon"
-            st.rerun()
-        if st.button("📑 SEMAND - Mandados", type="primary" if st.session_state.modulo_ativo == "semand" else "secondary"):
-            st.session_state.modulo_ativo = "semand"
-            st.rerun()
-            
-    # OPÇÃO 2: NÍVEL GERENTE (Acesso à Torre de Controle do GAB + Seu próprio setor)
-    elif st.session_state.nivel_acesso == "Gerente":
-        if st.button("📊 GAB - Visão Gerencial", type="primary" if st.session_state.modulo_ativo == "gab" else "secondary"):
-            st.session_state.modulo_ativo = "gab"
-            st.rerun()
-        
-        setor_gerenciado = st.session_state.usuario_setor.lower()
-        nome_setores = {"seat": "📝 SEAT - Edição e Triagem", "sexp": "📬 SEXP - Expedição (SADE)", "sercon": "⚖️ SERCON - Acórdãos/Contas", "semand": "📑 SEMAND - Mandados"}
-        
-        if setor_gerenciado in nome_setores:
-            if st.button(nome_setores[setor_gerenciado], type="primary" if st.session_state.modulo_ativo == setor_gerenciado else "secondary"):
-                st.session_state.modulo_ativo = setor_gerenciado
-                st.rerun()
-                
-    # OPÇÃO 3: NÍVEL OPERACIONAL (Acesso estrito à sua mesa de trabalho no setor de lotação)
-    else:
-        setor_operacional = st.session_state.usuario_setor.lower()
-        st.info(f"📍 Você está conectado à estação operacional da **{st.session_state.usuario_setor}**.")
-        st.session_state.modulo_ativo = setor_operacional
-        
-    st.markdown("---")
-    if st.button("🚪 Sair do Sistema (Logout)"):
-        fazer_logout()
+        st.markdown("---")
+        st.caption("Credenciais iniciais padrao:")
+        st.caption("Secretario: secretario@tcdf.gov.br / tcdf2025")
+        st.caption("Chefe SEAT: chefeseat@tcdf.gov.br / tcdf2025")
+        st.caption("Assessor SEAT: assessorseat@tcdf.gov.br / tcdf2025")
 
-# ------------------------------------------------------------------------------
-# 7. CARREGADOR DINÂMICO DE MÓDULOS (O TELEPORTE DA CATRACA)
-# ------------------------------------------------------------------------------
-def carregar_modulo_ativo(nome_modulo):
+    return False
+
+# ============================================================
+# BARRA LATERAL (NAV)
+# ============================================================
+def barra_lateral():
     """
-    Importa dinamicamente o arquivo da pasta modulos/ e executa a função run().
-    Se o arquivo estiver em branco, exibe um painel de espera limpo e seguro.
+    Renderiza a barra lateral com:
+    - Info do usuario logado
+    - Navegacao para modulos permitidos
+    - Botao de logout
+    """
+    usuario = st.session_state.get("usuario", {})
+    nome = usuario.get("nome", "Usuario")
+    cargo = usuario.get("cargo", "operacional")
+    setor = usuario.get("setor", "SEAT")
+
+    # Traduzir cargo para exibicao
+    cargo_exibicao = {
+        "raiz": "Nivel Raiz",
+        "gerente": "Chefe de Setor",
+        "operacional": "Assessor/Estagiario",
+    }.get(cargo, cargo)
+
+    # --- Cabecalho do usuario ---
+    st.sidebar.markdown(f"### 👤 {nome}")
+    st.sidebar.markdown(f"**{cargo_exibicao}**")
+    st.sidebar.markdown(f"Setor: **{setor}**")
+    st.sidebar.markdown("---")
+
+    # --- Navegacao ---
+    modulos_permitidos = obter_modulos_permitidos(cargo, setor)
+
+    if not modulos_permitidos:
+        st.sidebar.warning("Nenhum modulo disponivel para seu perfil.")
+        return None
+
+    # Construir opcoes de navegacao
+    opcoes = []
+    chaves = []
+    for modulo_key in modulos_permitidos:
+        if modulo_key in MODULOS_SISTEMA:
+            info = MODULOS_SISTEMA[modulo_key]
+            opcoes.append(f"{info['icone']} {modulo_key} - {info['descricao']}")
+            chaves.append(modulo_key)
+
+    if not opcoes:
+        st.sidebar.warning("Nenhum modulo disponivel.")
+        return None
+
+    escolha = st.sidebar.radio("Navegacao", opcoes, label_visibility="collapsed")
+
+    # Extrair a chave do modulo selecionado
+    indice = opcoes.index(escolha)
+    modulo_selecionado = chaves[indice]
+
+    # --- Rodape da sidebar ---
+    st.sidebar.markdown("---")
+    st.sidebar.caption(f"Sessao iniciada: {st.session_state.get('login_time', datetime.now()).strftime('%d/%m/%Y %H:%M')}")
+
+    if st.sidebar.button("🚪 Sair", use_container_width=True):
+        # Limpar session_state
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.rerun()
+
+    return modulo_selecionado
+
+# ============================================================
+# CARREGADOR DINAMICO DE MODULOS
+# ============================================================
+def carregar_modulo(nome_arquivo: str):
+    """
+    Importa dinamicamente um modulo da pasta modulos/.
+
+    Args:
+        nome_arquivo: Nome do arquivo sem extensao (ex: 'seat')
+
+    Returns:
+        Modulo importado, ou None se falhar
     """
     try:
-        modulo = importlib.import_module(f"modulos.{nome_modulo}")
-        
-        # Verifica se o módulo já possui a função principal programada
-        if hasattr(modulo, "run"):
-            modulo.run()
-        else:
-            # Amortecedor de segurança para arquivos recém-criados no GitHub
-            st.markdown(f"<p class='main-header'>🏢 Módulo {nome_modulo.upper()}</p>", unsafe_allow_html=True)
-            st.markdown("<p class='sub-header'>Secretaria de Sessões do Tribunal de Contas do Distrito Federal</p>", unsafe_allow_html=True)
-            
-            st.markdown(f"""
-            <div class='box-boas-vindas'>
-                <h4>✅ Conexão Arquitetônica Estabelecida com Sucesso!</h4>
-                <p>Você acessou com segurança a sala do módulo <b>{nome_modulo.upper()}</b> com credenciais de nível <code>{st.session_state.nivel_acesso}</code>.</p>
-                <p>O arquivo <code>modulos/{nome_modulo}.py</code> já está conectado e operante no servidor, aguardando a injeção do código operacional na próxima etapa da nossa estruturação.</p>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            st.info("💡 **Aviso Técnico:** Nenhuma falha de execução. O sistema está 100% pronto para receber o motor de trabalho deste setor.")
-            
-    except ModuleNotFoundError:
-        st.error(f"🚨 Erro Arquitetônico: O arquivo `modulos/{nome_modulo}.py` não foi encontrado no repositório GitHub.")
-        st.warning("Verifique se a pasta se chama exatamente `modulos` (com letras minúsculas) e se o arquivo foi criado corretamente.")
+        modulo = importlib.import_module(f"modulos.{nome_arquivo}")
+        return modulo
+    except ImportError as e:
+        st.error(f"Modulo '{nome_arquivo}' nao encontrado. Verifique se o arquivo existe em modulos/.")
+        st.exception(e)
+        return None
     except Exception as e:
-        st.error(f"🚨 Ocorreu um erro interno ao processar o módulo **{nome_modulo.upper()}**: `{e}`")
+        st.error(f"Erro ao carregar modulo '{nome_arquivo}': {e}")
+        st.exception(e)
+        return None
 
-# Executa o módulo selecionado na barra lateral
-carregar_modulo_ativo(st.session_state.modulo_ativo)
+# ============================================================
+# RENDERIZAR MODULO
+# ============================================================
+def renderizar_modulo(modulo_key: str):
+    """
+    Carrega e renderiza o modulo selecionado.
+    Passa os dados do usuario logado para o modulo.
+
+    Args:
+        modulo_key: Chave do modulo (ex: 'SEAT', 'SEXP')
+    """
+    info = MODULOS_SISTEMA.get(modulo_key)
+    if not info:
+        st.error("Modulo invalido.")
+        return
+
+    nome_arquivo = info["arquivo"]
+    icone = info["icone"]
+    descricao = info["descricao"]
+
+    # Cabecalho do modulo
+    st.markdown(f"## {icone} {modulo_key} - {descricao}")
+    st.markdown("---")
+
+    # Carregar modulo dinamicamente
+    modulo = carregar_modulo(nome_arquivo)
+
+    if modulo is None:
+        st.info(f"O modulo **{modulo_key}** ainda nao foi implementado. Aguarde a proxima fase de desenvolvimento.")
+        return
+
+    # Verificar se o modulo tem a funcao 'renderizar'
+    if hasattr(modulo, "renderizar"):
+        # Passar dados do usuario para o modulo
+        modulo.renderizar(st.session_state.get("usuario", {}))
+    else:
+        st.error(f"O modulo '{modulo_key}' nao tem a funcao 'renderizar'. Verifique a implementacao.")
+
+# ============================================================
+# FLUXO PRINCIPAL
+# ============================================================
+def main():
+    """
+    Fluxo principal da aplicacao.
+    """
+    # 1. Inicializar banco (semeadura)
+    inicializar_banco()
+
+    # 2. Verificar se esta logado
+    if not st.session_state.get("logado", False):
+        tela_login()
+        return
+
+    # 3. Barra lateral (navegacao)
+    modulo_selecionado = barra_lateral()
+
+    if modulo_selecionado is None:
+        st.warning("Nenhum modulo selecionado.")
+        return
+
+    # 4. Renderizar modulo
+    renderizar_modulo(modulo_selecionado)
+
+# ============================================================
+# EXECUCAO
+# ============================================================
+if __name__ == "__main__":
+    main()
