@@ -178,23 +178,24 @@ def tela_login():
 # BARRA LATERAL
 # ============================================================
 def barra_lateral():
-    """Renderiza a barra lateral com info do usuario e navegacao."""
+    """
+    Renderiza a barra lateral com info do usuario e navegacao.
+    Cria um placeholder para o modulo inserir conteudo na sidebar.
+    """
     usuario = st.session_state.get("usuario", {})
     nome = usuario.get("nome", "Usuario")
     cargo = usuario.get("cargo", "operacional")
     setor = usuario.get("setor", "SEAT")
     vinculo = usuario.get("vinculo", "servidor")
 
-    # Traduzir cargo para exibicao
     cargo_exibicao = {
-        "criador": "👑 Criador",
-        "raiz": "🔴 Nivel Raiz",
-        "secretaria": "🟠 Secretaria",
-        "gerente": "🟡 Chefe de Setor",
-        "operacional": "🟢 Operacional",
+        "criador": "Criador",
+        "raiz": "Nivel Raiz",
+        "secretaria": "Secretaria",
+        "gerente": "Chefe de Setor",
+        "operacional": "Operacional",
     }.get(cargo, cargo)
 
-    # Traduzir vinculo
     vinculo_exibicao = {
         "servidor": "Servidor",
         "terceirizado": "Terceirizado",
@@ -202,11 +203,15 @@ def barra_lateral():
     }.get(vinculo, vinculo)
 
     # Cabecalho do usuario
-    st.sidebar.markdown(f"### 👤 {nome}")
+    st.sidebar.markdown(f"### {nome}")
     st.sidebar.markdown(f"**{cargo_exibicao}**")
     st.sidebar.markdown(f"Setor: **{setor}**")
     if cargo == "operacional":
         st.sidebar.markdown(f"Vinculo: **{vinculo_exibicao}**")
+
+    # PLACEHOLDER: o modulo pode inserir conteudo aqui (ex: tabela de carga)
+    sidebar_placeholder = st.sidebar.container()
+
     st.sidebar.markdown("---")
 
     # Navegacao
@@ -214,9 +219,8 @@ def barra_lateral():
 
     if not modulos_permitidos:
         st.sidebar.warning("Nenhum modulo disponivel para seu perfil.")
-        return None
+        return None, sidebar_placeholder
 
-    # Construir opcoes de navegacao
     opcoes = []
     chaves = []
     for modulo_key in modulos_permitidos:
@@ -227,54 +231,34 @@ def barra_lateral():
 
     if not opcoes:
         st.sidebar.warning("Nenhum modulo disponivel.")
-        return None
+        return None, sidebar_placeholder
 
     escolha = st.sidebar.radio("Navegacao", opcoes, label_visibility="collapsed")
 
-    # Extrair a chave do modulo selecionado
     indice = opcoes.index(escolha)
     modulo_selecionado = chaves[indice]
 
-    # Indicador de modo (edicao vs visualizacao)
     modo_edicao = obter_modo_edicao(cargo, modulo_selecionado, setor)
     if not modo_edicao and modulo_selecionado != "GAB":
-        st.sidebar.info("👁️ Modo visualizacao (somente leitura)")
+        st.sidebar.info("Modo visualizacao (somente leitura)")
 
-    # Rodape da sidebar
     st.sidebar.markdown("---")
     st.sidebar.caption(f"Sessao iniciada: {st.session_state.get('login_time', datetime.now()).strftime('%d/%m/%Y %H:%M')}")
 
-    if st.sidebar.button("🚪 Sair", use_container_width=True):
+    if st.sidebar.button("Sair", use_container_width=True):
         for key in list(st.session_state.keys()):
             del st.session_state[key]
         st.rerun()
 
-    return modulo_selecionado
-
-# ============================================================
-# CARREGADOR DINAMICO DE MODULOS
-# ============================================================
-def carregar_modulo(nome_arquivo: str):
-    """Importa dinamicamente um modulo da pasta modulos/."""
-    try:
-        modulo = importlib.import_module(f"modulos.{nome_arquivo}")
-        return modulo
-    except ImportError as e:
-        st.error(f"Modulo '{nome_arquivo}' nao encontrado. Verifique se o arquivo existe em modulos/.")
-        st.exception(e)
-        return None
-    except Exception as e:
-        st.error(f"Erro ao carregar modulo '{nome_arquivo}': {e}")
-        st.exception(e)
-        return None
+    return modulo_selecionado, sidebar_placeholder
 
 # ============================================================
 # RENDERIZAR MODULO
 # ============================================================
-def renderizar_modulo(modulo_key: str):
+def renderizar_modulo(modulo_key: str, sidebar_placeholder=None):
     """
     Carrega e renderiza o modulo selecionado.
-    Passa os dados do usuario e o modo (edicao ou visualizacao) para o modulo.
+    Passa os dados do usuario, o modo e o placeholder da sidebar.
     """
     info = MODULOS_SISTEMA.get(modulo_key)
     if not info:
@@ -285,51 +269,44 @@ def renderizar_modulo(modulo_key: str):
     icone = info["icone"]
     descricao = info["descricao"]
 
-    # Cabecalho do modulo
     st.markdown(f"## {icone} {modulo_key} - {descricao}")
     st.markdown("---")
 
-    # Carregar modulo dinamicamente
     modulo = carregar_modulo(nome_arquivo)
 
     if modulo is None:
-        st.info(f"O modulo **{modulo_key}** ainda nao foi implementado. Aguarde a proxima fase.")
+        st.info(f"O modulo **{modulo_key}** ainda nao foi implementado.")
         return
 
-    # Verificar se o modulo tem a funcao 'renderizar'
     if hasattr(modulo, "renderizar"):
         usuario = st.session_state.get("usuario", {})
         cargo = usuario.get("cargo", "operacional")
         setor = usuario.get("setor", "SEAT")
         modo_edicao = obter_modo_edicao(cargo, modulo_key, setor)
 
-        # Passar usuario e modo_edicao para o modulo
+        # Se o modulo tem funcao de sidebar e temos um placeholder, chamar
+        if sidebar_placeholder and hasattr(modulo, "renderizar_sidebar"):
+            with sidebar_placeholder:
+                modulo.renderizar_sidebar(usuario, modo_edicao)
+
         modulo.renderizar(usuario, modo_edicao)
     else:
         st.error(f"O modulo '{modulo_key}' nao tem a funcao 'renderizar'.")
 
-# ============================================================
-# FLUXO PRINCIPAL
-# ============================================================
 def main():
-    """Fluxo principal da aplicacao."""
-    # 1. Inicializar banco (semeadura)
     inicializar_banco()
 
-    # 2. Verificar se esta logado
     if not st.session_state.get("logado", False):
         tela_login()
         return
 
-    # 3. Barra lateral (navegacao)
-    modulo_selecionado = barra_lateral()
+    modulo_selecionado, sidebar_placeholder = barra_lateral()
 
     if modulo_selecionado is None:
         st.warning("Nenhum modulo selecionado.")
         return
 
-    # 4. Renderizar modulo
-    renderizar_modulo(modulo_selecionado)
+    renderizar_modulo(modulo_selecionado, sidebar_placeholder)
 
 # ============================================================
 # EXECUCAO
