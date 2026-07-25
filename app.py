@@ -6,13 +6,6 @@ Arquitetura: Python + Streamlit + Supabase
 Funcao: Porta de entrada do sistema. Autentica usuarios por matricula + senha,
         aplica RBAC em 5 niveis (Criador, Raiz, Secretaria, Gerente, Operacional)
         e roteia para o modulo correspondente na pasta modulos/.
-
-Principios:
-- Nao conhece logica de negocio (Motor NIP, pautas, distribuicao)
-- Apenas autentica, verifica permissoes e direciona
-- Carregamento dinamico de modulos (importlib)
-- Graceful degradation: se um modulo falha, o resto continua funcionando
-- Passa modo_edicao para cada modulo (True = pode editar, False = so visualizar)
 """
 
 import streamlit as st
@@ -81,52 +74,27 @@ MODULOS_SISTEMA = {
 # ============================================================
 
 def obter_modulos_permitidos(cargo: str, setor: str) -> list:
-    """
-    Define quais modulos o usuario ve na barra lateral.
-
-    RBAC em 5 niveis:
-    - Criador: todos os modulos
-    - Raiz: todos os modulos (GAB primeiro, depois setores)
-    - Secretaria: todos os modulos (visualizacao + gestao de usuarios no GAB)
-    - Gerente: GAB + seu setor
-    - Operacional: apenas seu setor
-    """
+    """Define quais modulos o usuario ve na barra lateral."""
     if cargo in ("criador", "raiz", "secretaria"):
         return ["GAB", "SEAT", "SEXP", "SERCON", "SEMAND"]
-
     elif cargo == "gerente":
         modulos = ["GAB"]
         if setor in MODULOS_SISTEMA and setor != "GAB":
             modulos.append(setor)
         return modulos
-
-    else:  # operacional
+    else:
         return [setor] if setor in MODULOS_SISTEMA else []
 
 def obter_modo_edicao(cargo: str, modulo_key: str, setor_usuario: str) -> bool:
-    """
-    Determina se o usuario pode editar no modulo atual.
-
-    Regras:
-    - Criador: sempre True (teste e correcao em todos os modulos)
-    - Raiz: True apenas no GAB. Setores: somente visualizacao
-    - Secretaria: True apenas no GAB (gestao de colaboradores). Setores: visualizacao
-    - Gerente: True no GAB e no seu setor. Outros setores: visualizacao
-    - Operacional: True no seu setor (com restricoes a definir por etapa)
-    """
+    """Determina se o usuario pode editar no modulo atual."""
     if cargo == "criador":
         return True
-
     if cargo == "raiz":
         return modulo_key == "GAB"
-
     if cargo == "secretaria":
         return modulo_key == "GAB"
-
     if cargo == "gerente":
         return modulo_key == "GAB" or modulo_key == setor_usuario
-
-    # operacional
     return modulo_key == setor_usuario
 
 # ============================================================
@@ -189,11 +157,11 @@ def barra_lateral():
     vinculo = usuario.get("vinculo", "servidor")
 
     cargo_exibicao = {
-        "criador": "Criador",
-        "raiz": "Nivel Raiz",
-        "secretaria": "Secretaria",
-        "gerente": "Chefe de Setor",
-        "operacional": "Operacional",
+        "criador": "👑 Criador",
+        "raiz": "🔴 Nivel Raiz",
+        "secretaria": "🟠 Secretaria",
+        "gerente": "🟡 Chefe de Setor",
+        "operacional": "🟢 Operacional",
     }.get(cargo, cargo)
 
     vinculo_exibicao = {
@@ -203,13 +171,13 @@ def barra_lateral():
     }.get(vinculo, vinculo)
 
     # Cabecalho do usuario
-    st.sidebar.markdown(f"### {nome}")
+    st.sidebar.markdown(f"### 👤 {nome}")
     st.sidebar.markdown(f"**{cargo_exibicao}**")
     st.sidebar.markdown(f"Setor: **{setor}**")
     if cargo == "operacional":
         st.sidebar.markdown(f"Vinculo: **{vinculo_exibicao}**")
 
-    # PLACEHOLDER: o modulo pode inserir conteudo aqui (ex: tabela de carga)
+    # PLACEHOLDER: o modulo pode inserir conteudo aqui
     sidebar_placeholder = st.sidebar.container()
 
     st.sidebar.markdown("---")
@@ -240,17 +208,34 @@ def barra_lateral():
 
     modo_edicao = obter_modo_edicao(cargo, modulo_selecionado, setor)
     if not modo_edicao and modulo_selecionado != "GAB":
-        st.sidebar.info("Modo visualizacao (somente leitura)")
+        st.sidebar.info("👁️ Modo visualizacao (somente leitura)")
 
     st.sidebar.markdown("---")
     st.sidebar.caption(f"Sessao iniciada: {st.session_state.get('login_time', datetime.now()).strftime('%d/%m/%Y %H:%M')}")
 
-    if st.sidebar.button("Sair", use_container_width=True):
+    if st.sidebar.button("🚪 Sair", use_container_width=True):
         for key in list(st.session_state.keys()):
             del st.session_state[key]
         st.rerun()
 
     return modulo_selecionado, sidebar_placeholder
+
+# ============================================================
+# CARREGADOR DINAMICO DE MODULOS
+# ============================================================
+def carregar_modulo(nome_arquivo: str):
+    """Importa dinamicamente um modulo da pasta modulos/."""
+    try:
+        modulo = importlib.import_module(f"modulos.{nome_arquivo}")
+        return modulo
+    except ImportError as e:
+        st.error(f"Modulo '{nome_arquivo}' nao encontrado. Verifique se o arquivo existe em modulos/.")
+        st.exception(e)
+        return None
+    except Exception as e:
+        st.error(f"Erro ao carregar modulo '{nome_arquivo}': {e}")
+        st.exception(e)
+        return None
 
 # ============================================================
 # RENDERIZAR MODULO
@@ -275,7 +260,7 @@ def renderizar_modulo(modulo_key: str, sidebar_placeholder=None):
     modulo = carregar_modulo(nome_arquivo)
 
     if modulo is None:
-        st.info(f"O modulo **{modulo_key}** ainda nao foi implementado.")
+        st.info(f"O modulo **{modulo_key}** ainda nao foi implementado. Aguarde a proxima fase.")
         return
 
     if hasattr(modulo, "renderizar"):
@@ -293,7 +278,11 @@ def renderizar_modulo(modulo_key: str, sidebar_placeholder=None):
     else:
         st.error(f"O modulo '{modulo_key}' nao tem a funcao 'renderizar'.")
 
+# ============================================================
+# FLUXO PRINCIPAL
+# ============================================================
 def main():
+    """Fluxo principal da aplicacao."""
     inicializar_banco()
 
     if not st.session_state.get("logado", False):
