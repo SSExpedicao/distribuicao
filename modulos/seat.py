@@ -938,21 +938,12 @@ def _renderizar_distribuicao(modo_edicao: bool):
                 "Nao ha membros disponiveis para distribuir. "
                 f"Atualmente ha {len(disponiveis)} membro(s) disponivel(is)."
             )
-            if disponiveis:
-                st.write("Disponiveis:")
-                for nome in disponiveis:
-                    st.write(f"  - {nome}")
-            equipe = _obter_equipe_seat()
-            afastados = _obter_afastados()
-            if afastados:
-                st.write("Afastados:")
-                for nome in afastados:
-                    st.write(f"  - {nome}")
         else:
-            sessao_sel = st.selectbox(
+            chaves_distribuir = list(sessoes_nao_distribuidas.keys())
+            sessao_sel = st.radio(
                 "Selecione a sessao para distribuir",
-                options=list(sessoes_nao_distribuidas.keys()),
-                key="dist_sel_distribuir",
+                options=chaves_distribuir,
+                key="dist_radio_distribuir",
             )
 
             processos_para_distribuir = sessoes_nao_distribuidas[sessao_sel]
@@ -973,13 +964,13 @@ def _renderizar_distribuicao(modo_edicao: bool):
             with col_ed:
                 st.markdown("##### Editores")
                 for membro in disponiveis:
-                    if st.checkbox(membro, value=True, key=f"dist_editor_{membro}"):
+                    if st.checkbox(membro, value=True, key=f"dist_ed_{membro}"):
                         editores_selecionados.append(membro)
 
             with col_rev:
                 st.markdown("##### Revisores")
                 for membro in disponiveis:
-                    if st.checkbox(membro, value=True, key=f"dist_revisor_{membro}"):
+                    if st.checkbox(membro, value=True, key=f"dist_rev_{membro}"):
                         revisores_selecionados.append(membro)
 
             afastados = _obter_afastados()
@@ -1011,16 +1002,6 @@ def _renderizar_distribuicao(modo_edicao: bool):
                                 salvos += 1
 
                         st.success(f"{salvos} processo(s) distribuido(s) com sucesso!")
-
-                        with st.expander("Ver distribuicao"):
-                            for proc in processos_para_distribuir:
-                                if proc["id"] in atribuicoes:
-                                    editor, revisor = atribuicoes[proc["id"]]
-                                    st.write(
-                                        f"- {proc.get('processo_numero', '')} | "
-                                        f"Editor: **{editor}** | Revisor: **{revisor}**"
-                                    )
-
                         st.rerun()
                     else:
                         st.warning("Nenhum processo foi distribuido. Verifique as condicoes.")
@@ -1033,22 +1014,21 @@ def _renderizar_distribuicao(modo_edicao: bool):
     if not sessoes_distribuidas:
         st.info("Nao ha processos distribuidos para editar.")
     else:
-        sessao_editar = st.selectbox(
+        chaves_editar = list(sessoes_distribuidas.keys())
+        sessao_editar = st.radio(
             "Selecione a sessao para editar",
-            options=list(sessoes_distribuidas.keys()),
-            key="dist_sel_editar",
+            options=chaves_editar,
+            key="dist_radio_editar",
         )
 
         processos_distribuidos = sessoes_distribuidas[sessao_editar]
-
         disponiveis = _obter_equipe_seat()
 
         if not disponiveis:
             st.warning("Nao ha membros da equipe cadastrados.")
         else:
             if PANDAS_OK and modo_edicao:
-                # Montar DataFrame com a ordem correta de colunas:
-                # Processo - Relator - Editor - Editado - Revisor - Revisado - Comentario
+                # Ordem correta: Processo - Relator - Editor - Editado - Revisor - Revisado - Comentario
                 df_dados = []
                 for p in processos_distribuidos:
                     df_dados.append({
@@ -1064,7 +1044,6 @@ def _renderizar_distribuicao(modo_edicao: bool):
 
                 df = pd.DataFrame(df_dados)
 
-                # Data editor com colunas na ordem solicitada
                 edited_df = st.data_editor(
                     df,
                     column_config={
@@ -1079,10 +1058,9 @@ def _renderizar_distribuicao(modo_edicao: bool):
                     },
                     hide_index=True,
                     use_container_width=True,
-                    key="dist_data_editor",
+                    key="dist_data_editor_v2",
                 )
 
-                # Botao para salvar alteracoes
                 if st.button("Salvar Alteracoes", key="dist_btn_salvar"):
                     salvos = 0
 
@@ -1090,13 +1068,10 @@ def _renderizar_distribuicao(modo_edicao: bool):
                         editor_atual = row["editor"]
                         revisor_atual = row["revisor"]
 
-                        # No SEAT, editor pode ser igual a revisor (sem validacao de diferenca)
-
                         original = next((p for p in processos_distribuidos if p.get("id") == row["id"]), None)
                         if not original:
                             continue
 
-                        # Detectar mudancas campo por campo
                         mudancas = {}
 
                         if (original.get("editor") or "") != editor_atual:
@@ -1120,7 +1095,7 @@ def _renderizar_distribuicao(modo_edicao: bool):
                         if comentario_original != comentario_novo:
                             mudancas["comentario"] = comentario_novo.strip()
 
-                        # Recalcular status automaticamente baseado nos checkboxes
+                        # Recalcular status automaticamente
                         if "editado" in mudancas or "revisado" in mudancas:
                             editado_val = mudancas.get("editado", editado_original)
                             revisado_val = mudancas.get("revisado", revisado_original)
@@ -1134,7 +1109,6 @@ def _renderizar_distribuicao(modo_edicao: bool):
                             elif revisado_val and not editado_val:
                                 mudancas["status"] = "encaminhado"
 
-                        # Salvar se houve mudancas
                         if mudancas:
                             resultado = db_manager.atualizar("pauta_seat", row["id"], mudancas)
                             if resultado:
@@ -1147,7 +1121,7 @@ def _renderizar_distribuicao(modo_edicao: bool):
                         st.info("Nenhuma alteracao detectada.")
 
             elif PANDAS_OK:
-                # Modo visualizacao: tabela estatica na ordem correta
+                # Modo visualizacao
                 df_dados = []
                 for p in processos_distribuidos:
                     df_dados.append({
@@ -1163,7 +1137,6 @@ def _renderizar_distribuicao(modo_edicao: bool):
                 st.dataframe(df, hide_index=True, use_container_width=True)
 
             else:
-                # Fallback sem pandas
                 for p in processos_distribuidos:
                     st.write(
                         f"- {p.get('processo_numero', '')} | "
