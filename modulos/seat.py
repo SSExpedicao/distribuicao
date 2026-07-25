@@ -151,4 +151,930 @@ def _formatar_data_curta(data_iso: str) -> str:
 
 def _obter_equipe_seat() -> list:
     """
-    Retorna lista de nomes dos membros ativos da
+    Retorna lista de nomes dos membros ativos da equipe SEAT.
+    """
+    membros = db_manager.listar_equipe(setor="SEAT", apenas_ativos=True)
+    return [m.get("nome", "") for m in membros if m.get("nome")]
+
+def _obter_afastados() -> list:
+    """
+    Retorna lista de nomes de membros atualmente afastados.
+    """
+    return db_manager.listar_nomes_afastados()
+
+def _obter_disponiveis() -> list:
+    """
+    Retorna membros disponiveis para distribuicao:
+    equipe ativa - afastados.
+    """
+    equipe = _obter_equipe_seat()
+    afastados = _obter_afastados()
+
+    # Normalizar afastados para comparacao
+    afastados_norm = set(_normalizar_texto(a) for a in afastados)
+
+    disponiveis = []
+    for nome in equipe:
+        if _normalizar_texto(nome) not in afastados_norm:
+            disponiveis.append(nome)
+
+    return disponiveis
+
+# ============================================================
+# FUNCOES AUXILIARES: DUPLICIDADE
+# ============================================================
+
+def _verificar_duplicidade(processo_numero: str, numero_sessao: str, dia_sessao: str) -> bool:
+    """
+    Verifica se um processo ja esta cadastrado na mesma sessao/dia.
+    Retorna True se duplicado.
+    """
+    if not processo_numero or not numero_sessao or not dia_sessao:
+        return False
+
+    resultados = db_manager.buscar_todos("pauta_seat", filtros={
+        "processo_numero": processo_numero,
+        "numero_sessao": numero_sessao,
+        "dia_sessao": dia_sessao,
+    })
+    return len(resultados) > 0
+
+# ============================================================
+# FUNCOES AUXILIARES: DISTRIBUICAO
+# ============================================================
+
+def _contar_atribuicoes(nomes: list, campo: str) -> dict:
+    """
+    Conta quantos processos estao atribuidos a cada nome como editor ou revisor.
+
+    Args:
+        nomes: Lista de nomes dos membros
+        campo: 'editor' ou 'revisor'
+
+    Returns:
+        Dict {nome: count}
+    """
+    todos_processos = db_manager.buscar_todos("pauta_seat")
+    contador = {nome: 0 for nome in nomes}
+
+    for proc in todos_processos:
+        nome_atribuido = proc.get(campo)
+        if nome_atribuido and nome_atribuido in contador:
+            contador[nome_atribuido] += 1
+
+    return contador
+
+def _distribuir_processos(processos: list, editores: list, revisores: list) -> dict:
+    """
+    Algoritmo de distribuicao equalitaria.
+
+    - Balanceia carga: quem tem menos atribuicoes recebe o proximo processo
+    - Garante editor != revisor para cada processo
+
+    Args:
+        processos: Lista de processos (dicts com 'id')
+        editores: Lista de nomes disponiveis para editar
+        revisores: Lista de nomes disponiveis para revisar
+
+    Returns:
+        Dict {id_processo: (editor, revisor)}
+    """
+    if not processos or not editores or not revisores:
+        return {}
+
+    # Contar atribuicoes existentes para balancear
+    contador_editor = _contar_atribuicoes(editores, "editor")
+    contador_revisor = _contar_atribuicoes(revisores, "revisor")
+
+    atribuicoes = {}
+
+    for processo in processos:
+        proc_id = processo.get("id")
+        if not proc_id:
+            continue
+
+        # Editor: membro com menos atribuicoes
+        editor = min(editores, key=lambda n: contador_editor[n])
+        contador_editor[editor] += 1
+
+        # Revisor: membro com menos atribuicoes, excluindo o editor
+        revisores_disponiveis = [r for r in revisores if r != editor]
+
+        if not revisores_disponiveis:
+            # Caso extremo: so ha 1 pessoa e ela ja e editor
+            # Nao pode ser revisor de si mesma. Pular este processo.
+            contador_editor[editor] -= 1
+            continue
+
+        revisor = min(revisores_disponiveis, key=lambda n: contador_revisor[n])
+        contador_revisor[revisor] += 1
+
+        atribuicoes[proc_id] = (editor, revisor)
+
+    return atribuicoes
+
+# ============================================================
+# FUNCOES AUXILIARES: PARSING CSV
+# ============================================================
+
+def _parse_csv(arquivo) -> list:
+    """
+    Faz parse de um arquivo CSV e retorna lista de processos.
+    Espera colunas: processo_numero, relator (opcional), tipo_sessao
+
+    Suporta delimitador virgula ou ponto-virgula.
+    Suporta encoding UTF-8 e Latin-1.
+    """
+    if arquivo is None:
+        return []
+
+    # Ler conteudo
+    conteudo = arquivo.read()
+
+    # Decodificar
+    try:
+        texto = conteudo.decode('utf-8')
+    except (UnicodeDecodeError, AttributeError):
+        try:
+            texto = conteudo.decode('latin-1')
+        except Exception:
+            texto = str(conteudo)
+
+    # Detectar delimitador
+    primeira_linha = texto.split('\n')[0] if texto else ""
+    if ';' in primeira_linha and ',' not in primeira_linha:
+        delimiter = ';'
+    else:
+        delimiter = ','
+
+    # Parse
+    reader = csv.DictReader(io.StringIO(texto), delimiter=delimiter)
+
+    processos = []
+    for row in reader:
+        if not row:
+            continue
+
+        # Normalizar nomes de coluna (lowercase, sem espacos)
+        row_norm = {}
+        for k, v in row.items():
+            if k and v:
+                row_norm[k.lower().strip()] = v.strip()
+
+        # Buscar coluna de processo (aceita variacoes)
+        processo_numero = (
+            row_norm.get('processo_numero')
+            or row_norm.get('processo')
+            or row_norm.get('numero')
+            or row_norm.get('n_processo')
+            or ""
+        )
+
+        # Buscar coluna de relator (opcional)
+        relator = (
+            row_norm.get('relator')
+            or row_norm.get('relatora')
+            or row_norm.get('relator(a)')
+            or None
+        )
+
+        # Buscar coluna de tipo de sessao
+        tipo_sessao = (
+            row_norm.get('tipo_sessao')
+            or row_norm.get('tipo')
+            or row_norm.get('sessao')
+            or ""
+        )
+
+        if processo_numero and tipo_sessao:
+            processos.append({
+                'processo_numero': processo_numero,
+                'relator': relator,
+                'tipo_sessao': _normalizar_tipo_sessao(tipo_sessao),
+            })
+
+    return processos
+
+# ============================================================
+# TAB 1: PAUTA ATIVA
+# ============================================================
+
+def _incluir_processo_manual(modo_edicao: bool):
+    """Formulario para incluir processo manualmente, um por vez."""
+    st.markdown("### Incluir Processo")
+
+    with st.form("form_incluir_manual"):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            processo_numero = st.text_input(
+                "Numero do Processo *",
+                placeholder="Ex: TCDF-12345/2026",
+            )
+            numero_sessao = st.text_input(
+                "Numero da Sessao *",
+                placeholder="Ex: 123/2026",
+            )
+
+        with col2:
+            tipo_sessao = st.selectbox(
+                "Tipo de Sessao *",
+                options=TIPOS_SESSAO,
+                index=0,
+            )
+            dia_sessao = st.date_input(
+                "Dia da Sessao *",
+                value=date.today(),
+            )
+
+        col3, col4 = st.columns(2)
+        with col3:
+            relator = st.text_input(
+                "Relator (opcional)",
+                placeholder="Nome do relator",
+            )
+        with col4:
+            observacoes = st.text_input(
+                "Observacoes (opcional)",
+                placeholder="Info adicional",
+            )
+
+        submit = st.form_submit_button("Incluir na Pauta", use_container_width=True)
+
+        if submit:
+            if not processo_numero.strip() or not numero_sessao.strip():
+                st.error("Numero do processo e numero da sessao sao obrigatorios.")
+                return
+
+            dia_iso = dia_sessao.isoformat()
+
+            # Verificar duplicidade
+            if _verificar_duplicidade(processo_numero.strip(), numero_sessao.strip(), dia_iso):
+                st.error(
+                    f"Duplicidade: o processo {processo_numero} ja esta cadastrado "
+                    f"na sessao {numero_sessao} de {_formatar_data_curta(dia_iso)}."
+                )
+                return
+
+            dados = {
+                "processo_numero": processo_numero.strip(),
+                "numero_sessao": numero_sessao.strip(),
+                "dia_sessao": dia_iso,
+                "tipo_sessao": tipo_sessao,
+                "relator": relator.strip() if relator else None,
+                "status": "inclusao",
+                "observacoes": observacoes.strip() if observacoes else "",
+            }
+
+            resultado = db_manager.inserir("pauta_seat", dados)
+
+            if resultado:
+                st.success(f"Processo {processo_numero} incluido na pauta SEAT.")
+                st.rerun()
+            else:
+                st.error("Erro ao incluir processo. Verifique a conexao com o banco.")
+
+def _incluir_processo_lote(modo_edicao: bool):
+    """Upload de arquivo CSV com multiplos processos."""
+    st.markdown("### Incluir em Lote (CSV)")
+    st.caption(
+        "Formato esperado: colunas `processo_numero`, `relator` (opcional), `tipo_sessao`.\n\n"
+        "O sistema detecta os tipos de sessao no arquivo e pede o numero e data de cada uma."
+    )
+
+    arquivo = st.file_uploader(
+        "Selecionar arquivo CSV",
+        type=['csv'],
+        key="csv_upload_seat",
+    )
+
+    if arquivo is None:
+        return
+
+    # Parse do CSV
+    processos_csv = _parse_csv(arquivo)
+
+    if not processos_csv:
+        st.error(
+            "Nenhum processo valido encontrado no arquivo. "
+            "Verifique se as colunas `processo_numero` e `tipo_sessao` existem e estao preenchidas."
+        )
+        return
+
+    # Detectar tipos de sessao unicos no arquivo
+    tipos_encontrados = sorted(set(p['tipo_sessao'] for p in processos_csv if p['tipo_sessao']))
+
+    st.success(
+        f"CSV carregado: {len(processos_csv)} processos encontrados, "
+        f"{len(tipos_encontrados)} tipo(s) de sessao."
+    )
+
+    # Formulario para numero e data de cada tipo de sessao
+    st.markdown("### Informacoes das Sessoes")
+    st.markdown("Preencha o numero e a data para cada tipo de sessao encontrado no arquivo:")
+
+    session_info = {}
+    for i, tipo in enumerate(tipos_encontrados):
+        st.markdown(f"**{tipo}**")
+        col_n, col_d = st.columns(2)
+        with col_n:
+            numero = st.text_input(
+                "Numero da Sessao *",
+                placeholder=f"Ex: 123/2026",
+                key=f"csv_sessao_num_{i}",
+            )
+        with col_d:
+            dia = st.date_input(
+                "Data da Sessao *",
+                value=date.today(),
+                key=f"csv_sessao_dia_{i}",
+            )
+        session_info[tipo] = {
+            'numero': numero.strip(),
+            'dia': dia.isoformat(),
+        }
+        st.markdown("---")
+
+    # Botao de confirmacao
+    if st.button("Confirmar e Inserir", type="primary", key="csv_confirmar"):
+        # Validar: todos os tipos devem ter numero preenchido
+        erros_validacao = []
+        for tipo, info in session_info.items():
+            if not info['numero']:
+                erros_validacao.append(f"Numero da sessao para {tipo} e obrigatorio.")
+
+        if erros_validacao:
+            for erro in erros_validacao:
+                st.error(erro)
+            return
+
+        # Inserir processos com verificacao de duplicidade
+        inseridos = 0
+        duplicados = 0
+        erros = 0
+        lista_duplicados = []
+
+        for proc in processos_csv:
+            tipo = proc['tipo_sessao']
+            info = session_info.get(tipo)
+
+            if not info:
+                erros += 1
+                continue
+
+            # Verificar duplicidade
+            if _verificar_duplicidade(proc['processo_numero'], info['numero'], info['dia']):
+                lista_duplicados.append(
+                    f"{proc['processo_numero']} (sessao {info['numero']} de {_formatar_data_curta(info['dia'])})"
+                )
+                duplicados += 1
+                continue
+
+            # Inserir
+            dados = {
+                "processo_numero": proc['processo_numero'],
+                "numero_sessao": info['numero'],
+                "dia_sessao": info['dia'],
+                "tipo_sessao": tipo,
+                "relator": proc.get('relator'),
+                "status": "inclusao",
+            }
+
+            resultado = db_manager.inserir("pauta_seat", dados)
+            if resultado:
+                inseridos += 1
+            else:
+                erros += 1
+
+        # Relatorio de importacao
+        st.success(
+            f"Importacao concluida: {inseridos} inseridos, "
+            f"{duplicados} duplicados, {erros} erros."
+        )
+
+        if lista_duplicados:
+            with st.expander(f"Ver {len(lista_duplicados)} processo(s) duplicado(s)"):
+                for dup in lista_duplicados:
+                    st.warning(f" duplicado: {dup}")
+
+        if inseridos > 0:
+            st.rerun()
+
+def _avancar_status(id_processo: int, status_atual: str):
+    """Avanca o status do processo para a proxima etapa."""
+    info_status = STATUS_FLOW.get(status_atual)
+    if not info_status or not info_status["proximo"]:
+        return
+
+    proximo_status = info_status["proximo"]
+    dados_update = {"status": proximo_status}
+
+    if proximo_status == "encaminhado":
+        dados_update["data_conclusao"] = datetime.now().isoformat()
+
+    resultado = db_manager.atualizar("pauta_seat", id_processo, dados_update)
+
+    if resultado:
+        st.success(f"Processo movido para: {STATUS_FLOW[proximo_status]['label']}")
+        st.rerun()
+    else:
+        st.error("Erro ao atualizar status do processo.")
+
+def _voltar_status(id_processo: int, status_atual: str):
+    """Volta o status do processo para a etapa anterior."""
+    ordem = ["inclusao", "em_edicao", "em_revisao", "encaminhado"]
+    indice = ordem.index(status_atual)
+    if indice > 0:
+        status_anterior = ordem[indice - 1]
+        dados_update = {"status": status_anterior}
+        if status_atual == "encaminhado":
+            dados_update["data_conclusao"] = None
+
+        resultado = db_manager.atualizar("pauta_seat", id_processo, dados_update)
+        if resultado:
+            st.success(f"Processo retornado para: {STATUS_FLOW[status_anterior]['label']}")
+            st.rerun()
+
+def _remover_processo(id_processo: int, numero: str):
+    """Remove um processo da pauta com confirmacao."""
+    chave_confirm = f"confirmar_remocao_{id_processo}"
+    if st.session_state.get(chave_confirm):
+        resultado = db_manager.deletar("pauta_seat", id_processo)
+        if resultado:
+            st.success(f"Processo {numero} removido da pauta.")
+            del st.session_state[chave_confirm]
+            st.rerun()
+        else:
+            st.error("Erro ao remover processo.")
+            del st.session_state[chave_confirm]
+            st.rerun()
+    else:
+        st.session_state[chave_confirm] = True
+        st.warning(f"Confirme a remocao do processo {numero} clicando novamente.")
+        st.rerun()
+
+def _renderizar_card_processo(processo: dict, modo_edicao: bool):
+    """Renderiza um card individual de processo na pauta ativa."""
+    id_proc = processo.get("id")
+    numero = processo.get("processo_numero", "")
+    numero_sessao = processo.get("numero_sessao", "") or "-"
+    dia_sessao = _formatar_data_curta(processo.get("dia_sessao"))
+    tipo_sessao = processo.get("tipo_sessao", "") or "-"
+    relator = processo.get("relator", "") or "-"
+    status = processo.get("status", "inclusao")
+    editor = processo.get("editor", "") or "-"
+    revisor = processo.get("revisor", "") or "-"
+    data_entrada = _formatar_data(processo.get("data_entrada"))
+    data_conclusao = _formatar_data(processo.get("data_conclusao"))
+    observacoes = processo.get("observacoes", "") or ""
+
+    info_status = STATUS_FLOW.get(status, STATUS_FLOW["inclusao"])
+
+    with st.container():
+        # Linha de cabecalho
+        col_num, col_status = st.columns([3, 2])
+
+        with col_num:
+            st.markdown(f"### {numero}")
+
+        with col_status:
+            st.markdown(f"**Status:** {info_status['label']}")
+
+        # Sessao
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown(f"**Sessao:** {numero_sessao}")
+        with col2:
+            st.markdown(f"**Tipo:** {tipo_sessao}")
+        with col3:
+            st.markdown(f"**Data:** {dia_sessao}")
+
+        # Equipe
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown(f"**Relator:** {relator}")
+        with col2:
+            st.markdown(f"**Editor:** {editor}")
+        with col3:
+            st.markdown(f"**Revisor:** {revisor}")
+
+        # Datas
+        col1, col2 = st.columns(2)
+        with col1:
+            st.caption(f"Entrada: {data_entrada}")
+        with col2:
+            st.caption(f"Conclusao: {data_conclusao}")
+
+        if observacoes:
+            st.markdown(f"*Obs: {observacoes}*")
+
+        # Botoes de acao
+        if modo_edicao:
+            col_btn1, col_btn2, col_btn3 = st.columns(3)
+
+            with col_btn1:
+                if info_status["proximo"]:
+                    if st.button(info_status["acao_proximo"], key=f"avancar_{id_proc}"):
+                        _avancar_status(id_proc, status)
+
+            with col_btn2:
+                if status != "inclusao":
+                    if st.button("◀ Voltar Etapa", key=f"voltar_{id_proc}"):
+                        _voltar_status(id_proc, status)
+
+            with col_btn3:
+                if st.button("🗑 Remover", key=f"remover_{id_proc}"):
+                    _remover_processo(id_proc, numero)
+
+        st.markdown("---")
+
+def _renderizar_pauta_ativa(modo_edicao: bool):
+    """Renderiza a aba de Pauta Ativa com filtros e lista de processos."""
+
+    # Filtros
+    col_f1, col_f2, col_f3 = st.columns(3)
+
+    with col_f1:
+        busca = st.text_input(
+            "Buscar por numero do processo",
+            placeholder="Digite o numero...",
+            key="busca_pauta_seat",
+        )
+
+    with col_f2:
+        status_opcoes = ["todos"] + list(STATUS_FLOW.keys())
+        status_labels = {"todos": "Todos os Status"}
+        status_labels.update({k: v["label"] for k, v in STATUS_FLOW.items()})
+        filtro_status = st.selectbox(
+            "Filtrar por status",
+            options=status_opcoes,
+            format_func=lambda x: status_labels[x],
+            key="filtro_status_seat",
+        )
+
+    with col_f3:
+        filtro_tipo = st.selectbox(
+            "Filtrar por tipo de sessao",
+            options=["todos"] + TIPOS_SESSAO,
+            key="filtro_tipo_seat",
+        )
+
+    # Inclusao de processos
+    if modo_edicao:
+        tab_manual, tab_lote = st.tabs(["➕ Inclusao Manual", "📊 Inclusao em Lote (CSV)"])
+
+        with tab_manual:
+            _incluir_processo_manual(modo_edicao)
+
+        with tab_lote:
+            _incluir_processo_lote(modo_edicao)
+
+    # Buscar processos
+    filtros = {}
+    if filtro_status != "todos":
+        filtros["status"] = filtro_status
+    if filtro_tipo != "todos":
+        filtros["tipo_sessao"] = filtro_tipo
+
+    processos = db_manager.buscar_todos(
+        "pauta_seat",
+        filtros=filtros if filtros else None,
+        ordem_coluna="created_at",
+        ordem_desc=True,
+    )
+
+    # Filtro de busca por numero (client-side)
+    if busca.strip():
+        busca_lower = busca.strip().lower()
+        processos = [p for p in processos if busca_lower in (p.get("processo_numero", "") or "").lower()]
+
+    # Contadores
+    col_c1, col_c2, col_c3, col_c4, col_c5 = st.columns(5)
+    with col_c1:
+        st.metric("Total", len(processos))
+    with col_c2:
+        st.metric("Inclusao", len([p for p in processos if p.get("status") == "inclusao"]))
+    with col_c3:
+        st.metric("Em Edicao", len([p for p in processos if p.get("status") == "em_edicao"]))
+    with col_c4:
+        st.metric("Em Revisao", len([p for p in processos if p.get("status") == "em_revisao"]))
+    with col_c5:
+        st.metric("Encaminhados", len([p for p in processos if p.get("status") == "encaminhado"]))
+
+    st.markdown("---")
+
+    # Lista de processos
+    if not processos:
+        st.info("Nenhum processo encontrado na pauta SEAT.")
+    else:
+        st.markdown(f"### Pauta Ativa ({len(processos)} processo{'s' if len(processos) != 1 else ''})")
+        for processo in processos:
+            _renderizar_card_processo(processo, modo_edicao)
+
+# ============================================================
+# TAB 2: DISTRIBUICAO
+# ============================================================
+
+def _renderizar_distribuicao(modo_edicao: bool):
+    """Renderiza a aba de Distribuicao Equalitaria."""
+
+    # Obter todos os processos
+    todos_processos = db_manager.buscar_todos(
+        "pauta_seat",
+        ordem_coluna="created_at",
+        ordem_desc=True,
+    )
+
+    # Agrupar processos por sessao (sem distribuir)
+    sessoes_nao_distribuidas = {}
+    sessoes_distribuidas = {}
+
+    for p in todos_processos:
+        numero_sessao = p.get("numero_sessao", "") or "Sem sessao"
+        dia_sessao = _formatar_data_curta(p.get("dia_sessao"))
+        tipo_sessao = p.get("tipo_sessao", "") or "Sem tipo"
+        chave = f"{tipo_sessao} | Sessao {numero_sessao} | {dia_sessao}"
+
+        if p.get("editor") or p.get("revisor"):
+            if chave not in sessoes_distribuidas:
+                sessoes_distribuidas[chave] = []
+            sessoes_distribuidas[chave].append(p)
+        else:
+            if chave not in sessoes_nao_distribuidas:
+                sessoes_nao_distribuidas[chave] = []
+            sessoes_nao_distribuidas[chave].append(p)
+
+    # --- SECAO 1: DISTRIBUIR ---
+    st.markdown("### Distribuir Processos")
+
+    if not sessoes_nao_distribuidas:
+        st.info("Nao ha processos pendentes de distribuicao.")
+    elif not modo_edicao:
+        st.info("👁️ Modo visualizacao. A distribuicao pode ser executada apenas por gerentes ou superior.")
+    else:
+        # Obter equipe disponivel
+        disponiveis = _obter_disponiveis()
+
+        if len(disponiveis) < 2:
+            st.error(
+                "E necessario pelo menos 2 membros disponiveis para distribuir "
+                "(editor nao pode ser o mesmo que revisor). "
+                f"Atualmente ha {len(disponiveis)} membro(s) disponivel(is)."
+            )
+            if disponiveis:
+                st.write("Disponiveis:")
+                for nome in disponiveis:
+                    st.write(f"  - {nome}")
+            equipe = _obter_equipe_seat()
+            afastados = _obter_afastados()
+            if afastados:
+                st.write("Afastados:")
+                for nome in afastados:
+                    st.write(f"  - {nome}")
+        else:
+            # Seletor de sessao
+            sessao_sel = st.selectbox(
+                "Selecione a sessao para distribuir",
+                options=list(sessoes_nao_distribuidas.keys()),
+                key="sel_sessao_distribuir",
+            )
+
+            processos_para_distribuir = sessoes_nao_distribuidas[sessao_sel]
+            st.write(f"**{len(processos_para_distribuir)} processo(s)** para distribuir nesta sessao.")
+
+            # Listar processos
+            with st.expander("Ver processos", expanded=False):
+                for p in processos_para_distribuir:
+                    st.write(f"- {p.get('processo_numero', '')} | Relator: {p.get('relator', '-') or '-'}")
+
+            # Quadro de membros: Editor | Revisor
+            st.markdown("### Selecionar Membros")
+            st.caption("Desmarque os membros que nao devem participar desta distribuicao.")
+
+            col_ed, col_rev = st.columns(2)
+
+            editores_selecionados = []
+            revisores_selecionados = []
+
+            with col_ed:
+                st.markdown("##### 📝 Editores")
+                for membro in disponiveis:
+                    if st.checkbox(membro, value=True, key=f"editor_{membro}"):
+                        editores_selecionados.append(membro)
+
+            with col_rev:
+                st.markdown("##### 🔍 Revisores")
+                for membro in disponiveis:
+                    if st.checkbox(membro, value=True, key=f"revisor_{membro}"):
+                        revisores_selecionados.append(membro)
+
+            # Avisos de afastados
+            afastados = _obter_afastados()
+            if afastados:
+                with st.expander(f"📌 {len(afastados)} membro(s) afastado(s) (excluido(s) automaticamente)"):
+                    for nome in afastados:
+                        st.write(f"- {nome}")
+
+            # Botao de distribuir
+            st.markdown("---")
+            if st.button("🎯 Distribuir", type="primary", use_container_width=True, key="btn_distribuir"):
+                if not editores_selecionados or not revisores_selecionados:
+                    st.error("Selecione pelo menos 1 editor e 1 revisor.")
+                else:
+                    with st.spinner("Distribuindo processos..."):
+                        atribuicoes = _distribuir_processos(
+                            processos_para_distribuir,
+                            editores_selecionados,
+                            revisores_selecionados,
+                        )
+
+                    if atribuicoes:
+                        salvos = 0
+                        for proc_id, (editor, revisor) in atribuicoes.items():
+                            resultado = db_manager.atualizar("pauta_seat", proc_id, {
+                                "editor": editor,
+                                "revisor": revisor,
+                            })
+                            if resultado:
+                                salvos += 1
+
+                        st.success(
+                            f"{salvos} processo(s) distribuido(s) com sucesso!"
+                        )
+
+                        # Mostrar resumo da distribuicao
+                        with st.expander("Ver distribuicao"):
+                            for proc in processos_para_distribuir:
+                                if proc["id"] in atribuicoes:
+                                    editor, revisor = atribuicoes[proc["id"]]
+                                    st.write(
+                                        f"- {proc.get('processo_numero', '')} | "
+                                        f"Editor: **{editor}** | Revisor: **{revisor}**"
+                                    )
+
+                        st.rerun()
+                    else:
+                        st.warning("Nenhum processo foi distribuido. Verifique as condicoes.")
+
+    st.markdown("---")
+
+    # --- SECAO 2: EDITAR DISTRIBUICAO ---
+    st.markdown("### Editar Distribuicao")
+
+    if not sessoes_distribuidas:
+        st.info("Nao ha processos distribuidos para editar.")
+    else:
+        # Seletor de sessao para editar
+        sessao_editar = st.selectbox(
+            "Selecione a sessao para editar",
+            options=list(sessoes_distribuidas.keys()),
+            key="sel_sessao_editar",
+        )
+
+        processos_distribuidos = sessoes_distribuidas[sessao_editar]
+
+        # Obter disponiveis para opcoes de substituicao
+        disponiveis = _obter_equipe_seat()
+
+        if not disponiveis:
+            st.warning("Nao ha membros da equipe cadastrados.")
+        else:
+            if PANDAS_OK and modo_edicao:
+                # Usar data_editor para edicao inline
+                df_dados = []
+                for p in processos_distribuidos:
+                    df_dados.append({
+                        "id": p.get("id"),
+                        "processo_numero": p.get("processo_numero", ""),
+                        "editor": p.get("editor", "") or "",
+                        "revisor": p.get("revisor", "") or "",
+                        "status": STATUS_FLOW.get(p.get("status", "inclusao"), {}).get("label", p.get("status", "")),
+                    })
+
+                df = pd.DataFrame(df_dados)
+
+                edited_df = st.data_editor(
+                    df,
+                    column_config={
+                        "id": None,
+                        "processo_numero": st.column_config.TextColumn("Processo", disabled=True),
+                        "editor": st.column_config.SelectboxColumn("Editor", options=disponiveis, required=True),
+                        "revisor": st.column_config.SelectboxColumn("Revisor", options=disponiveis, required=True),
+                        "status": st.column_config.TextColumn("Status", disabled=True),
+                    },
+                    hide_index=True,
+                    use_container_width=True,
+                    key="editor_distribuicao_seat",
+                )
+
+                # Botao para salvar alteracoes
+                if st.button("💾 Salvar Alteracoes", key="btn_salvar_distribuicao"):
+                    erros_validacao = []
+                    salvos = 0
+
+                    for _, row in edited_df.iterrows():
+                        editor_atual = row["editor"]
+                        revisor_atual = row["revisor"]
+
+                        # Validar editor != revisor
+                        if editor_atual == revisor_atual and editor_atual:
+                            erros_validacao.append(
+                                f"{row['processo_numero']}: editor e revisor nao podem ser a mesma pessoa."
+                            )
+                            continue
+
+                        # Buscar valor original
+                        original = next((p for p in processos_distribuidos if p.get("id") == row["id"]), None)
+                        if not original:
+                            continue
+
+                        mudancas = {}
+                        if (original.get("editor") or "") != editor_atual:
+                            mudancas["editor"] = editor_atual if editor_atual else None
+                        if (original.get("revisor") or "") != revisor_atual:
+                            mudancas["revisor"] = revisor_atual if revisor_atual else None
+
+                        if mudancas:
+                            resultado = db_manager.atualizar("pauta_seat", row["id"], mudancas)
+                            if resultado:
+                                salvos += 1
+
+                    if erros_validacao:
+                        for erro in erros_validacao:
+                            st.error(erro)
+
+                    if salvos > 0:
+                        st.success(f"{salvos} alteracao(oes) salva(s) com sucesso!")
+                        st.rerun()
+                    elif not erros_validacao:
+                        st.info("Nenhuma alteracao detectada.")
+
+            else:
+                # Modo visualizacao ou sem pandas: mostrar tabela estatica
+                if PANDAS_OK:
+                    df_dados = []
+                    for p in processos_distribuidos:
+                        df_dados.append({
+                            "Processo": p.get("processo_numero", ""),
+                            "Editor": p.get("editor", "") or "-",
+                            "Revisor": p.get("revisor", "") or "-",
+                            "Status": STATUS_FLOW.get(p.get("status", "inclusao"), {}).get("label", ""),
+                        })
+                    df = pd.DataFrame(df_dados)
+                    st.dataframe(df, hide_index=True, use_container_width=True)
+                else:
+                    for p in processos_distribuidos:
+                        st.write(
+                            f"- {p.get('processo_numero', '')} | "
+                            f"Editor: {p.get('editor', '-') or '-'} | "
+                            f"Revisor: {p.get('revisor', '-') or '-'}"
+                        )
+
+# ============================================================
+# FUNCAO PRINCIPAL
+# ============================================================
+
+def renderizar(usuario: dict, modo_edicao: bool = False):
+    """
+    Funcao principal do modulo SEAT.
+    Recebe os dados do usuario logado e o modo (edicao ou visualizacao).
+
+    Sub-etapas:
+    - 1A: Pauta Ativa (CRUD com sessoes)
+    - 1B: Distribuicao Equalitaria
+    """
+
+    nome = usuario.get("nome", "Usuario")
+    cargo = usuario.get("cargo", "operacional")
+    setor = usuario.get("setor", "SEAT")
+
+    st.markdown(f"**Colaborador:** {nome} | **Cargo:** {cargo} | **Setor:** {setor}")
+
+    if not modo_edicao:
+        st.info("👁️ Voce esta em modo de visualizacao. Operacoes de edicao estao bloqueadas.")
+
+    st.markdown("---")
+
+    # Abas do modulo SEAT
+    tab_pauta, tab_distribuicao, tab_motor, tab_quarta, tab_dodf = st.tabs([
+        "📋 Pauta Ativa",
+        "🔀 Distribuicao",
+        "⚙️ Motor NIP (em breve)",
+        "📅 Pauta de Quarta (em breve)",
+        "📰 Escala DODF (em breve)",
+    ])
+
+    with tab_pauta:
+        _renderizar_pauta_ativa(modo_edicao)
+
+    with tab_distribuicao:
+        _renderizar_distribuicao(modo_edicao)
+
+    with tab_motor:
+        st.info("⚙️ O Motor NIP sera implementado nas proximas sub-etapas.")
+
+    with tab_quarta:
+        st.info("📅 A Pauta de Quarta-Feira sera implementada na sub-etapa 1H.")
+
+    with tab_dodf:
+        st.info("📰 A Escala de Publicacao DODF sera implementada na sub-etapa 1I.")
