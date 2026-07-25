@@ -248,9 +248,12 @@ def _contar_atribuicoes(nomes: list, campo: str) -> dict:
 
 def _distribuir_processos(processos: list, editores: list, revisores: list) -> dict:
     """
-    Algoritmo de distribuicao equalitaria.
-    - Balanceia carga: quem tem menos atribuicoes recebe o proximo processo
-    - Garante editor != revisor para cada processo
+    Algoritmo de distribuicao equalitaria para SEAT.
+    
+    Diferenca do SEXP:
+    - No SEAT, todo mundo revisa todo mundo.
+    - Editor PODE ser o mesmo que revisor (sem restricao).
+    - Apenas balanceia a carga igualmente entre os disponiveis.
     """
     if not processos or not editores or not revisores:
         return {}
@@ -265,16 +268,12 @@ def _distribuir_processos(processos: list, editores: list, revisores: list) -> d
         if not proc_id:
             continue
 
+        # Editor: membro com menos atribuicoes
         editor = min(editores, key=lambda n: contador_editor[n])
         contador_editor[editor] += 1
 
-        revisores_disponiveis = [r for r in revisores if r != editor]
-
-        if not revisores_disponiveis:
-            contador_editor[editor] -= 1
-            continue
-
-        revisor = min(revisores_disponiveis, key=lambda n: contador_revisor[n])
+        # Revisor: membro com menos atribuicoes (pode ser o mesmo do editor)
+        revisor = min(revisores, key=lambda n: contador_revisor[n])
         contador_revisor[revisor] += 1
 
         atribuicoes[proc_id] = (editor, revisor)
@@ -934,10 +933,9 @@ def _renderizar_distribuicao(modo_edicao: bool):
     else:
         disponiveis = _obter_disponiveis()
 
-        if len(disponiveis) < 2:
+        if len(disponiveis) < 1:
             st.error(
-                "E necessario pelo menos 2 membros disponiveis para distribuir "
-                "(editor nao pode ser o mesmo que revisor). "
+                "Nao ha membros disponiveis para distribuir. "
                 f"Atualmente ha {len(disponiveis)} membro(s) disponivel(is)."
             )
             if disponiveis:
@@ -954,7 +952,7 @@ def _renderizar_distribuicao(modo_edicao: bool):
             sessao_sel = st.selectbox(
                 "Selecione a sessao para distribuir",
                 options=list(sessoes_nao_distribuidas.keys()),
-                key="sel_sessao_distribuir",
+                key="dist_sel_distribuir",
             )
 
             processos_para_distribuir = sessoes_nao_distribuidas[sessao_sel]
@@ -965,7 +963,7 @@ def _renderizar_distribuicao(modo_edicao: bool):
                     st.write(f"- {p.get('processo_numero', '')} | Relator: {p.get('relator', '-') or '-'}")
 
             st.markdown("### Selecionar Membros")
-            st.caption("Desmarque os membros que nao devem participar desta distribuicao.")
+            st.caption("Desmarque os membros que nao devem participar desta distribuicao. No SEAT, todo mundo revisa todo mundo.")
 
             col_ed, col_rev = st.columns(2)
 
@@ -975,13 +973,13 @@ def _renderizar_distribuicao(modo_edicao: bool):
             with col_ed:
                 st.markdown("##### Editores")
                 for membro in disponiveis:
-                    if st.checkbox(membro, value=True, key=f"editor_{membro}"):
+                    if st.checkbox(membro, value=True, key=f"dist_editor_{membro}"):
                         editores_selecionados.append(membro)
 
             with col_rev:
                 st.markdown("##### Revisores")
                 for membro in disponiveis:
-                    if st.checkbox(membro, value=True, key=f"revisor_{membro}"):
+                    if st.checkbox(membro, value=True, key=f"dist_revisor_{membro}"):
                         revisores_selecionados.append(membro)
 
             afastados = _obter_afastados()
@@ -991,7 +989,7 @@ def _renderizar_distribuicao(modo_edicao: bool):
                         st.write(f"- {nome}")
 
             st.markdown("---")
-            if st.button("Distribuir", type="primary", use_container_width=True, key="btn_distribuir"):
+            if st.button("Distribuir", type="primary", use_container_width=True, key="dist_btn_distribuir"):
                 if not editores_selecionados or not revisores_selecionados:
                     st.error("Selecione pelo menos 1 editor e 1 revisor.")
                 else:
@@ -1038,7 +1036,7 @@ def _renderizar_distribuicao(modo_edicao: bool):
         sessao_editar = st.selectbox(
             "Selecione a sessao para editar",
             options=list(sessoes_distribuidas.keys()),
-            key="sel_sessao_editar",
+            key="dist_sel_editar",
         )
 
         processos_distribuidos = sessoes_distribuidas[sessao_editar]
@@ -1049,7 +1047,8 @@ def _renderizar_distribuicao(modo_edicao: bool):
             st.warning("Nao ha membros da equipe cadastrados.")
         else:
             if PANDAS_OK and modo_edicao:
-                # Montar DataFrame com os campos atualizados
+                # Montar DataFrame com a ordem correta de colunas:
+                # Processo - Relator - Editor - Editado - Revisor - Revisado - Comentario
                 df_dados = []
                 for p in processos_distribuidos:
                     df_dados.append({
@@ -1057,15 +1056,15 @@ def _renderizar_distribuicao(modo_edicao: bool):
                         "processo_numero": p.get("processo_numero", ""),
                         "relator": p.get("relator", "") or "",
                         "editor": p.get("editor", "") or "",
-                        "revisor": p.get("revisor", "") or "",
                         "editado": bool(p.get("editado", False)),
+                        "revisor": p.get("revisor", "") or "",
                         "revisado": bool(p.get("revisado", False)),
                         "comentario": p.get("comentario", "") or "",
                     })
 
                 df = pd.DataFrame(df_dados)
 
-                # Data editor com colunas atualizadas
+                # Data editor com colunas na ordem solicitada
                 edited_df = st.data_editor(
                     df,
                     column_config={
@@ -1073,33 +1072,26 @@ def _renderizar_distribuicao(modo_edicao: bool):
                         "processo_numero": st.column_config.TextColumn("Processo", disabled=True),
                         "relator": st.column_config.TextColumn("Relator", disabled=True),
                         "editor": st.column_config.SelectboxColumn("Editor", options=disponiveis, required=True),
-                        "revisor": st.column_config.SelectboxColumn("Revisor", options=disponiveis, required=True),
                         "editado": st.column_config.CheckboxColumn("Editado", default=False),
+                        "revisor": st.column_config.SelectboxColumn("Revisor", options=disponiveis, required=True),
                         "revisado": st.column_config.CheckboxColumn("Revisado", default=False),
                         "comentario": st.column_config.TextColumn("Comentario", width="medium"),
                     },
                     hide_index=True,
                     use_container_width=True,
-                    key="editor_distribuicao_seat",
+                    key="dist_data_editor",
                 )
 
                 # Botao para salvar alteracoes
-                if st.button("Salvar Alteracoes", key="btn_salvar_distribuicao"):
-                    erros_validacao = []
+                if st.button("Salvar Alteracoes", key="dist_btn_salvar"):
                     salvos = 0
 
                     for _, row in edited_df.iterrows():
                         editor_atual = row["editor"]
                         revisor_atual = row["revisor"]
 
-                        # Validar editor != revisor
-                        if editor_atual == revisor_atual and editor_atual:
-                            erros_validacao.append(
-                                f"{row['processo_numero']}: editor e revisor nao podem ser a mesma pessoa."
-                            )
-                            continue
+                        # No SEAT, editor pode ser igual a revisor (sem validacao de diferenca)
 
-                        # Buscar valor original
                         original = next((p for p in processos_distribuidos if p.get("id") == row["id"]), None)
                         if not original:
                             continue
@@ -1148,27 +1140,22 @@ def _renderizar_distribuicao(modo_edicao: bool):
                             if resultado:
                                 salvos += 1
 
-                    # Feedback
-                    if erros_validacao:
-                        for erro in erros_validacao:
-                            st.error(erro)
-
                     if salvos > 0:
                         st.success(f"{salvos} alteracao(oes) salva(s) com sucesso!")
                         st.rerun()
-                    elif not erros_validacao:
+                    else:
                         st.info("Nenhuma alteracao detectada.")
 
             elif PANDAS_OK:
-                # Modo visualizacao: tabela estatica com as novas colunas
+                # Modo visualizacao: tabela estatica na ordem correta
                 df_dados = []
                 for p in processos_distribuidos:
                     df_dados.append({
                         "Processo": p.get("processo_numero", ""),
                         "Relator": p.get("relator", "") or "-",
                         "Editor": p.get("editor", "") or "-",
-                        "Revisor": p.get("revisor", "") or "-",
                         "Editado": "Sim" if p.get("editado", False) else "Nao",
+                        "Revisor": p.get("revisor", "") or "-",
                         "Revisado": "Sim" if p.get("revisado", False) else "Nao",
                         "Comentario": p.get("comentario", "") or "-",
                     })
@@ -1182,117 +1169,11 @@ def _renderizar_distribuicao(modo_edicao: bool):
                         f"- {p.get('processo_numero', '')} | "
                         f"Relator: {p.get('relator', '-') or '-'} | "
                         f"Editor: {p.get('editor', '-') or '-'} | "
-                        f"Revisor: {p.get('revisor', '-') or '-'} | "
                         f"Editado: {'Sim' if p.get('editado') else 'Nao'} | "
+                        f"Revisor: {p.get('revisor', '-') or '-'} | "
                         f"Revisado: {'Sim' if p.get('revisado') else 'Nao'} | "
                         f"Comentario: {p.get('comentario', '') or '-'}"
                     )
-
-    # --- SECAO 2: EDITAR DISTRIBUICAO ---
-    st.markdown("### Editar Distribuicao")
-
-    if not sessoes_distribuidas:
-        st.info("Nao ha processos distribuidos para editar.")
-    else:
-        sessao_editar = st.selectbox(
-            "Selecione a sessao para editar",
-            options=list(sessoes_distribuidas.keys()),
-            key="sel_sessao_editar",
-        )
-
-        processos_distribuidos = sessoes_distribuidas[sessao_editar]
-
-        disponiveis = _obter_equipe_seat()
-
-        if not disponiveis:
-            st.warning("Nao ha membros da equipe cadastrados.")
-        else:
-            if PANDAS_OK and modo_edicao:
-                df_dados = []
-                for p in processos_distribuidos:
-                    df_dados.append({
-                        "id": p.get("id"),
-                        "processo_numero": p.get("processo_numero", ""),
-                        "editor": p.get("editor", "") or "",
-                        "revisor": p.get("revisor", "") or "",
-                        "status": STATUS_FLOW.get(p.get("status", "inclusao"), {}).get("label", p.get("status", "")),
-                    })
-
-                df = pd.DataFrame(df_dados)
-
-                edited_df = st.data_editor(
-                    df,
-                    column_config={
-                        "id": None,
-                        "processo_numero": st.column_config.TextColumn("Processo", disabled=True),
-                        "editor": st.column_config.SelectboxColumn("Editor", options=disponiveis, required=True),
-                        "revisor": st.column_config.SelectboxColumn("Revisor", options=disponiveis, required=True),
-                        "status": st.column_config.TextColumn("Status", disabled=True),
-                    },
-                    hide_index=True,
-                    use_container_width=True,
-                    key="editor_distribuicao_seat",
-                )
-
-                if st.button("Salvar Alteracoes", key="btn_salvar_distribuicao"):
-                    erros_validacao = []
-                    salvos = 0
-
-                    for _, row in edited_df.iterrows():
-                        editor_atual = row["editor"]
-                        revisor_atual = row["revisor"]
-
-                        if editor_atual == revisor_atual and editor_atual:
-                            erros_validacao.append(
-                                f"{row['processo_numero']}: editor e revisor nao podem ser a mesma pessoa."
-                            )
-                            continue
-
-                        original = next((p for p in processos_distribuidos if p.get("id") == row["id"]), None)
-                        if not original:
-                            continue
-
-                        mudancas = {}
-                        if (original.get("editor") or "") != editor_atual:
-                            mudancas["editor"] = editor_atual if editor_atual else None
-                        if (original.get("revisor") or "") != revisor_atual:
-                            mudancas["revisor"] = revisor_atual if revisor_atual else None
-
-                        if mudancas:
-                            resultado = db_manager.atualizar("pauta_seat", row["id"], mudancas)
-                            if resultado:
-                                salvos += 1
-
-                    if erros_validacao:
-                        for erro in erros_validacao:
-                            st.error(erro)
-
-                    if salvos > 0:
-                        st.success(f"{salvos} alteracao(oes) salva(s) com sucesso!")
-                        st.rerun()
-                    elif not erros_validacao:
-                        st.info("Nenhuma alteracao detectada.")
-
-            else:
-                if PANDAS_OK:
-                    df_dados = []
-                    for p in processos_distribuidos:
-                        df_dados.append({
-                            "Processo": p.get("processo_numero", ""),
-                            "Editor": p.get("editor", "") or "-",
-                            "Revisor": p.get("revisor", "") or "-",
-                            "Status": STATUS_FLOW.get(p.get("status", "inclusao"), {}).get("label", ""),
-                        })
-                    df = pd.DataFrame(df_dados)
-                    st.dataframe(df, hide_index=True, use_container_width=True)
-                else:
-                    for p in processos_distribuidos:
-                        st.write(
-                            f"- {p.get('processo_numero', '')} | "
-                            f"Editor: {p.get('editor', '-') or '-'} | "
-                            f"Revisor: {p.get('revisor', '-') or '-'}"
-                        )
-
 # ============================================================
 # FUNCAO PRINCIPAL
 # ============================================================
