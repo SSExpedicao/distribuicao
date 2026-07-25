@@ -726,6 +726,78 @@ def _salvar_comentario(id_processo: int, comentario: str):
     st.success("Comentario salvo.")
     st.rerun()
 
+def renderizar_sidebar(usuario: dict, modo_edicao: bool = False):
+    """
+    Renderiza tabelas de carga na barra lateral.
+    
+    - Operacionais: veem apenas seus proprios dados
+    - Gerente e acima: veem todos os membros
+    """
+    import pandas as pd
+
+    cargo_usuario = usuario.get("cargo", "operacional")
+    nome_usuario = usuario.get("nome", "")
+    filtrar_por_usuario = (cargo_usuario == "operacional" and nome_usuario)
+
+    todos_processos = db_manager.buscar_todos("pauta_seat")
+    equipe = _obter_equipe_seat()
+
+    if not equipe:
+        return
+
+    if filtrar_por_usuario:
+        nome_norm = _normalizar_texto(nome_usuario)
+        equipe_filtrada = [n for n in equipe if _normalizar_texto(n) == nome_norm]
+    else:
+        equipe_filtrada = equipe
+
+    dados_edicao = []
+    dados_revisao = []
+
+    for nome in equipe_filtrada:
+        nome_norm = _normalizar_texto(nome)
+
+        qtd_editar = 0
+        faltam_editar = 0
+        qtd_revisar = 0
+        faltam_revisar = 0
+
+        for p in todos_processos:
+            editor_p = _normalizar_texto(p.get("editor", "") or "")
+            revisor_p = _normalizar_texto(p.get("revisor", "") or "")
+            editado_p = bool(p.get("editado", False))
+            revisado_p = bool(p.get("revisado", False))
+
+            if editor_p == nome_norm:
+                qtd_editar += 1
+                if not editado_p:
+                    faltam_editar += 1
+
+            if revisor_p == nome_norm:
+                qtd_revisar += 1
+                if not revisado_p:
+                    faltam_revisar += 1
+
+        dados_edicao.append({"Resp.": nome, "Qtd": qtd_editar, "Faltam": faltam_editar})
+        dados_revisao.append({"Resp.": nome, "Qtd": qtd_revisar, "Faltam": faltam_revisar})
+
+    if not dados_edicao:
+        return
+
+    df_ed = pd.DataFrame(dados_edicao)
+    df_rev = pd.DataFrame(dados_revisao)
+
+    # Totais (apenas para gerente e acima)
+    if not filtrar_por_usuario:
+        df_ed = pd.concat([df_ed, pd.DataFrame([{"Resp.": "Total", "Qtd": df_ed["Qtd"].sum(), "Faltam": df_ed["Faltam"].sum()}])], ignore_index=True)
+        df_rev = pd.concat([df_rev, pd.DataFrame([{"Resp.": "Total", "Qtd": df_rev["Qtd"].sum(), "Faltam": df_rev["Faltam"].sum()}])], ignore_index=True)
+
+    st.markdown("**Edicao**")
+    st.dataframe(df_ed, hide_index=True, use_container_width=True, height=len(df_ed) * 35 + 40)
+
+    st.markdown("**Revisao**")
+    st.dataframe(df_rev, hide_index=True, use_container_width=True, height=len(df_rev) * 35 + 40)
+
 def _renderizar_card_processo(processo: dict, modo_edicao: bool):
     """Renderiza um card individual de processo na pauta ativa."""
     id_proc = processo.get("id")
@@ -931,9 +1003,6 @@ def _renderizar_resumo_carga(modo_edicao: bool, usuario: dict = None):
 
 def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
     """Renderiza a aba de Pauta Ativa com filtros e lista de processos."""
-
-    # Resumo de carga no topo
-    _renderizar_resumo_carga(modo_edicao, usuario)
 
     # Determinar se precisa filtrar por usuario
     cargo_usuario = usuario.get("cargo", "operacional") if usuario else "operacional"
