@@ -3,15 +3,16 @@ app.py
 Roteador Central do Hub SS - Secretaria das Sessoes - TCDF
 
 Arquitetura: Python + Streamlit + Supabase
-Funcao: Porta de entrada do sistema. Autentica usuarios, aplica RBAC
-        em 3 niveis (Raiz, Gerente, Operacional) e roteia para o
-        modulo correspondente na pasta modulos/.
+Funcao: Porta de entrada do sistema. Autentica usuarios por matricula + senha,
+        aplica RBAC em 5 niveis (Criador, Raiz, Secretaria, Gerente, Operacional)
+        e roteia para o modulo correspondente na pasta modulos/.
 
 Principios:
 - Nao conhece logica de negocio (Motor NIP, pautas, distribuicao)
 - Apenas autentica, verifica permissoes e direciona
 - Carregamento dinamico de modulos (importlib)
 - Graceful degradation: se um modulo falha, o resto continua funcionando
+- Passa modo_edicao para cada modulo (True = pode editar, False = so visualizar)
 """
 
 import streamlit as st
@@ -19,7 +20,7 @@ import importlib
 from datetime import datetime
 
 # ============================================================
-# CONFIGURACAO DA PAGINA (deve ser o primeiro comando Streamlit)
+# CONFIGURACAO DA PAGINA
 # ============================================================
 st.set_page_config(
     page_title="Hub SS - TCDF",
@@ -34,14 +35,10 @@ st.set_page_config(
 import db_manager
 
 # ============================================================
-# INICIALIZACAO DO BANCO (semeadura automatica)
+# INICIALIZACAO DO BANCO
 # ============================================================
 def inicializar_banco():
-    """
-    Garante que o banco tenha usuarios iniciais e regras padrao.
-    Executado uma vez por sessao.
-    Seguro: se ja existirem registros, nao faz nada.
-    """
+    """Garante que o banco tenha usuarios iniciais e regras padrao."""
     try:
         db_manager.semear_usuarios_iniciais()
         db_manager.semear_regras_padrao()
@@ -49,11 +46,14 @@ def inicializar_banco():
         st.error(f"Erro ao inicializar banco: {e}")
 
 # ============================================================
-# DEFINICAO DE PERMISSOES POR CARGO (RBAC)
+# DEFINICAO DE MODULOS DO SISTEMA
 # ============================================================
-
-# Modulos disponiveis no sistema (chave = nome do arquivo em modulos/)
 MODULOS_SISTEMA = {
+    "GAB": {
+        "arquivo": "gab",
+        "descricao": "Torre de Controle (Gabinete)",
+        "icone": "🏛️",
+    },
     "SEAT": {
         "arquivo": "seat",
         "descricao": "Edicao e Triagem",
@@ -74,43 +74,66 @@ MODULOS_SISTEMA = {
         "descricao": "Mandados e Diligencias",
         "icone": "📋",
     },
-    "GAB": {
-        "arquivo": "gab",
-        "descricao": "Torre de Controle (Gabinete)",
-        "icone": "🏛️",
-    },
 }
+
+# ============================================================
+# RBAC: PERMISSOES POR CARGO
+# ============================================================
 
 def obter_modulos_permitidos(cargo: str, setor: str) -> list:
     """
-    Define quais modulos o usuario pode ver na barra lateral,
-    baseado no cargo e setor.
+    Define quais modulos o usuario ve na barra lateral.
 
-    RBAC em 3 niveis:
-    - Raiz: ve todos os modulos
-    - Gerente: ve seu modulo de lotacao + GAB (como espectador)
-    - Operacional: ve apenas seu modulo de lotacao
+    RBAC em 5 niveis:
+    - Criador: todos os modulos
+    - Raiz: todos os modulos (GAB primeiro, depois setores)
+    - Secretaria: todos os modulos (visualizacao + gestao de usuarios no GAB)
+    - Gerente: GAB + seu setor
+    - Operacional: apenas seu setor
     """
-    if cargo == "raiz":
-        return ["SEAT", "SEXP", "SERCON", "SEMAND", "GAB"]
+    if cargo in ("criador", "raiz", "secretaria"):
+        return ["GAB", "SEAT", "SEXP", "SERCON", "SEMAND"]
 
     elif cargo == "gerente":
-        # Gerente ve seu setor + GAB
-        modulos = [setor] if setor in MODULOS_SISTEMA else []
-        modulos.append("GAB")
+        modulos = ["GAB"]
+        if setor in MODULOS_SISTEMA and setor != "GAB":
+            modulos.append(setor)
         return modulos
 
     else:  # operacional
         return [setor] if setor in MODULOS_SISTEMA else []
 
+def obter_modo_edicao(cargo: str, modulo_key: str, setor_usuario: str) -> bool:
+    """
+    Determina se o usuario pode editar no modulo atual.
+
+    Regras:
+    - Criador: sempre True (teste e correcao em todos os modulos)
+    - Raiz: True apenas no GAB. Setores: somente visualizacao
+    - Secretaria: True apenas no GAB (gestao de colaboradores). Setores: visualizacao
+    - Gerente: True no GAB e no seu setor. Outros setores: visualizacao
+    - Operacional: True no seu setor (com restricoes a definir por etapa)
+    """
+    if cargo == "criador":
+        return True
+
+    if cargo == "raiz":
+        return modulo_key == "GAB"
+
+    if cargo == "secretaria":
+        return modulo_key == "GAB"
+
+    if cargo == "gerente":
+        return modulo_key == "GAB" or modulo_key == setor_usuario
+
+    # operacional
+    return modulo_key == setor_usuario
+
 # ============================================================
 # TELA DE LOGIN
 # ============================================================
 def tela_login():
-    """
-    Renderiza a tela de login.
-    Se autenticado, guarda dados do usuario em session_state.
-    """
+    """Renderiza a tela de login com matricula + senha."""
     st.markdown("## ⚖️ Hub SS - Secretaria das Sessoes")
     st.markdown("### Tribunal de Contas do Distrito Federal")
     st.markdown("---")
@@ -121,16 +144,16 @@ def tela_login():
         st.markdown("#### 🔐 Acesso ao Sistema")
 
         with st.form("form_login"):
-            email = st.text_input("E-mail", placeholder="seu.email@tcdf.gov.br")
-            senha = st.text_input("Senha", type="password", placeholder="Digite sua senha")
+            matricula = st.text_input("Matrícula", placeholder="Digite sua matrícula")
+            senha = st.text_input("Senha", type="password", placeholder="tcdf.ssXXXX")
             submit = st.form_submit_button("Entrar", use_container_width=True)
 
             if submit:
-                if not email or not senha:
-                    st.warning("Preencha e-mail e senha.")
+                if not matricula or not senha:
+                    st.warning("Preencha matrícula e senha.")
                     return False
 
-                usuario = db_manager.autenticar_usuario(email.strip(), senha.strip())
+                usuario = db_manager.autenticar_usuario(matricula, senha)
 
                 if usuario:
                     st.session_state["usuario"] = usuario
@@ -138,46 +161,55 @@ def tela_login():
                     st.session_state["login_time"] = datetime.now()
                     st.rerun()
                 else:
-                    st.error("E-mail ou senha incorretos. Verifique suas credenciais.")
+                    st.error("Matrícula ou senha incorretos. Verifique suas credenciais.")
                     return False
 
         st.markdown("---")
-        st.caption("Credenciais iniciais padrao:")
-        st.caption("Secretario: secretario@tcdf.gov.br / tcdf2025")
-        st.caption("Chefe SEAT: chefeseat@tcdf.gov.br / tcdf2025")
-        st.caption("Assessor SEAT: assessorseat@tcdf.gov.br / tcdf2025")
+        st.caption("**Credenciais de teste:**")
+        st.caption("Criador: mat. `1918` / senha `tcdf.ss2025`")
+        st.caption("Raiz: mat. `1001` / senha `tcdf.ss2025`")
+        st.caption("Secretaria: mat. `2001` / senha `tcdf.ss2025`")
+        st.caption("Gerente SEAT: mat. `3001` / senha `tcdf.ss2025`")
+        st.caption("Operacional SEAT: mat. `4001` / senha `tcdf.ss2025`")
 
     return False
 
 # ============================================================
-# BARRA LATERAL (NAV)
+# BARRA LATERAL
 # ============================================================
 def barra_lateral():
-    """
-    Renderiza a barra lateral com:
-    - Info do usuario logado
-    - Navegacao para modulos permitidos
-    - Botao de logout
-    """
+    """Renderiza a barra lateral com info do usuario e navegacao."""
     usuario = st.session_state.get("usuario", {})
     nome = usuario.get("nome", "Usuario")
     cargo = usuario.get("cargo", "operacional")
     setor = usuario.get("setor", "SEAT")
+    vinculo = usuario.get("vinculo", "servidor")
 
     # Traduzir cargo para exibicao
     cargo_exibicao = {
-        "raiz": "Nivel Raiz",
-        "gerente": "Chefe de Setor",
-        "operacional": "Assessor/Estagiario",
+        "criador": "👑 Criador",
+        "raiz": "🔴 Nivel Raiz",
+        "secretaria": "🟠 Secretaria",
+        "gerente": "🟡 Chefe de Setor",
+        "operacional": "🟢 Operacional",
     }.get(cargo, cargo)
 
-    # --- Cabecalho do usuario ---
+    # Traduzir vinculo
+    vinculo_exibicao = {
+        "servidor": "Servidor",
+        "terceirizado": "Terceirizado",
+        "estagiario": "Estagiario",
+    }.get(vinculo, vinculo)
+
+    # Cabecalho do usuario
     st.sidebar.markdown(f"### 👤 {nome}")
     st.sidebar.markdown(f"**{cargo_exibicao}**")
     st.sidebar.markdown(f"Setor: **{setor}**")
+    if cargo == "operacional":
+        st.sidebar.markdown(f"Vinculo: **{vinculo_exibicao}**")
     st.sidebar.markdown("---")
 
-    # --- Navegacao ---
+    # Navegacao
     modulos_permitidos = obter_modulos_permitidos(cargo, setor)
 
     if not modulos_permitidos:
@@ -203,12 +235,16 @@ def barra_lateral():
     indice = opcoes.index(escolha)
     modulo_selecionado = chaves[indice]
 
-    # --- Rodape da sidebar ---
+    # Indicador de modo (edicao vs visualizacao)
+    modo_edicao = obter_modo_edicao(cargo, modulo_selecionado, setor)
+    if not modo_edicao and modulo_selecionado != "GAB":
+        st.sidebar.info("👁️ Modo visualizacao (somente leitura)")
+
+    # Rodape da sidebar
     st.sidebar.markdown("---")
     st.sidebar.caption(f"Sessao iniciada: {st.session_state.get('login_time', datetime.now()).strftime('%d/%m/%Y %H:%M')}")
 
     if st.sidebar.button("🚪 Sair", use_container_width=True):
-        # Limpar session_state
         for key in list(st.session_state.keys()):
             del st.session_state[key]
         st.rerun()
@@ -219,15 +255,7 @@ def barra_lateral():
 # CARREGADOR DINAMICO DE MODULOS
 # ============================================================
 def carregar_modulo(nome_arquivo: str):
-    """
-    Importa dinamicamente um modulo da pasta modulos/.
-
-    Args:
-        nome_arquivo: Nome do arquivo sem extensao (ex: 'seat')
-
-    Returns:
-        Modulo importado, ou None se falhar
-    """
+    """Importa dinamicamente um modulo da pasta modulos/."""
     try:
         modulo = importlib.import_module(f"modulos.{nome_arquivo}")
         return modulo
@@ -246,10 +274,7 @@ def carregar_modulo(nome_arquivo: str):
 def renderizar_modulo(modulo_key: str):
     """
     Carrega e renderiza o modulo selecionado.
-    Passa os dados do usuario logado para o modulo.
-
-    Args:
-        modulo_key: Chave do modulo (ex: 'SEAT', 'SEXP')
+    Passa os dados do usuario e o modo (edicao ou visualizacao) para o modulo.
     """
     info = MODULOS_SISTEMA.get(modulo_key)
     if not info:
@@ -268,23 +293,26 @@ def renderizar_modulo(modulo_key: str):
     modulo = carregar_modulo(nome_arquivo)
 
     if modulo is None:
-        st.info(f"O modulo **{modulo_key}** ainda nao foi implementado. Aguarde a proxima fase de desenvolvimento.")
+        st.info(f"O modulo **{modulo_key}** ainda nao foi implementado. Aguarde a proxima fase.")
         return
 
     # Verificar se o modulo tem a funcao 'renderizar'
     if hasattr(modulo, "renderizar"):
-        # Passar dados do usuario para o modulo
-        modulo.renderizar(st.session_state.get("usuario", {}))
+        usuario = st.session_state.get("usuario", {})
+        cargo = usuario.get("cargo", "operacional")
+        setor = usuario.get("setor", "SEAT")
+        modo_edicao = obter_modo_edicao(cargo, modulo_key, setor)
+
+        # Passar usuario e modo_edicao para o modulo
+        modulo.renderizar(usuario, modo_edicao)
     else:
-        st.error(f"O modulo '{modulo_key}' nao tem a funcao 'renderizar'. Verifique a implementacao.")
+        st.error(f"O modulo '{modulo_key}' nao tem a funcao 'renderizar'.")
 
 # ============================================================
 # FLUXO PRINCIPAL
 # ============================================================
 def main():
-    """
-    Fluxo principal da aplicacao.
-    """
+    """Fluxo principal da aplicacao."""
     # 1. Inicializar banco (semeadura)
     inicializar_banco()
 
