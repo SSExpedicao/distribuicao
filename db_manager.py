@@ -1,6 +1,6 @@
 """
 db_manager.py
-Gerenciador de Banco de Dados do Hub SS - Secretaria das Sessões - TCDF
+Gerenciador de Banco de Dados do Hub SS - Secretaria das Sessoes - TCDF
 
 Arquitetura: Python + Streamlit + Supabase (PostgreSQL)
 Funcao: Centralizar TODA comunicacao com o banco Supabase.
@@ -16,6 +16,8 @@ Principios:
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import date
 import os
+import random
+import string
 
 # ============================================================
 # IMPORTS CONDICIONAIS (Extracao de texto de arquivos)
@@ -40,13 +42,6 @@ except ImportError:
 # ============================================================
 # CONFIGURACAO DE CREDENCIAIS
 # ============================================================
-# AVISO DE SEGURANCA: As credenciais abaixo sao um fallback para desenvolvimento.
-# Em producao, configure no Streamlit Cloud > Settings > Secrets:
-#
-# [supabase]
-# url = "https://bporhwdxwsuqnezkyhmn.supabase.co"
-# key = "sua_service_role_key_aqui"
-# ============================================================
 
 _FALLBACK_URL = "https://bporhwdxwsuqnezkyhmn.supabase.co"
 _FALLBACK_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJwb3Jod2R4d3N1cW5lemt5aG1uIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3OTk4Njc3MCwiZXhwIjoyMDk1NTYyNzcwfQ.kJNF9PkhQsBcr5Ecloifo3aGrCrXNn5cWT_5Q2smA-c"
@@ -54,11 +49,10 @@ _FALLBACK_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsIn
 def _carregar_credenciais() -> Tuple[str, str]:
     """
     Carrega credenciais do Supabase na ordem:
-    1. Streamlit Secrets (producao - recomendado)
+    1. Streamlit Secrets (producao)
     2. Variaveis de ambiente (desenvolvimento local)
-    3. Valores hardcoded (fallback - NAO usar em producao)
+    3. Valores hardcoded (fallback)
     """
-    # 1. Streamlit Secrets
     try:
         import streamlit as st
         url = st.secrets["supabase"]["url"]
@@ -67,13 +61,11 @@ def _carregar_credenciais() -> Tuple[str, str]:
     except (ImportError, KeyError, FileNotFoundError):
         pass
 
-    # 2. Variaveis de ambiente
     url_env = os.environ.get("SUPABASE_URL")
     key_env = os.environ.get("SUPABASE_KEY")
     if url_env and key_env:
         return url_env, key_env
 
-    # 3. Fallback hardcoded
     return _FALLBACK_URL, _FALLBACK_KEY
 
 # ============================================================
@@ -86,9 +78,6 @@ def get_supabase():
     """
     Retorna a instancia do cliente Supabase (padrao Singleton).
     Cria a conexao na primeira chamada e reutiliza nas subsequentes.
-
-    Returns:
-        Cliente Supabase conectado, ou None se falhar.
     """
     global _cliente
 
@@ -108,10 +97,7 @@ def get_supabase():
         return None
 
 def reiniciar_conexao():
-    """
-    Forca a recriacao da conexao na proxima chamada de get_supabase().
-    Util quando algo deu errado e precisa reconectar.
-    """
+    """Forca a recriacao da conexao na proxima chamada."""
     global _cliente
     _cliente = None
 
@@ -133,13 +119,7 @@ TABELAS_SISTEMA = [
 ]
 
 def verificar_tabelas() -> Dict[str, bool]:
-    """
-    Verifica quais tabelas do sistema existem no banco.
-    Tenta um SELECT simples em cada uma.
-
-    Returns:
-        Dicionario {nome_tabela: True/False}
-    """
+    """Verifica quais tabelas do sistema existem no banco."""
     cliente = get_supabase()
     if not cliente:
         return {t: False for t in TABELAS_SISTEMA}
@@ -159,16 +139,7 @@ def verificar_tabelas() -> Dict[str, bool]:
 # ============================================================
 
 def inserir(tabela: str, dados: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """
-    Insere um registro na tabela especificada.
-
-    Args:
-        tabela: Nome da tabela no Supabase
-        dados: Dicionario com colunas e valores
-
-    Returns:
-        Registro inserido (com ID gerado), ou None se falhar
-    """
+    """Insere um registro na tabela especificada."""
     cliente = get_supabase()
     if not cliente:
         return None
@@ -189,19 +160,7 @@ def buscar_todos(
     ordem_desc: bool = False,
     limite: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    Busca registros da tabela, com filtros e ordenacao opcionais.
-
-    Args:
-        tabela: Nome da tabela
-        filtros: Dicionario {coluna: valor} para filtro de igualdade
-        ordem_coluna: Coluna para ordenar o resultado
-        ordem_desc: True para ordem decrescente
-        limite: Numero maximo de registros
-
-    Returns:
-        Lista de registros, ou lista vazia se falhar
-    """
+    """Busca registros da tabela, com filtros e ordenacao opcionais."""
     cliente = get_supabase()
     if not cliente:
         return []
@@ -226,12 +185,7 @@ def buscar_todos(
         return []
 
 def buscar_por_id(tabela: str, id_registro: int) -> Optional[Dict[str, Any]]:
-    """
-    Busca um registro especifico pelo ID.
-
-    Returns:
-        Registro encontrado, ou None
-    """
+    """Busca um registro especifico pelo ID."""
     cliente = get_supabase()
     if not cliente:
         return None
@@ -244,12 +198,7 @@ def buscar_por_id(tabela: str, id_registro: int) -> Optional[Dict[str, Any]]:
         return None
 
 def atualizar(tabela: str, id_registro: int, dados: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """
-    Atualiza um registro pelo ID.
-
-    Returns:
-        Registro atualizado, ou None se falhar
-    """
+    """Atualiza um registro pelo ID."""
     cliente = get_supabase()
     if not cliente:
         return None
@@ -264,12 +213,7 @@ def atualizar(tabela: str, id_registro: int, dados: Dict[str, Any]) -> Optional[
         return None
 
 def deletar(tabela: str, id_registro: int) -> bool:
-    """
-    Deleta um registro pelo ID (remocao fisica).
-
-    Returns:
-        True se deletado, False se falhou
-    """
+    """Deleta um registro pelo ID (remocao fisica)."""
     cliente = get_supabase()
     if not cliente:
         return False
@@ -289,19 +233,7 @@ def buscar_todos_paginado(
     ordem_coluna: Optional[str] = None,
     ordem_desc: bool = False,
 ) -> Tuple[List[Dict[str, Any]], int]:
-    """
-    Busca registros com paginacao (usando range do Supabase).
-
-    Args:
-        pagina: Numero da pagina (comeca em 1)
-        por_pagina: Registros por pagina
-        filtros: Dicionario {coluna: valor} para filtrar
-        ordem_coluna: Coluna para ordenar
-        ordem_desc: True para ordem decrescente
-
-    Returns:
-        Tupla (lista_de_registros, total_de_registros)
-    """
+    """Busca registros com paginacao (usando range do Supabase)."""
     cliente = get_supabase()
     if not cliente:
         return [], 0
@@ -332,12 +264,31 @@ def buscar_todos_paginado(
         return [], 0
 
 # ============================================================
-# OPERACOES ESPECIFICAS: USUARIOS E AUTENTICACAO
+# AUTENTICACAO E GESTAO DE USUARIOS
 # ============================================================
 
-def autenticar_usuario(email: str, senha: str) -> Optional[Dict[str, Any]]:
+def gerar_senha_aleatoria() -> str:
     """
-    Autentica um usuario pelo email e senha.
+    Gera senha no formato tcdf.ssXXXX onde XXXX sao 4 digitos aleatorios.
+    Usada ao criar novos usuarios.
+    """
+    digitos = ''.join(random.choices(string.digits, k=4))
+    return f"tcdf.ss{digitos}"
+
+def validar_senha(senha: str) -> bool:
+    """
+    Valida se a senha segue o formato tcdf.ssXXXX.
+    - Deve comecar com 'tcdf.ss'
+    - Deve ter exatamente 4 digitos apos a raiz
+    """
+    if not senha or not senha.startswith("tcdf.ss"):
+        return False
+    sufixo = senha[7:]  # remove "tcdf.ss"
+    return len(sufixo) == 4 and sufixo.isdigit()
+
+def autenticar_usuario(matricula: str, senha: str) -> Optional[Dict[str, Any]]:
+    """
+    Autentica um usuario pela matricula e senha.
 
     Returns:
         Dados do usuario se autenticado, None caso contrario
@@ -350,8 +301,8 @@ def autenticar_usuario(email: str, senha: str) -> Optional[Dict[str, Any]]:
         resp = (
             cliente.table("usuarios_acesso")
             .select("*")
-            .eq("email", email)
-            .eq("senha", senha)
+            .eq("matricula", matricula.strip())
+            .eq("senha", senha.strip())
             .eq("ativo", True)
             .execute()
         )
@@ -360,10 +311,37 @@ def autenticar_usuario(email: str, senha: str) -> Optional[Dict[str, Any]]:
         print(f"[DB ERROR] autenticar_usuario: {e}")
         return None
 
+def alterar_senha(matricula: str, senha_nova: str) -> bool:
+    """
+    Altera a senha de um usuario.
+    A senha deve seguir o formato tcdf.ssXXXX.
+
+    Returns:
+        True se alterada com sucesso, False caso contrario
+    """
+    if not validar_senha(senha_nova):
+        return False
+
+    cliente = get_supabase()
+    if not cliente:
+        return False
+
+    try:
+        resp = (
+            cliente.table("usuarios_acesso")
+            .update({"senha": senha_nova})
+            .eq("matricula", matricula)
+            .execute()
+        )
+        return bool(resp.data)
+    except Exception as e:
+        print(f"[DB ERROR] alterar_senha: {e}")
+        return False
+
 def semear_usuarios_iniciais() -> bool:
     """
     Cria usuarios iniciais se a tabela estiver vazia.
-    Deve ser chamado na inicializacao do app.py.
+    Inclui os 5 niveis de RBAC.
 
     Returns:
         True se executou com sucesso, False se falhou
@@ -373,21 +351,34 @@ def semear_usuarios_iniciais() -> bool:
         return False
 
     try:
-        # Verificar se ja existem usuarios
         resp = cliente.table("usuarios_acesso").select("id").limit(1).execute()
         if resp.data:
             return True
 
         usuarios = [
-            {"nome": "Secretario", "email": "secretario@tcdf.gov.br", "senha": "tcdf2025", "cargo": "raiz", "setor": "GAB", "ativo": True},
-            {"nome": "Subsecretario", "email": "subsecretario@tcdf.gov.br", "senha": "tcdf2025", "cargo": "raiz", "setor": "GAB", "ativo": True},
-            {"nome": "Chefe SEAT", "email": "chefeseat@tcdf.gov.br", "senha": "tcdf2025", "cargo": "gerente", "setor": "SEAT", "ativo": True},
-            {"nome": "Chefe SEXP", "email": "chefesexp@tcdf.gov.br", "senha": "tcdf2025", "cargo": "gerente", "setor": "SEXP", "ativo": True},
-            {"nome": "Chefe SERCON", "email": "chefesercon@tcdf.gov.br", "senha": "tcdf2025", "cargo": "gerente", "setor": "SERCON", "ativo": True},
-            {"nome": "Chefe SEMAND", "email": "chefesemand@tcdf.gov.br", "senha": "tcdf2025", "cargo": "gerente", "setor": "SEMAND", "ativo": True},
-            {"nome": "Assessor SEAT", "email": "assessorseat@tcdf.gov.br", "senha": "tcdf2025", "cargo": "operacional", "setor": "SEAT", "ativo": True},
-            {"nome": "Assessor SEXP", "email": "assessorsexp@tcdf.gov.br", "senha": "tcdf2025", "cargo": "operacional", "setor": "SEXP", "ativo": True},
-            {"nome": "Estagiario SEAT", "email": "estagiarioseat@tcdf.gov.br", "senha": "tcdf2025", "cargo": "operacional", "setor": "SEAT", "ativo": True},
+            # Criador
+            {"matricula": "1918", "nome": "Juan Mauricio Del Carpio Peredo", "senha": "tcdf.ss2025", "cargo": "criador", "setor": "GAB", "vinculo": "servidor", "ativo": True},
+
+            # Raiz
+            {"matricula": "1001", "nome": "Secretario", "senha": "tcdf.ss2025", "cargo": "raiz", "setor": "GAB", "vinculo": "servidor", "ativo": True},
+            {"matricula": "1002", "nome": "Subsecretario", "senha": "tcdf.ss2025", "cargo": "raiz", "setor": "GAB", "vinculo": "servidor", "ativo": True},
+            {"matricula": "1003", "nome": "Assessor Especial", "senha": "tcdf.ss2025", "cargo": "raiz", "setor": "GAB", "vinculo": "servidor", "ativo": True},
+
+            # Secretaria
+            {"matricula": "2001", "nome": "Secretaria 1", "senha": "tcdf.ss2025", "cargo": "secretaria", "setor": "GAB", "vinculo": "servidor", "ativo": True},
+            {"matricula": "2002", "nome": "Secretaria 2", "senha": "tcdf.ss2025", "cargo": "secretaria", "setor": "GAB", "vinculo": "servidor", "ativo": True},
+
+            # Gerentes
+            {"matricula": "3001", "nome": "Chefe SEAT", "senha": "tcdf.ss2025", "cargo": "gerente", "setor": "SEAT", "vinculo": "servidor", "ativo": True},
+            {"matricula": "3002", "nome": "Chefe SEXP", "senha": "tcdf.ss2025", "cargo": "gerente", "setor": "SEXP", "vinculo": "servidor", "ativo": True},
+            {"matricula": "3003", "nome": "Chefe SERCON", "senha": "tcdf.ss2025", "cargo": "gerente", "setor": "SERCON", "vinculo": "servidor", "ativo": True},
+            {"matricula": "3004", "nome": "Chefe SEMAND", "senha": "tcdf.ss2025", "cargo": "gerente", "setor": "SEMAND", "vinculo": "servidor", "ativo": True},
+
+            # Operacionais
+            {"matricula": "4001", "nome": "Assessor SEAT", "senha": "tcdf.ss2025", "cargo": "operacional", "setor": "SEAT", "vinculo": "servidor", "ativo": True},
+            {"matricula": "4002", "nome": "Assessor SEXP", "senha": "tcdf.ss2025", "cargo": "operacional", "setor": "SEXP", "vinculo": "servidor", "ativo": True},
+            {"matricula": "4003", "nome": "Estagiario SEAT", "senha": "tcdf.ss2025", "cargo": "operacional", "setor": "SEAT", "vinculo": "estagiario", "ativo": True},
+            {"matricula": "4004", "nome": "Terceirizado SEAT", "senha": "tcdf.ss2025", "cargo": "operacional", "setor": "SEAT", "vinculo": "terceirizado", "ativo": True},
         ]
 
         resp = cliente.table("usuarios_acesso").insert(usuarios).execute()
@@ -401,12 +392,7 @@ def semear_usuarios_iniciais() -> bool:
 # ============================================================
 
 def listar_equipe(setor: Optional[str] = None, apenas_ativos: bool = True) -> List[Dict[str, Any]]:
-    """
-    Lista membros da equipe, opcionalmente filtrados por setor.
-
-    Returns:
-        Lista de membros
-    """
+    """Lista membros da equipe, opcionalmente filtrados por setor."""
     filtros = {}
     if setor:
         filtros["setor"] = setor
@@ -416,12 +402,7 @@ def listar_equipe(setor: Optional[str] = None, apenas_ativos: bool = True) -> Li
     return buscar_todos("equipe", filtros=filtros, ordem_coluna="nome")
 
 def adicionar_membro_equipe(nome: str, cargo: str, setor: str, funcao: str) -> Optional[Dict[str, Any]]:
-    """
-    Adiciona um novo membro a equipe.
-
-    Returns:
-        Registro criado, ou None se falhou
-    """
+    """Adiciona um novo membro a equipe."""
     return inserir("equipe", {
         "nome": nome,
         "cargo": cargo,
@@ -435,10 +416,7 @@ def atualizar_membro_equipe(id_membro: int, dados: Dict[str, Any]) -> Optional[D
     return atualizar("equipe", id_membro, dados)
 
 def remover_membro_equipe(id_membro: int) -> bool:
-    """
-    Inativa um membro da equipe (soft delete).
-    Nao deleta fisicamente para preservar historico.
-    """
+    """Inativa um membro da equipe (soft delete)."""
     return atualizar("equipe", id_membro, {"ativo": False}) is not None
 
 # ============================================================
@@ -446,12 +424,7 @@ def remover_membro_equipe(id_membro: int) -> bool:
 # ============================================================
 
 def listar_afastamentos(apenas_ativos: bool = True) -> List[Dict[str, Any]]:
-    """
-    Lista afastamentos cadastrados.
-
-    Returns:
-        Lista de afastamentos
-    """
+    """Lista afastamentos cadastrados."""
     filtros = {}
     if apenas_ativos:
         filtros["ativo"] = True
@@ -465,19 +438,7 @@ def adicionar_afastamento(
     data_fim: str,
     motivo: str = "",
 ) -> Optional[Dict[str, Any]]:
-    """
-    Adiciona um afastamento.
-
-    Args:
-        nome: Nome do membro afastado
-        tipo: 'ferias', 'recesso', 'licenca'
-        data_inicio: Data no formato 'YYYY-MM-DD'
-        data_fim: Data no formato 'YYYY-MM-DD'
-        motivo: Motivo opcional
-
-    Returns:
-        Registro criado, ou None se falhou
-    """
+    """Adiciona um afastamento."""
     return inserir("afastamentos", {
         "nome": nome,
         "tipo": tipo,
@@ -495,13 +456,6 @@ def verificar_afastado(nome: str, data_verificacao: Optional[str] = None) -> boo
     """
     Verifica se um membro esta afastado em uma data especifica.
     Usado pelo sistema de distribuicao para excluir membros do sorteio.
-
-    Args:
-        nome: Nome do membro
-        data_verificacao: Data no formato 'YYYY-MM-DD'. Default: hoje.
-
-    Returns:
-        True se afastado, False caso contrario
     """
     if data_verificacao is None:
         data_verificacao = date.today().isoformat()
@@ -542,12 +496,7 @@ def listar_nomes_afastados() -> List[str]:
 # ============================================================
 
 def listar_regras_palavras_chave(apenas_ativas: bool = True) -> List[Dict[str, Any]]:
-    """
-    Lista regras de palavras-chave do Motor NIP.
-
-    Returns:
-        Lista de regras
-    """
+    """Lista regras de palavras-chave do Motor NIP."""
     filtros = {}
     if apenas_ativas:
         filtros["ativo"] = True
@@ -559,17 +508,7 @@ def adicionar_regra_palavra_chave(
     palavra_substituta: str,
     tipo: str = "substituicao",
 ) -> Optional[Dict[str, Any]]:
-    """
-    Adiciona uma regra de transposicao de verbo ou substituicao.
-
-    Args:
-        palavra_original: Verbo no subjuntivo (ex: 'conheca')
-        palavra_substituta: Verbo no infinitivo (ex: 'conhecer')
-        tipo: 'substituicao' ou 'bloqueio'
-
-    Returns:
-        Registro criado, ou None se falhou
-    """
+    """Adiciona uma regra de transposicao de verbo ou substituicao."""
     return inserir("regras_palavras_chave", {
         "palavra_original": palavra_original.lower().strip(),
         "palavra_substituta": palavra_substituta.lower().strip(),
@@ -589,7 +528,6 @@ def semear_regras_padrao() -> bool:
     """
     Cria regras de transposicao de verbos padrao se a tabela estiver vazia.
     O Motor NIP usa estas regras para transpor subjuntivo -> infinitivo imperativo.
-    Deve ser chamado na inicializacao do app.py.
     """
     cliente = get_supabase()
     if not cliente:
@@ -629,15 +567,7 @@ def semear_regras_padrao() -> bool:
 # ============================================================
 
 def extrair_texto_pdf(arquivo) -> str:
-    """
-    Extrai texto de um arquivo PDF.
-
-    Args:
-        arquivo: Objeto de arquivo (UploadedFile do Streamlit ou file-like object)
-
-    Returns:
-        Texto extraido, ou string vazia se falhar
-    """
+    """Extrai texto de um arquivo PDF."""
     if not PDF_OK:
         print("[PDF] Biblioteca nao instalada. Execute: pip install pypdf")
         return ""
@@ -653,15 +583,7 @@ def extrair_texto_pdf(arquivo) -> str:
         return ""
 
 def extrair_texto_docx(arquivo) -> str:
-    """
-    Extrai texto de um arquivo DOCX.
-
-    Args:
-        arquivo: Objeto de arquivo (UploadedFile do Streamlit ou file-like object)
-
-    Returns:
-        Texto extraido, ou string vazia se falhar
-    """
+    """Extrai texto de um arquivo DOCX."""
     if not DOCX_OK:
         print("[DOCX] Biblioteca nao instalada. Execute: pip install python-docx")
         return ""
@@ -678,12 +600,6 @@ def extrair_texto(arquivo) -> str:
     """
     Extrai texto de um arquivo (PDF, DOCX ou TXT).
     Detecta o tipo automaticamente pela extensao ou tipo MIME.
-
-    Args:
-        arquivo: Objeto de arquivo com atributo 'name' ou 'type'
-
-    Returns:
-        Texto extraido, ou string vazia se falhar
     """
     if arquivo is None:
         return ""
@@ -691,15 +607,12 @@ def extrair_texto(arquivo) -> str:
     nome = getattr(arquivo, "name", "").lower()
     tipo = getattr(arquivo, "type", "").lower()
 
-    # PDF
     if nome.endswith(".pdf") or "pdf" in tipo:
         return extrair_texto_pdf(arquivo)
 
-    # DOCX
     if nome.endswith(".docx") or "word" in tipo:
         return extrair_texto_docx(arquivo)
 
-    # TXT (assumir texto plano)
     try:
         if hasattr(arquivo, "read"):
             conteudo = arquivo.read()
