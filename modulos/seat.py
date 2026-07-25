@@ -815,8 +815,13 @@ def _renderizar_card_processo(processo: dict, modo_edicao: bool):
 
         st.markdown("---")
 
-def _renderizar_pauta_ativa(modo_edicao: bool):
+def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
     """Renderiza a aba de Pauta Ativa com filtros e lista de processos."""
+
+    # Determinar se precisa filtrar por usuario
+    cargo_usuario = usuario.get("cargo", "operacional") if usuario else "operacional"
+    nome_usuario = usuario.get("nome", "") if usuario else ""
+    filtrar_por_usuario = (cargo_usuario == "operacional" and nome_usuario)
 
     col_f1, col_f2, col_f3 = st.columns(3)
 
@@ -867,10 +872,21 @@ def _renderizar_pauta_ativa(modo_edicao: bool):
         ordem_desc=True,
     )
 
+    # Filtro de busca por numero (client-side)
     if busca.strip():
         busca_lower = busca.strip().lower()
         processos = [p for p in processos if busca_lower in (p.get("processo_numero", "") or "").lower()]
 
+    # FILTRAR POR USUARIO: operacionais so veem seus processos
+    if filtrar_por_usuario:
+        nome_norm = _normalizar_texto(nome_usuario)
+        processos = [
+            p for p in processos
+            if _normalizar_texto(p.get("editor", "")) == nome_norm
+            or _normalizar_texto(p.get("revisor", "")) == nome_norm
+        ]
+
+    # Contadores
     col_c1, col_c2, col_c3, col_c4, col_c5 = st.columns(5)
     with col_c1:
         st.metric("Total", len(processos))
@@ -886,9 +902,15 @@ def _renderizar_pauta_ativa(modo_edicao: bool):
     st.markdown("---")
 
     if not processos:
-        st.info("Nenhum processo encontrado na pauta SEAT.")
+        if filtrar_por_usuario:
+            st.info(f"Nenhum processo atribuido a voce ({nome_usuario}).")
+        else:
+            st.info("Nenhum processo encontrado na pauta SEAT.")
     else:
-        st.markdown(f"### Pauta Ativa ({len(processos)} processo{'s' if len(processos) != 1 else ''})")
+        if filtrar_por_usuario:
+            st.markdown(f"### Meus Processos ({len(processos)})")
+        else:
+            st.markdown(f"### Pauta Ativa ({len(processos)} processo{'s' if len(processos) != 1 else ''})")
         for processo in processos:
             _renderizar_card_processo(processo, modo_edicao)
 
@@ -896,14 +918,28 @@ def _renderizar_pauta_ativa(modo_edicao: bool):
 # TAB 2: DISTRIBUICAO
 # ============================================================
 
-def _renderizar_distribuicao(modo_edicao: bool):
+def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
     """Renderiza a aba de Distribuicao Equalitaria."""
+
+    # Determinar se precisa filtrar por usuario
+    cargo_usuario = usuario.get("cargo", "operacional") if usuario else "operacional"
+    nome_usuario = usuario.get("nome", "") if usuario else ""
+    filtrar_por_usuario = (cargo_usuario == "operacional" and nome_usuario)
 
     todos_processos = db_manager.buscar_todos(
         "pauta_seat",
         ordem_coluna="created_at",
         ordem_desc=True,
     )
+
+    # FILTRAR POR USUARIO: operacionais so veem seus processos
+    if filtrar_por_usuario:
+        nome_norm = _normalizar_texto(nome_usuario)
+        todos_processos = [
+            p for p in todos_processos
+            if _normalizar_texto(p.get("editor", "")) == nome_norm
+            or _normalizar_texto(p.get("revisor", "")) == nome_norm
+        ]
 
     sessoes_nao_distribuidas = {}
     sessoes_distribuidas = {}
@@ -1154,7 +1190,6 @@ def _renderizar_distribuicao(modo_edicao: bool):
 def renderizar(usuario: dict, modo_edicao: bool = False):
     """
     Funcao principal do modulo SEAT.
-    Recebe os dados do usuario logado e o modo (edicao ou visualizacao).
     """
 
     nome = usuario.get("nome", "Usuario")
@@ -1177,10 +1212,10 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
     ])
 
     with tab_pauta:
-        _renderizar_pauta_ativa(modo_edicao)
+        _renderizar_pauta_ativa(modo_edicao, usuario)
 
     with tab_distribuicao:
-        _renderizar_distribuicao(modo_edicao)
+        _renderizar_distribuicao(modo_edicao, usuario)
 
     with tab_motor:
         st.info("O Motor NIP sera implementado nas proximas sub-etapas.")
