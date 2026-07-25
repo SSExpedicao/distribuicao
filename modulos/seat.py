@@ -314,16 +314,11 @@ def _detectar_delimitador(texto: str) -> str:
 def _parse_csv(arquivo) -> list:
     """
     Faz parse de um arquivo CSV e retorna lista de processos higienizados.
-    
-    Espera colunas: processo_numero, relator (opcional), tipo_sessao
-    
-    Aplicacoes:
-    - Remove -e do final do numero do processo
-    - Adiciona GC antes das iniciais do relator (exceto GAVF / Subst.)
-    - Normaliza o tipo de sessao
-    
-    Suporta delimitador virgula ou ponto-virgula (auto-detectado).
-    Suporta encoding UTF-8 e Latin-1.
+
+    Correcoes:
+    - Remove BOM (Byte Order Mark) de arquivos salvos no Windows
+    - Mostra colunas detectadas para debug
+    - Aceita variacoes de nomes de coluna
     """
     if arquivo is None:
         return []
@@ -331,14 +326,17 @@ def _parse_csv(arquivo) -> list:
     # Ler conteudo
     conteudo = arquivo.read()
 
-    # Decodificar
+    # Decodificar - usar utf-8-sig para remover BOM automaticamente
     try:
-        texto = conteudo.decode('utf-8')
+        texto = conteudo.decode('utf-8-sig')
     except (UnicodeDecodeError, AttributeError):
         try:
             texto = conteudo.decode('latin-1')
         except Exception:
             texto = str(conteudo)
+
+    # Remover BOM manualmente como fallback
+    texto = texto.lstrip('\ufeff')
 
     # Detectar delimitador
     delimiter = _detectar_delimitador(texto)
@@ -346,22 +344,30 @@ def _parse_csv(arquivo) -> list:
     # Parse
     reader = csv.DictReader(io.StringIO(texto), delimiter=delimiter)
 
+    # Debug: mostrar colunas detectadas
+    if reader.fieldnames:
+        st.caption(f"Colunas detectadas: {', '.join(reader.fieldnames)} | Delimitador: '{delimiter}'")
+
     processos = []
     for row in reader:
         if not row:
             continue
 
-        # Normalizar nomes de coluna (lowercase, sem espacos)
+        # Normalizar nomes de coluna (lowercase, sem espacos, sem BOM)
         row_norm = {}
         for k, v in row.items():
             if k and v:
-                row_norm[k.lower().strip()] = v.strip()
+                # Remover BOM e normalizar nome da coluna
+                chave = k.replace('\ufeff', '').lower().strip()
+                row_norm[chave] = v.strip()
 
         # Buscar coluna de processo (aceita variacoes)
         processo_numero = (
             row_norm.get('processo_numero')
             or row_norm.get('processo')
             or row_norm.get('numero')
+            or row_norm.get('n_processo')
+            or row_norm.get('numero_processo')
             or row_norm.get('n_processo')
             or ""
         )
@@ -371,6 +377,7 @@ def _parse_csv(arquivo) -> list:
             row_norm.get('relator')
             or row_norm.get('relatora')
             or row_norm.get('relator(a)')
+            or row_norm.get('rel')
             or None
         )
 
@@ -379,6 +386,8 @@ def _parse_csv(arquivo) -> list:
             row_norm.get('tipo_sessao')
             or row_norm.get('tipo')
             or row_norm.get('sessao')
+            or row_norm.get('tipo_sessao')
+            or row_norm.get('tipo_ses')
             or ""
         )
 
