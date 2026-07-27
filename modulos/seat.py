@@ -2564,5 +2564,5 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
     with tab_motor:
         _renderizar_motor_nip(modo_edicao, usuario)
 
-    with tab_dodf:
+    with tab_doe:
         st.info("A Escala de Publicacao DOE sera implementada na proxima fase.")
