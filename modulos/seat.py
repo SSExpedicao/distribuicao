@@ -1345,6 +1345,54 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
 # DESPACHOS SINGULARES - FUNCOES
 # ============================================================
 
+def _verificar_despacho_singular(processo_pauta):
+    """Verifica se um processo da pauta é Despacho Singular."""
+    if not processo_pauta:
+        return False
+    # Verificar pelo tipo de sessão
+    tipo = _normalizar_texto(str(processo_pauta.get("tipo_sessao", "")))
+    if "despacho" in tipo and "singular" in tipo:
+        return True
+    # Verificar pelas observações
+    obs = _normalizar_texto(str(processo_pauta.get("observacoes", "")))
+    if "despacho singular" in obs:
+        return True
+    # Verificar pelo relator (se tiver "subst" ou "substituto")
+    relator = _normalizar_texto(str(processo_pauta.get("relator", "")))
+    if "despacho" in relator:
+        return True
+    return False
+
+def _mover_despacho_singular_para_urgentes():
+    """Move todos os processos de Despacho Singular da pauta para a lista de urgentes."""
+    try:
+        todos_pauta = db_manager.buscar_todos("pauta_seat") or []
+        urgentes_existentes = db_manager.buscar_todos("processos_urgentes") or []
+        nums_existentes = set()
+        for u in urgentes_existentes:
+            nums_existentes.add(_normalizar_numero_processo(u.get("processo_numero", "")))
+
+        for p in todos_pauta:
+            if _verificar_despacho_singular(p):
+                p_num = _normalizar_numero_processo(
+                    p.get("numero_processo") or
+                    p.get("processo_numero") or
+                    p.get("numero") or
+                    ""
+                )
+                if p_num and p_num not in nums_existentes:
+                    db_manager.inserir("processos_urgentes", {
+                        "processo_numero": p_num,
+                        "relator": p.get("relator", "N/I"),
+                        "motivo": "Despacho Singular",
+                        "tipo_sessao": p.get("tipo_sessao", ""),
+                        "sessao_numero": str(p.get("numero_sessao", "")),
+                        "dia_sessao": str(p.get("dia_sessao", ""))[:10],
+                    })
+                    nums_existentes.add(p_num)
+    except Exception:
+        pass
+
 def _verificar_ds_pendente(processo_numero):
     """
     Verifica se o processo tem um DS pendente.
@@ -2209,8 +2257,22 @@ def _renderizar_motor_nip(modo_edicao, usuario):
             try:
                 todos_pauta = db_manager.buscar_todos("pauta_seat") or []
                 processo_pauta = None
+
+                # Debug: mostrar estrutura do primeiro registro
+                if todos_pauta:
+                    st.write("**Debug - Campos do primeiro registro da pauta:**")
+                    st.write(list(todos_pauta[0].keys()))
+
                 for p in todos_pauta:
-                    p_num = _normalizar_numero_processo(p.get("numero_processo", ""))
+                    # Tentar múltiplos nomes de campo possíveis
+                    p_num_raw = (
+                        p.get("numero_processo") or
+                        p.get("processo_numero") or
+                        p.get("numero") or
+                        p.get("processo") or
+                        ""
+                    )
+                    p_num = _normalizar_numero_processo(p_num_raw)
                     if p_num == proc_normalizado:
                         processo_pauta = p
                         break
@@ -2238,11 +2300,21 @@ def _renderizar_motor_nip(modo_edicao, usuario):
                         })
                         st.success("✅ Processo enviado para o SERCON!")
                 else:
-                    nums_pauta = [_normalizar_numero_processo(p.get("numero_processo", "")) for p in todos_pauta]
+                    # Debug completo
+                    nums_pauta = []
+                    for p in todos_pauta:
+                        p_num_raw = (
+                            p.get("numero_processo") or
+                            p.get("processo_numero") or
+                            p.get("numero") or
+                            p.get("processo") or
+                            ""
+                        )
+                        nums_pauta.append(_normalizar_numero_processo(p_num_raw))
                     st.warning(
                         f"Processo não encontrado na Pauta Ativa.\n\n"
                         f"**Número buscado:** `{proc_normalizado}`\n\n"
-                        f"**Processos na pauta:** {', '.join(nums_pauta)}"
+                        f"**Processos na pauta:** {', '.join(nums_pauta) if nums_pauta else 'NENHUM'}"
                     )
             except Exception as e:
                 st.error(f"Erro ao atualizar: {str(e)}")
@@ -2369,6 +2441,14 @@ def _verificar_urgencia(texto, palavras):
     # Verificar prazos de 0 a 20 dias
     prazos = _verificar_prazo(texto)
     motivos.extend(prazos)
+
+    # Verificar Despacho Singular e Sustentação Oral no texto
+    if "despacho singular" in texto_lower:
+        if "Despacho Singular" not in motivos:
+            motivos.append("Despacho Singular")
+    if "sustentação oral" in texto_lower or "sustentacao oral" in texto_lower:
+        if "Sustentação Oral" not in motivos:
+            motivos.append("Sustentação Oral")
 
     # Deduplicar mantendo ordem
     motivos_unicos = []
@@ -2520,9 +2600,7 @@ def _renderizar_sidebar_urgentes(usuario):
 # ============================================================
 
 def renderizar(usuario: dict, modo_edicao: bool = False):
-    """
-    Funcao principal do modulo SEAT.
-    """
+    """Funcao principal do modulo SEAT."""
     nome = usuario.get("nome", "Usuario")
     cargo = usuario.get("cargo", "operacional")
     setor = usuario.get("setor", "SEAT")
@@ -2534,7 +2612,9 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
 
     st.markdown("---")
 
-    # renderizar_sidebar ja e chamada pelo app.py via sidebar_placeholder
+    # Mover Despachos Singulares para Urgentes automaticamente
+    _mover_despacho_singular_para_urgentes()
+
     _renderizar_sidebar_ds(usuario)
     _renderizar_sidebar_urgentes(usuario)
 
