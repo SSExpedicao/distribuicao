@@ -1828,13 +1828,15 @@ def _extrair_voto(texto):
             inicio = match.start()
             voto = texto[inicio:]
 
-            # Remover assinatura no final (se houver)
+            # Remover assinatura no final
+            # Padrão: "Sala das Sessões, [data]. [NOME EM MAIÚSCULAS]"
             assinatura_padroes = [
+                r'\n\s*Sala das Sessões.*',
                 r'\n\s*(?:Conselheir[oa]|Auditor|Conselheiro-Substituto)\s+',
                 r'\n\s*[A-ZÀ-Ú]{4,}\s*\n\s*[A-ZÀ-Ú]',
             ]
             for ass_padrao in assinatura_padroes:
-                ass_match = re.search(ass_padrao, voto)
+                ass_match = re.search(ass_padrao, voto, re.DOTALL)
                 if ass_match:
                     voto = voto[:ass_match.start()]
 
@@ -2058,6 +2060,9 @@ def _obter_regras_padrao():
         {"procurar": "postergue", "substituir_por": "postergar", "tipo": "verbo", "ativo": True},
         {"procurar": "notifique", "substituir_por": "notificar", "tipo": "verbo", "ativo": True},
         {"procurar": "julgue", "substituir_por": "julgar", "tipo": "verbo", "ativo": True},
+        {"procurar": "responda", "substituir_por": "responder", "tipo": "verbo", "ativo": True},
+        {"procurar": "ciência da decisão que vier a ser proferida", "substituir_por": "ciência desta decisão", "tipo": "frase", "ativo": True},
+        {"procurar": "ciência da decisão que vier a ser prolatada", "substituir_por": "ciência desta decisão", "tipo": "frase", "ativo": True},
     ]
 
 def _renderizar_motor_nip(modo_edicao, usuario):
