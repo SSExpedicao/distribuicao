@@ -1349,18 +1349,21 @@ def _verificar_despacho_singular_tab(numero_processo):
     """Verifica se um processo está cadastrado na tab de Despachos Singulares."""
     try:
         proc_norm = _normalizar_numero_processo(numero_processo)
-        # Tenta múltiplos nomes possíveis de tabela
-        despachos = None
-        for tabela in ["despachos_singulares", "despacho_singular", "ds_seat"]:
-            try:
-                despachos = db_manager.buscar_todos(tabela) or []
-                if despachos:
-                    break
-            except Exception:
-                continue
+        despachos = db_manager.buscar_todos("despachos_ds") or []
 
         if not despachos:
             return False, ""
+
+        for d in despachos:
+            d_num = _normalizar_numero_processo(d.get("processo_numero", ""))
+            if d_num == proc_norm:
+                tipo = d.get("tipo", "")
+                if "sustentacao" in _normalizar_texto(tipo):
+                    return True, "Sustentação Oral"
+                return True, "Despacho Singular"
+        return False, ""
+    except Exception:
+        return False, ""
 
         for d in despachos:
             # Tenta múltiplos nomes de campo
@@ -1401,32 +1404,45 @@ def _verificar_despacho_singular(processo_pauta):
     return False
 
 def _mover_despacho_singular_para_urgentes():
-    """Move todos os processos de Despacho Singular da pauta para a lista de urgentes."""
+    """Move todos os processos de Despacho Singular da tab para a lista de urgentes."""
     try:
-        todos_pauta = db_manager.buscar_todos("pauta_seat") or []
+        despachos = db_manager.buscar_todos("despachos_ds") or []
         urgentes_existentes = db_manager.buscar_todos("processos_urgentes") or []
         nums_existentes = set()
         for u in urgentes_existentes:
             nums_existentes.add(_normalizar_numero_processo(u.get("processo_numero", "")))
 
-        for p in todos_pauta:
-            if _verificar_despacho_singular(p):
-                p_num = _normalizar_numero_processo(
-                    p.get("numero_processo") or
-                    p.get("processo_numero") or
-                    p.get("numero") or
-                    ""
-                )
-                if p_num and p_num not in nums_existentes:
-                    db_manager.inserir("processos_urgentes", {
-                        "processo_numero": p_num,
-                        "relator": p.get("relator", "N/I"),
-                        "motivo": "Despacho Singular",
-                        "tipo_sessao": p.get("tipo_sessao", ""),
-                        "sessao_numero": str(p.get("numero_sessao", "")),
-                        "dia_sessao": str(p.get("dia_sessao", ""))[:10],
-                    })
-                    nums_existentes.add(p_num)
+        for d in despachos:
+            d_num = _normalizar_numero_processo(d.get("processo_numero", ""))
+            if d_num and d_num not in nums_existentes:
+                tipo = d.get("tipo", "Despacho Singular")
+                motivo = "Sustentação Oral" if "sustentacao" in _normalizar_texto(tipo) else "Despacho Singular"
+
+                # Buscar dados da sessão na pauta
+                tipo_sessao = ""
+                sessao_num = ""
+                dia_sessao = ""
+                try:
+                    pauta = db_manager.buscar_todos("pauta_seat") or []
+                    for p in pauta:
+                        p_num = _normalizar_numero_processo(p.get("processo_numero", ""))
+                        if p_num == d_num:
+                            tipo_sessao = p.get("tipo_sessao", "")
+                            sessao_num = str(p.get("numero_sessao", ""))
+                            dia_sessao = str(p.get("dia_sessao", ""))[:10]
+                            break
+                except Exception:
+                    pass
+
+                db_manager.inserir("processos_urgentes", {
+                    "processo_numero": d_num,
+                    "relator": d.get("relator", "N/I") or "N/I",
+                    "motivo": motivo,
+                    "tipo_sessao": tipo_sessao,
+                    "sessao_numero": sessao_num,
+                    "dia_sessao": dia_sessao,
+                })
+                nums_existentes.add(d_num)
     except Exception:
         pass
 
@@ -2221,7 +2237,7 @@ def _renderizar_motor_nip(modo_edicao, usuario):
                 regras = _obter_regras_padrao()
 
             texto_editado = _processar_voto(voto_extraido, relator_tipo, regras)
-
+                       
                         # 7. Verificar urgencia e SERCON
             palavras_urg = _obter_palavras_urgencia()
             palavras_sercon = _obter_palavras_sercon()
@@ -2303,21 +2319,8 @@ def _renderizar_motor_nip(modo_edicao, usuario):
                 todos_pauta = db_manager.buscar_todos("pauta_seat") or []
                 processo_pauta = None
 
-                # Debug: mostrar estrutura do primeiro registro
-                if todos_pauta:
-                    st.write("**Debug - Campos do primeiro registro da pauta:**")
-                    st.write(list(todos_pauta[0].keys()))
-
                 for p in todos_pauta:
-                    # Tentar múltiplos nomes de campo possíveis
-                    p_num_raw = (
-                        p.get("numero_processo") or
-                        p.get("processo_numero") or
-                        p.get("numero") or
-                        p.get("processo") or
-                        ""
-                    )
-                    p_num = _normalizar_numero_processo(p_num_raw)
+                    p_num = _normalizar_numero_processo(p.get("processo_numero", ""))
                     if p_num == proc_normalizado:
                         processo_pauta = p
                         break
@@ -2345,17 +2348,7 @@ def _renderizar_motor_nip(modo_edicao, usuario):
                         })
                         st.success("✅ Processo enviado para o SERCON!")
                 else:
-                    # Debug completo
-                    nums_pauta = []
-                    for p in todos_pauta:
-                        p_num_raw = (
-                            p.get("numero_processo") or
-                            p.get("processo_numero") or
-                            p.get("numero") or
-                            p.get("processo") or
-                            ""
-                        )
-                        nums_pauta.append(_normalizar_numero_processo(p_num_raw))
+                    nums_pauta = [_normalizar_numero_processo(p.get("processo_numero", "")) for p in todos_pauta]
                     st.warning(
                         f"Processo não encontrado na Pauta Ativa.\n\n"
                         f"**Número buscado:** `{proc_normalizado}`\n\n"
