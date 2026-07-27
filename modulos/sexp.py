@@ -70,7 +70,7 @@ def _obter_colaboradores_por_cargo(tipo_sessao):
 def _sincronizar_com_seat():
     """
     Puxa processos do SEAT (status 'encaminhado') que ainda não foram importados no SEXP.
-    Retorna o número de processos importados.
+    Retorna o número de processos REALMENTE importados.
     """
     try:
         processos_seat = db_manager.buscar_todos("pauta_seat") or []
@@ -101,6 +101,9 @@ def _sincronizar_com_seat():
         if not novos:
             return 0, len(processos_prontos)
 
+        total_inseridos = 0
+        erros = 0
+
         for p in novos:
             p_num = _normalizar_numero_processo(p.get("processo_numero", ""))
             is_urgente = p_num in nums_urgentes
@@ -118,7 +121,7 @@ def _sincronizar_com_seat():
             else:
                 tabela_destino = "Sessão Ordinária"
 
-            db_manager.inserir("distribuicao_sexp", {
+            resultado = db_manager.inserir("distribuicao_sexp", {
                 "processo_numero": p_num,
                 "relator": p.get("relator", "") or "",
                 "tipo_sessao": tabela_destino,
@@ -131,8 +134,17 @@ def _sincronizar_com_seat():
                 "distribuido": False,
             })
 
-        return len(novos), len(processos_prontos)
-    except Exception:
+            if resultado is not None:
+                total_inseridos += 1
+            else:
+                erros += 1
+
+        if erros > 0 and total_inseridos == 0:
+            # Todas as inserções falharam — provavelmente a tabela não existe
+            return 0, len(processos_prontos)
+
+        return total_inseridos, len(processos_prontos)
+    except Exception as e:
         return 0, 0
 
 def _verificar_todos_revisados_seat():
