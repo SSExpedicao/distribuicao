@@ -1066,7 +1066,68 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
         ordem_desc=True,
     )
 
+        processos = db_manager.buscar_todos(
+        "pauta_seat",
+        filtros=filtros if filtros else None,
+        ordem_coluna="created_at",
+        ordem_desc=True,
+    )
+
     # Filtro de busca por numero (client-side)
+    if busca.strip():
+        busca_lower = busca.strip().lower()
+        processos = [p for p in processos if busca_lower in (p.get("processo_numero", "") or "").lower()]
+
+    # FILTRAR POR USUARIO: operacionais so veem seus processos
+    if filtrar_por_usuario:
+        nome_norm = _normalizar_texto(nome_usuario)
+        processos = [
+            p for p in processos
+            if _normalizar_texto(p.get("editor", "")) == nome_norm
+            or _normalizar_texto(p.get("revisor", "")) == nome_norm
+        ]
+
+    # === NOVO: Separar encaminhados dos ativos ===
+    encaminhados = [p for p in processos if p.get("status") == "encaminhado"]
+    ativos = [p for p in processos if p.get("status") != "encaminhado"]
+
+    # Contadores (inclui encaminhados na contagem)
+    col_c1, col_c2, col_c3, col_c4, col_c5 = st.columns(5)
+    with col_c1:
+        st.metric("Total", len(processos))
+    with col_c2:
+        st.metric("Inclusão", len([p for p in ativos if p.get("status") == "inclusao"]))
+    with col_c3:
+        st.metric("Em Edição", len([p for p in ativos if p.get("status") == "em_edicao"]))
+    with col_c4:
+        st.metric("Em Revisão", len([p for p in ativos if p.get("status") == "em_revisao"]))
+    with col_c5:
+        st.metric("Encaminhados", len(encaminhados))
+
+    st.markdown("---")
+
+    # Verificar se todos foram encaminhados
+    if processos and len(encaminhados) == len(processos):
+        st.success(
+            f"🎉 **Todos os {len(encaminhados)} processos foram encaminhados para o SEXP!** "
+            f"Acesse a aba **Distribuição** para finalizar a sessão."
+        )
+        st.markdown("---")
+
+    if not ativos:
+        if filtrar_por_usuario:
+            st.info(f"Todos os seus processos foram encaminhados para o SEXP. ✅")
+        else:
+            st.info("Todos os processos foram encaminhados para o SEXP. ✅")
+    else:
+        if filtrar_por_usuario:
+            st.markdown(f"### Meus Processos ({len(ativos)})")
+        else:
+            st.markdown(f"### Pauta Ativa ({len(ativos)} processo{'s' if len(ativos) != 1 else ''})")
+        for processo in ativos:
+            _renderizar_card_processo(processo, modo_edicao)
+  
+  # Filtro de busca por numero (client-side)
     if busca.strip():
         busca_lower = busca.strip().lower()
         processos = [p for p in processos if busca_lower in (p.get("processo_numero", "") or "").lower()]
