@@ -196,6 +196,9 @@ def _executar_distribuicao(tipo_sessao, colaboradores_selecionados):
 # ==================== SIDEBAR ====================
 
 def _renderizar_sidebar_sexp(usuario):
+    """Mostra tabelas de Expedição e Revisão + Urgentes na barra lateral."""
+    import pandas as pd
+
     cargo = usuario.get("cargo", "operacional")
     nome = usuario.get("nome", "")
 
@@ -207,19 +210,88 @@ def _renderizar_sidebar_sexp(usuario):
     if not todos:
         return
 
-    if cargo == "operacional":
-        meus = [d for d in todos if d.get("expedidor") == nome or d.get("revisor") == nome]
-    else:
-        meus = [d for d in todos if d.get("distribuido", False)]
+    distribuidos = [d for d in todos if d.get("distribuido", False)]
 
-    expedir = len([d for d in meus if not d.get("expedido") and d.get("distribuido", False)])
-    revisar = len([d for d in meus if d.get("expedido") and not d.get("revisado")])
+    # Filtrar por cargo
+    if cargo == "operacional":
+        meus = [d for d in distribuidos if d.get("expedidor") == nome or d.get("revisor") == nome]
+    else:
+        meus = distribuidos
+
+    # Tabela 1: Expedição
+    dados_exp = {}
+    for d in meus:
+        exp = d.get("expedidor", "")
+        if not exp:
+            continue
+        if exp not in dados_exp:
+            dados_exp[exp] = {"qtd": 0, "faltam": 0}
+        dados_exp[exp]["qtd"] += 1
+        if not d.get("expedido", False):
+            dados_exp[exp]["faltam"] += 1
+
+    # Tabela 2: Revisão
+    dados_rev = {}
+    for d in meus:
+        rev = d.get("revisor", "")
+        if not rev:
+            continue
+        if rev not in dados_rev:
+            dados_rev[rev] = {"qtd": 0, "faltam": 0}
+        dados_rev[rev]["qtd"] += 1
+        if not d.get("revisado", False):
+            dados_rev[rev]["faltam"] += 1
+
+    # Urgentes (Ordinária + Reservada)
+    urgentes_total = 0
+    urgentes_faltam = 0
+    for d in distribuidos:
+        tipo = d.get("tipo_sessao", "")
+        if d.get("tipo_sessao") == "Urgentes" or "reservada" in _normalizar_texto(tipo):
+            urgentes_total += 1
+            if not d.get("expedido", False):
+                urgentes_faltam += 1
 
     with st.sidebar:
         st.markdown("---")
-        st.markdown("##### 📤 SEXP — Expedição")
-        st.write(f"**Para expedir:** {expedir}")
-        st.write(f"**Para revisar:** {revisar}")
+        st.markdown("##### 📤 Expedição")
+
+        if dados_exp:
+            linhas_exp = []
+            for colab, dados in sorted(dados_exp.items()):
+                linhas_exp.append({
+                    "Colaborador": colab,
+                    "Qtd": dados["qtd"],
+                    "Faltam": dados["faltam"],
+                })
+            df_exp = pd.DataFrame(linhas_exp)
+            st.dataframe(df_exp, hide_index=True, use_container_width=True)
+        else:
+            st.caption("Nenhum processo para expedir.")
+
+        st.markdown("---")
+        st.markdown("##### ✅ Revisão")
+
+        if dados_rev:
+            linhas_rev = []
+            for colab, dados in sorted(dados_rev.items()):
+                linhas_rev.append({
+                    "Colaborador": colab,
+                    "Qtd": dados["qtd"],
+                    "Faltam": dados["faltam"],
+                })
+            df_rev = pd.DataFrame(linhas_rev)
+            st.dataframe(df_rev, hide_index=True, use_container_width=True)
+        else:
+            st.caption("Nenhum processo para revisar.")
+
+        st.markdown("---")
+        st.markdown("##### 🚨 Urgentes")
+        col_u1, col_u2 = st.columns(2)
+        with col_u1:
+            st.metric("Total", urgentes_total)
+        with col_u2:
+            st.metric("Faltam", urgentes_faltam)
 
 # ==================== PAUTA ATIVA ====================
 
@@ -355,6 +427,9 @@ def _renderizar_card_processo_sexp(p, modo_edicao, usuario):
 
     expedido = p.get("expedido", False)
     revisado = p.get("revisado", False)
+    tipo_sessao = p.get("tipo_sessao", "")
+    is_reservada = "reservada" in _normalizar_texto(tipo_sessao)
+    forma_despacho = p.get("forma_despacho", "") or ""
 
     if revisado:
         icone = "✅"
@@ -363,12 +438,16 @@ def _renderizar_card_processo_sexp(p, modo_edicao, usuario):
     else:
         icone = "⏳"
 
-    with st.expander(
+    header = (
         f"{icone} {p.get('processo_numero', '')} | "
         f"Relator: {p.get('relator', '-') or '-'} | "
         f"Exp: {p.get('expedidor', '-') or '-'} | "
         f"Rev: {p.get('revisor', '-') or '-'}"
-    ):
+    )
+    if is_reservada and forma_despacho:
+        header += f" | {forma_despacho}"
+
+    with st.expander(header):
         col1, col2, col3 = st.columns(3)
         with col1:
             st.write(f"**Processo:** {p.get('processo_numero', '')}")
@@ -379,6 +458,10 @@ def _renderizar_card_processo_sexp(p, modo_edicao, usuario):
         with col3:
             st.write(f"**Expedido:** {'Sim ✅' if expedido else 'Não ⏳'}")
             st.write(f"**Revisado:** {'Sim ✅' if revisado else 'Não ⏳'}")
+
+        # Forma de despacho (apenas Reservada)
+        if is_reservada:
+            st.write(f"**Despachado via:** {forma_despacho if forma_despacho else '—'}")
 
         comentarios_atuais = p.get("comentarios", "") or ""
         if comentarios_atuais:
@@ -392,14 +475,37 @@ def _renderizar_card_processo_sexp(p, modo_edicao, usuario):
 
             with col_a:
                 pode_expedir = (nome == p.get("expedidor")) or cargo in ("gerente", "criador", "raiz")
-                if pode_expedir and not expedido:
+
+                # Se for Reservada, exigir forma de despacho antes de marcar como expedido
+                if is_reservada and not expedido and pode_expedir:
+                    nova_forma = st.selectbox(
+                        "Despachar via *",
+                        options=["", "E-mail", "Mensageria", "Barramento"],
+                        index=0,
+                        key=f"forma_{p['id']}"
+                    )
+                    if st.button("📤 Marcar Expedido", key=f"exp_{p['id']}", type="primary"):
+                        if not nova_forma:
+                            st.error("Selecione a forma de despacho antes de marcar como expedido.")
+                        else:
+                            db_manager.atualizar("distribuicao_sexp", p["id"], {
+                                "expedido": True,
+                                "forma_despacho": nova_forma,
+                            })
+                            st.success(f"Marcado como expedido via {nova_forma}!")
+                            st.rerun()
+                elif pode_expedir and not expedido:
                     if st.button("📤 Marcar Expedido", key=f"exp_{p['id']}"):
                         db_manager.atualizar("distribuicao_sexp", p["id"], {"expedido": True})
                         st.success("Marcado como expedido!")
                         st.rerun()
                 elif expedido and pode_expedir:
                     if st.button("↩️ Desfazer Expedição", key=f"unexp_{p['id']}"):
-                        db_manager.atualizar("distribuicao_sexp", p["id"], {"expedido": False, "revisado": False})
+                        db_manager.atualizar("distribuicao_sexp", p["id"], {
+                            "expedido": False,
+                            "revisado": False,
+                            "forma_despacho": None,
+                        })
                         st.rerun()
 
             with col_b:
