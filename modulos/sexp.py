@@ -70,7 +70,7 @@ def _obter_colaboradores_por_cargo(tipo_sessao):
 def _sincronizar_com_seat():
     """
     Puxa processos do SEAT (status 'encaminhado') que ainda não foram importados no SEXP.
-    Retorna o número de processos REALMENTE importados.
+    Retorna (total_realmente_inseridos, total_prontos_no_seat).
     """
     try:
         processos_seat = db_manager.buscar_todos("pauta_seat") or []
@@ -102,7 +102,7 @@ def _sincronizar_com_seat():
             return 0, len(processos_prontos)
 
         total_inseridos = 0
-        erros = 0
+        primeiro_erro = None
 
         for p in novos:
             p_num = _normalizar_numero_processo(p.get("processo_numero", ""))
@@ -121,30 +121,38 @@ def _sincronizar_com_seat():
             else:
                 tabela_destino = "Sessão Ordinária"
 
-            resultado = db_manager.inserir("distribuicao_sexp", {
-                "processo_numero": p_num,
-                "relator": p.get("relator", "") or "",
-                "tipo_sessao": tabela_destino,
-                "expedidor": None,
-                "expedido": False,
-                "revisor": None,
-                "revisado": False,
-                "comentarios": "",
-                "origem_seat_id": p.get("id"),
-                "distribuido": False,
-            })
+            try:
+                resultado = db_manager.inserir("distribuicao_sexp", {
+                    "processo_numero": p_num,
+                    "relator": p.get("relator", "") or "",
+                    "tipo_sessao": tabela_destino,
+                    "expedidor": None,
+                    "expedido": False,
+                    "revisor": None,
+                    "revisado": False,
+                    "comentarios": "",
+                    "origem_seat_id": p.get("id"),
+                    "distribuido": False,
+                })
 
-            if resultado is not None:
-                total_inseridos += 1
-            else:
-                erros += 1
+                if resultado is not None:
+                    total_inseridos += 1
+                else:
+                    if primeiro_erro is None:
+                        primeiro_erro = f"Inserção retornou None para processo {p_num}"
+            except Exception as e:
+                if primeiro_erro is None:
+                    primeiro_erro = str(e)
 
-        if erros > 0 and total_inseridos == 0:
-            # Todas as inserções falharam — provavelmente a tabela não existe
+        # Se nada foi inserido, mostrar o erro
+        if total_inseridos == 0 and primeiro_erro:
+            st.error(f"❌ Erro ao importar processos: {primeiro_erro}")
+            st.error("Verifique se a tabela 'distribuicao_sexp' existe no Supabase e se as políticas de RLS estão configuradas.")
             return 0, len(processos_prontos)
 
         return total_inseridos, len(processos_prontos)
     except Exception as e:
+        st.error(f"❌ Erro na sincronização: {str(e)}")
         return 0, 0
 
 def _verificar_todos_revisados_seat():
