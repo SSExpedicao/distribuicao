@@ -2193,12 +2193,12 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
     # Apenas _renderizar_sidebar_ds precisa ser chamada aqui
     _renderizar_sidebar_ds(usuario)
 
-    tab_pauta, tab_distribuicao, tab_ds, tab_motor, tab_dodf = st.tabs([
+    tab_pauta, tab_distribuicao, tab_ds, tab_motor, tab_DOETCDF = st.tabs([
         "Pauta Ativa",
         "Distribuicao",
         "Despachos Singulares",
         "Motor NIP",
-        "Escala DODF (em breve)",
+        "Escala DOETCDF (em breve)",
     ])
 
     with tab_pauta:
@@ -2213,5 +2213,5 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
     with tab_motor:
         _renderizar_motor_nip(modo_edicao, usuario)
       
-    with tab_dodf:
-        st.info("A Escala de Publicacao DODF sera implementada na sub-etapa 1I.")
+    with tab_DOETCDF:
+        st.info("A Escala de Publicacao DOETCDF sera implementada na sub-etapa 1I.")
