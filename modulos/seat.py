@@ -2061,7 +2061,7 @@ def _obter_regras_padrao():
         {"procurar": "n°", "substituir_por": "nº", "tipo": "termo", "ativo": True},
         {"procurar": "tome", "substituir_por": "tomar", "tipo": "verbo", "ativo": True},
         {"procurar": "conheça", "substituir_por": "conhecer", "tipo": "verbo", "ativo": True},
-        {"procurar": "condutor", "substituir_por": "Relator", "tipo": "frase", "ativo": True},
+        {"procurar": "condutor", "substituir_por": "do Relator", "tipo": "frase", "ativo": True},
         {"procurar": "dê", "substituir_por": "dar", "tipo": "verbo", "ativo": True},
         {"procurar": "declare", "substituir_por": "declarar", "tipo": "verbo", "ativo": True},
         {"procurar": "aprove", "substituir_por": "aprovar", "tipo": "verbo", "ativo": True},
