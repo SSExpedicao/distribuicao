@@ -857,43 +857,46 @@ def _renderizar_sidebar_ds(usuario: dict):
     ds_lista = [d for d in todos_ds if d.get("tipo") == "Despacho Singular"][:5]
     so_lista = [d for d in todos_ds if d.get("tipo") == "Sustentacao Oral"][:5]
 
-    if ds_lista:
-        st.markdown("**Despachos Singulares (Recentes)**")
-        dados_ds = []
-        for ds in ds_lista:
-            oficios = db_manager.buscar_todos(
-                "oficios_ds",
-                filtros={"despacho_id": ds["id"]},
-            )
-            dados_ds.append({
-                "Processo": ds.get("processo_numero", ""),
-                "Relator": ds.get("relator", "-") or "-",
-                "Docs": len(oficios),
-            })
-        df_ds = pd.DataFrame(dados_ds)
-        st.dataframe(
-            df_ds,
-            hide_index=True,
-            use_container_width=True,
-            height=len(df_ds) * 35 + 40,
-        )
+    with st.sidebar:
+        st.markdown("---")
 
-    if so_lista:
-        st.markdown("**Sustentacao Oral (Recentes)**")
-        dados_so = []
-        for so in so_lista:
-            dados_so.append({
-                "Processo": so.get("processo_numero", ""),
-                "Relator": so.get("relator", "-") or "-",
-                "Confirmada": "Sim" if so.get("recebido_confirmado") else "Nao",
-            })
-        df_so = pd.DataFrame(dados_so)
-        st.dataframe(
-            df_so,
-            hide_index=True,
-            use_container_width=True,
-            height=len(df_so) * 35 + 40,
-        )
+        if ds_lista:
+            st.markdown("##### Despachos Singulares (Recentes)")
+            dados_ds = []
+            for ds in ds_lista:
+                oficios = db_manager.buscar_todos(
+                    "oficios_ds",
+                    filtros={"despacho_id": ds["id"]},
+                )
+                dados_ds.append({
+                    "Processo": ds.get("processo_numero", ""),
+                    "Relator": ds.get("relator", "-") or "-",
+                    "Docs": len(oficios),
+                })
+            df_ds = pd.DataFrame(dados_ds)
+            st.dataframe(
+                df_ds,
+                hide_index=True,
+                use_container_width=True,
+                height=len(df_ds) * 35 + 40,
+            )
+
+        if so_lista:
+            st.markdown("##### Sustentacao Oral (Recentes)")
+            dados_so = []
+            for so in so_lista:
+                dados_so.append({
+                    "Processo": so.get("processo_numero", ""),
+                    "Relator": so.get("relator", "-") or "-",
+                    "Confirmada": "Sim" if so.get("recebido_confirmado") else "Nao",
+                })
+            df_so = pd.DataFrame(dados_so)
+            st.dataframe(
+                df_so,
+                hide_index=True,
+                use_container_width=True,
+                height=len(df_so) * 35 + 40,
+            )
 
 def _renderizar_card_processo(processo: dict, modo_edicao: bool):
     """Renderiza um card individual de processo na pauta ativa."""
