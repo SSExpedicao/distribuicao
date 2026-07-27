@@ -1975,19 +1975,146 @@ def _aplicar_substituicoes(texto, regras):
     return texto
 
 def _transformar_verbos(texto, regras):
-    """Transforma verbos do imperativo para infinitivo."""
+    """Transforma verbos do Modo Imperativo Afirmativo para Infinitivo após numerais romanos."""
     import re
 
-    for regra in regras:
-        if regra.get("tipo") == "verbo" and regra.get("ativo", True):
-            imperativo = regra["procurar"]
-            infinitivo = regra["substituir_por"]
-            texto = re.sub(
-                re.escape(imperativo),
-                infinitivo,
-                texto,
-                flags=re.IGNORECASE
-            )
+    # Dicionário: Imperativo → Infinitivo
+    imperativo_infinitivo = {
+        # Verbos regulares (-ar)
+        "chame": "chamar",
+        "recomende": "recomendar",
+        "autorize": "autorizar",
+        "determine": "determinar",
+        "tome": "tomar",
+        "considere": "considerar",
+        "suspended": "suspender",
+        "suspenda": "suspender",
+        "revogue": "revogar",
+        "anule": "anular",
+        "negue": "negar",
+        "prorrogue": "prorrogar",
+        "aprove": "aprovar",
+        "homologue": "homologar",
+        "adjudique": "adjudicar",
+        "ratifique": "ratificar",
+        "referende": "referendar",
+        "encaminhe": "encaminhar",
+        "notifique": "notificar",
+        "cientifique": "cientificar",
+        "convoque": "convocar",
+        "aplique": "aplicar",
+        "conceda": "conceder",
+        "denegue": "denegar",
+        "defira": "deferir",
+        "indefira": "indeferir",
+        "arquive": "arquivar",
+        "remeta": "remeter",
+        "devolva": "devolver",
+        "reabra": "reabrir",
+        "instaure": "instaurar",
+        "recomende": "recomendar",
+        "solicite": "solicitar",
+        "requerira": "requerer",
+        "requeria": "requerer",
+        "requer": "requerer",
+        "adopte": "adotar",
+        "adote": "adotar",
+        "intime": "intimar",
+        "comunique": "comunicar",
+        "informe": "informar",
+        "requisite": "requisitar",
+        "impeça": "impedir",
+        "impeca": "impedir",
+        "observe": "observar",
+        "abstenha": "abster",
+        "proceda": "proceder",
+        "promova": "promover",
+        "realize": "realizar",
+        "efetue": "efetuar",
+        "providencie": "providenciar",
+        "determine": "determinar",
+        "autorize": "autorizar",
+        "dê": "dar",
+        "de": "dar",
+        "faça": "fazer",
+        "faca": "fazer",
+        "inclua": "incluir",
+        "inclua": "incluir",
+        "exclua": "excluir",
+        "exija": "exigir",
+        "fixe": "fixar",
+        "estabeleça": "estabelecer",
+        "estabeleca": "estabelecer",
+        "reconheça": "reconhecer",
+        "reconheca": "reconhecer",
+        "declare": "declarar",
+        "designe": "designar",
+        "nomeie": "nomear",
+        "contrate": "contratar",
+        "rescinda": "rescindir",
+        "rescinda": "rescindir",
+        "revise": "revisar",
+        "reavalie": "reavaliar",
+        "avalie": "avaliar",
+        "analise": "analisar",
+        "verifique": "verificar",
+        "fiscalize": "fiscalizar",
+        "monitore": "monitorar",
+        "acompanhe": "acompanhar",
+        "supervisione": "supervisionar",
+        "oriente": "orientar",
+        "determine": "determinar",
+        "reitere": "reiterar",
+        "reformule": "reformular",
+        "atualize": "atualizar",
+        "regularize": "regularizar",
+        "normalize": "normalizar",
+        "padronize": "padronizar",
+        "implante": "implantar",
+        "implemente": "implementar",
+        "execute": "executar",
+        "cumpra": "cumprir",
+        "descumpra": "descumprir",
+        "obrigue": "obrigar",
+        "compulse": "compulsar",
+        "requisite": "requisitar",
+    }
+
+    # Padrão: numeral romano + traço + verbo no imperativo
+    # Ex: "IV – chame em audiência" → "IV – chamar em audiência"
+    # Funciona com: I, II, III, IV, V, VI, VII, VIII, IX, X, XI, XII, etc.
+    # Também com letras: a), b), c), etc. quando seguem o padrão de sub-itens
+    padrao_romano = re.compile(
+        r'((?:^|\n)\s*(?:[IVXLCDM]+|\d+)[\.\)\s]*[\–\-\—]\s*)(\w+)',
+        re.IGNORECASE
+    )
+
+    def _substituir_verbo(match):
+        prefixo = match.group(1)
+        verbo = match.group(2).lower()
+        # Se o verbo está no imperativo, converter para infinitivo
+        if verbo in imperativo_infinitivo:
+            return prefixo + imperativo_infinitivo[verbo]
+        # Se já está no infinitivo, manter
+        return match.group(0)
+
+    texto = padrao_romano.sub(_substituir_verbo, texto)
+
+    # Também converter verbos após "a)" "b)" "c)" etc. (sub-itens)
+    padrao_letra = re.compile(
+        r'((?:^|\n)\s*[a-z]\)[\s]*)(\w+)',
+        re.IGNORECASE
+    )
+
+    def _substituir_verbo_letra(match):
+        prefixo = match.group(1)
+        verbo = match.group(2).lower()
+        if verbo in imperativo_infinitivo:
+            return prefixo + imperativo_infinitivo[verbo]
+        return match.group(0)
+
+    texto = padrao_letra.sub(_substituir_verbo_letra, texto)
+
     return texto
 
 def _ofuscar_cpf(texto):
@@ -2152,6 +2279,44 @@ def _aplicar_negrito(texto):
     ]
     for palavra in palavras_chave:
         texto = re.sub(rf'\b{re.escape(palavra)}\b', f'**{palavra}**', texto)
+
+    return texto
+
+def _aplicar_negrito(texto):
+    """Aplica negrito nas palavras-chave conforme as regras do NIP."""
+    import re
+
+    palavras_negrito = [
+        # Urgência
+        "urgente", "urgência", "prioritário", "prioridade", "brevidade",
+        "imediato", "imediatamente", "importância",
+        # Suspensão/Revogação
+        "suspender", "suspensão", "revoga", "abster", "abstenção",
+        "anula", "anular", "negar",
+        # Continuidade
+        "continuidade", "continuação", "prosseguimento", "reabertura", "abertura",
+        # Licitação
+        "licita", "licitação", "licitatório", "certame", "homologar", "adjudicar",
+        # Autoridade
+        "governador", "chefe do poder",
+        # Despacho Singular
+        "despacho singular", "sustentação oral",
+        # SERCON
+        "audiência", "acórdão", "acórdãos", "notificação", "notificar",
+        "cientificação", "cientificar", "convocação",
+        # Outros
+        "Covid", "Corona", "prorrog", "aprovar", "minuta", "pagamento",
+        # Verbos de decisão (após numerais romanos)
+        "tomar conhecimento", "considerar", "determinar", "chamar",
+        "recomendar", "autorizar", "suspender",
+        # Prazos
+        "prazo de",
+    ]
+
+    for palavra in palavras_negrito:
+        # Case-insensitive, preservando o texto original
+        padrao = re.compile(re.escape(palavra), re.IGNORECASE)
+        texto = padrao.sub(lambda m: f"**{m.group(0)}**", texto)
 
     return texto
 
