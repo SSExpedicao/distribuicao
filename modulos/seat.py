@@ -645,27 +645,40 @@ def _remover_processo(id_processo: int, numero: str):
         st.warning(f"Confirme a remocao do processo {numero} clicando novamente.")
         st.rerun()
 
-def _marcar_editado(id_processo: int, valor: bool):
-    """Marca/desmarca o checkbox de editado e atualiza o status automaticamente."""
-    processo = db_manager.buscar_por_id("pauta_seat", id_processo)
-    if not processo:
-        return
-
-    revisado = processo.get("revisado", False)
-
-    if valor and revisado:
-        novo_status = "encaminhado"
-    elif valor and not revisado:
-        novo_status = "em_revisao"
-    elif not valor:
-        novo_status = "em_edicao"
+def _marcar_editado(id_proc, valor):
+    """Marca/desmarca editado e atualiza o status automaticamente."""
+    if valor:
+        # Marcando como editado → status em_edicao
+        db_manager.atualizar("pauta_seat", id_proc, {
+            "editado": True,
+            "status": "em_edicao",
+        })
     else:
-        novo_status = "em_edicao"
+        # Desmarcando editado → desmarca revisado também e volta status
+        db_manager.atualizar("pauta_seat", id_proc, {
+            "editado": False,
+            "revisado": False,
+            "status": "inclusao",
+        })
+    st.rerun()
 
-    db_manager.atualizar("pauta_seat", id_processo, {
-        "editado": valor,
-        "status": novo_status,
-    })
+def _marcar_revisado(id_proc, valor):
+    """Marca/desmarca revisado e encaminha para SEXP automaticamente."""
+    if valor:
+        # Marcando como revisado → encaminhado automaticamente para SEXP
+        from datetime import datetime
+        db_manager.atualizar("pauta_seat", id_proc, {
+            "revisado": True,
+            "status": "encaminhado",
+            "data_conclusao": datetime.now().isoformat(),
+        })
+    else:
+        # Desmarcando revisado → volta para em_revisao
+        db_manager.atualizar("pauta_seat", id_proc, {
+            "revisado": False,
+            "status": "em_revisao",
+            "data_conclusao": None,
+        })
     st.rerun()
 
 def _marcar_revisado(id_processo: int, valor: bool):
@@ -893,21 +906,39 @@ def _renderizar_card_processo(processo: dict, modo_edicao: bool):
     revisor = processo.get("revisor", "") or "-"
     editado = processo.get("editado", False)
     revisado = processo.get("revisado", False)
+    status = processo.get("status", "inclusao")
     comentario = processo.get("comentario", "") or ""
     data_entrada = _formatar_data(processo.get("data_entrada"))
 
+    # Ícone de status
+    if status == "encaminhado":
+        icone_status = "📤"
+    elif revisado:
+        icone_status = "✅"
+    elif editado:
+        icone_status = "📝"
+    else:
+        icone_status = "⏳"
+
     with st.container():
-        # Linha 1: Processo + Relator
-        col_proc, col_rel = st.columns([3, 2])
+        # Linha 1: Processo + Relator + Status
+        col_proc, col_rel, col_status = st.columns([3, 2, 1])
         with col_proc:
-            st.markdown(f"### {numero}")
+            st.markdown(f"### {icone_status} {numero}")
         with col_rel:
             st.markdown(f"**Relator:** {relator}")
+        with col_status:
+            if status == "encaminhado":
+                st.success("Encaminhado")
+            elif editado and not revisado:
+                st.info("Em revisão")
+            else:
+                st.caption("Aguardando")
 
         # Linha 2: Sessao + Tipo + Data
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.markdown(f"**Sessao:** {numero_sessao}")
+            st.markdown(f"**Sessão:** {numero_sessao}")
         with col2:
             st.markdown(f"**Tipo:** {tipo_sessao}")
         with col3:
@@ -929,11 +960,17 @@ def _renderizar_card_processo(processo: dict, modo_edicao: bool):
                 )
                 if novo_editado != editado:
                     _marcar_editado(id_proc, novo_editado)
+
             with col_chk2:
+                # TRAVA: Revisado só funciona se Editado estiver marcado
                 novo_revisado = st.checkbox(
-                    "Revisado", value=revisado, key=f"chk_revisado_{id_proc}"
+                    "Revisado",
+                    value=revisado,
+                    key=f"chk_revisado_{id_proc}",
+                    disabled=not novo_editado,  # ← TRAVA AQUI
+                    help="Marque como editado primeiro" if not novo_editado else None,
                 )
-                if novo_revisado != revisado:
+                if novo_revisado != revisado and novo_editado:
                     _marcar_revisado(id_proc, novo_revisado)
         else:
             col_chk1, col_chk2 = st.columns(2)
@@ -942,28 +979,28 @@ def _renderizar_card_processo(processo: dict, modo_edicao: bool):
             with col_chk2:
                 st.markdown(f"{'☑' if revisado else '☐'} Revisado")
 
-        # Linha 5: Comentario (caixa de texto livre)
+        # Linha 5: Comentario
         if modo_edicao:
             novo_comentario = st.text_area(
-                "Comentario",
+                "Comentário",
                 value=comentario,
-                placeholder="Deixe um comentario sobre o processo...",
+                placeholder="Deixe um comentário sobre o processo...",
                 height=60,
                 key=f"comentario_{id_proc}",
             )
-            if st.button("Salvar Comentario", key=f"btn_comentario_{id_proc}"):
+            if st.button("Salvar Comentário", key=f"btn_comentario_{id_proc}"):
                 if novo_comentario.strip() != comentario:
                     _salvar_comentario(id_proc, novo_comentario)
         else:
             if comentario:
-                st.markdown(f"**Comentario:** {comentario}")
+                st.markdown(f"**Comentário:** {comentario}")
             else:
-                st.caption("Sem comentario.")
+                st.caption("Sem comentário.")
 
-        # Rodape
+        # Rodapé
         st.caption(f"Entrada: {data_entrada}")
 
-        # Botao de remover
+        # Botão de remover
         if modo_edicao:
             if st.button("Remover", key=f"remover_{id_proc}"):
                 _remover_processo(id_proc, numero)
