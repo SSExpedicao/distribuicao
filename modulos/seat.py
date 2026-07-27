@@ -1936,6 +1936,17 @@ def _adicionar_preambulo(texto, relator):
 
     return f"{preambulo} {texto.strip()}"
 
+def _corrigir_hifenizacao(texto):
+    """Remove hifens que quebram palavras no final de linhas (comum em extração de PDF)."""
+    import re
+    # Padrão: palavra + hífen + espaços + quebra de linha + palavra
+    # Ex: "inscri-\nção" → "inscrição"
+    # Ex: "in-\ngresso" → "ingresso"
+    # Ex: "com-\nprovação" → "comprovação"
+    # NÃO afeta: "e-DOC", "CBMDF-DF" (sem quebra de linha após o hífen)
+    texto = re.sub(r'(\w)-\s*\n\s*(\w)', r'\1\2', texto)
+    return texto
+  
 def _formatar_teleprompt(texto):
     """Formata o texto como teleprompt (texto corrido sem quebras)."""
     import re
@@ -1979,8 +1990,11 @@ def _aplicar_negrito(texto):
 
 def _processar_voto(voto_texto, relator, regras):
     """Pipeline completo de processamento do voto."""
+    # 0. Corrigir hifenização de palavras quebradas (NOVO)
+    texto = _corrigir_hifenizacao(voto_texto)
+
     # 1. Substituições de frases e termos
-    texto = _aplicar_substituicoes(voto_texto, regras)
+    texto = _aplicar_substituicoes(texto, regras)
 
     # 2. Transformação de verbos (imperativo → infinitivo)
     texto = _transformar_verbos(texto, regras)
