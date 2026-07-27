@@ -2061,6 +2061,7 @@ def _obter_regras_padrao():
         {"procurar": "n°", "substituir_por": "nº", "tipo": "termo", "ativo": True},
         {"procurar": "tome", "substituir_por": "tomar", "tipo": "verbo", "ativo": True},
         {"procurar": "conheça", "substituir_por": "conhecer", "tipo": "verbo", "ativo": True},
+        {"procurar": "condutor", "substituir_por": "Relator", "tipo": "frase", "ativo": True},
         {"procurar": "dê", "substituir_por": "dar", "tipo": "verbo", "ativo": True},
         {"procurar": "declare", "substituir_por": "declarar", "tipo": "verbo", "ativo": True},
         {"procurar": "aprove", "substituir_por": "aprovar", "tipo": "verbo", "ativo": True},
@@ -2212,14 +2213,14 @@ def _renderizar_motor_nip(modo_edicao, usuario):
                 )
 
             # Botao Editado
-            if st.button("✅ Marcar como Editado", key="motor_nip_editado", type="primary"):
+              if st.button("✅ Marcar como Editado", key="motor_nip_editado", type="primary"):
                 if not proc_input:
                     st.error("Informe o número do processo.")
                     return
 
                 proc_normalizado = _normalizar_numero_processo(proc_input)
 
-                # Buscar processo na pauta
+                # Buscar processo na pauta (comparação robusta)
                 try:
                     todos_pauta = db_manager.buscar_todos("pauta_seat") or []
                     processo_pauta = None
@@ -2228,6 +2229,42 @@ def _renderizar_motor_nip(modo_edicao, usuario):
                         if p_num == proc_normalizado:
                             processo_pauta = p
                             break
+
+                    if processo_pauta:
+                        # Marcar como editado
+                        db_manager.atualizar("pauta_seat", processo_pauta["id"], {"editado": True})
+                        st.success("✅ Processo marcado como editado na Pauta Ativa!")
+
+                        # Se urgente, salvar na tabela de urgentes
+                        if marcar_urgente:
+                            db_manager.inserir("processos_urgentes", {
+                                "processo_numero": proc_normalizado,
+                                "relator": relator_input,
+                                "motivo": motivo_urg,
+                                "tipo_sessao": processo_pauta.get("tipo_sessao", ""),
+                                "sessao_numero": str(processo_pauta.get("numero_sessao", "")),
+                                "dia_sessao": str(processo_pauta.get("dia_sessao", ""))[:10],
+                            })
+                            st.success("✅ Processo adicionado à lista de Urgentes!")
+
+                        # Se SERCON, salvar na tabela do SERCON
+                        if is_sercon:
+                            db_manager.inserir("processos_sercon", {
+                                "processo_numero": proc_normalizado,
+                                "relator": relator_input,
+                                "situacao": situacao_sercon,
+                            })
+                            st.success("✅ Processo enviado para o SERCON!")
+                    else:
+                        # Debug: mostrar o que foi comparado
+                        st.warning(
+                            f"Processo não encontrado na Pauta Ativa.\n\n"
+                            f"**Número buscado:** `{proc_normalizado}`\n\n"
+                            f"**Processos na pauta:** "
+                            f"{', '.join([_normalizar_numero_processo(p.get('numero_processo', '')) for p in todos_pauta])}"
+                        )
+                except Exception as e:
+                    st.error(f"Erro ao atualizar: {str(e)}")
 
                     if processo_pauta:
                         # Marcar como editado
@@ -2277,11 +2314,25 @@ _RELATOR_SIGLA_MAP = {
 }
 
 def _normalizar_numero_processo(numero):
-    """Remove o sufixo -e do numero do processo."""
-    numero = numero.strip()
+    """Normaliza o número do processo removendo sufixos, espaços e caracteres invisíveis."""
+    if not numero:
+        return ""
+    # Converter para string e remover TODOS os espaços, quebras de linha, tabs
+    numero = str(numero).strip()
+    numero = numero.replace(" ", "")
+    numero = numero.replace("\n", "")
+    numero = numero.replace("\r", "")
+    numero = numero.replace("\t", "")
+    # Remover sufixo -e (com ou sem espaço antes)
     if numero.endswith("-e"):
         numero = numero[:-2]
-    return numero
+    if numero.endswith("-E"):
+        numero = numero[:-2]
+    # Remover possíveis espaços invisíveis (zero-width, non-breaking space, etc.)
+    numero = numero.replace("\u200b", "")
+    numero = numero.replace("\u00a0", "")
+    numero = numero.replace("\ufeff", "")
+    return numero.strip()
 
 def _extrair_numero_processo(texto):
     """Extrai o numero do processo do cabecalho do PDF."""
