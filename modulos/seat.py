@@ -2034,6 +2034,52 @@ def _remover_e_antes_itens(texto):
 
     return texto
 
+def _limpar_cabecalho_rodape(texto):
+    """Remove cabeçalhos e rodapés de PDFs de múltiplas páginas."""
+    import re
+
+    linhas = texto.split('\n')
+    linhas_limpas = []
+
+    for linha in linhas:
+        linha_strip = linha.strip()
+        linha_lower = linha_strip.lower()
+
+        # Pular linhas de rodapé digital
+        if 'documento assinado digitalmente' in linha_lower:
+            continue
+        if 'para verificar as assinaturas' in linha_lower:
+            continue
+        if 'acesse www.tc.df.gov.br' in linha_lower:
+            continue
+        if 'acesse www.tc.df.gov' in linha_lower:
+            continue
+        if linha_lower.startswith('e-doc'):
+            continue
+        # Proc no cabeçalho/rodapé (linha que começa com "Proc" e tem número)
+        if linha_lower.startswith('proc ') and '-' in linha_lower:
+            continue
+        if linha_lower == 'tribunal de contas do distrito federal':
+            continue
+        if linha_lower.startswith('gabinete da conselheir'):
+            continue
+        if linha_lower.startswith('gabinete do conselheir'):
+            continue
+        if linha_lower.startswith('gabinete do auditor'):
+            continue
+        # Linha com apenas "e-DOC XXXXXXXX"
+        if re.match(r'^e-?doc\s*\w+$', linha_strip, re.IGNORECASE):
+            continue
+
+        linhas_limpas.append(linha)
+
+    texto = '\n'.join(linhas_limpas)
+
+    # Remover linhas vazias excessivas (3+ viram 2)
+    texto = re.sub(r'\n{3,}', '\n\n', texto)
+
+    return texto.strip()
+
 def _adicionar_preambulo(texto, relator):
     """Adiciona o preâmbulo correto baseado no relator e remove o texto original do voto."""
     import re
@@ -2046,8 +2092,9 @@ def _adicionar_preambulo(texto, relator):
         preambulo = "O Tribunal, por unanimidade, de acordo com o voto do Relator, decidiu:"
 
     padroes_remocao = [
-        r'^\s*(?:Pelo exposto|Ante o exposto)[,\s]*(?:em harmonia com o órgão instrutivo,?\s*)?VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio Plenário:\s*',
-        r'^\s*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio Plenário:\s*',
+        r'^\s*(?:Diante do exposto|Pelo exposto|Ante o exposto)[,\s]*(?:em harmonia com o órgão instrutivo,?\s*)?VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio\s+(?:Tribunal|Plenário)[:\s]*',
+        r'^\s*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio\s+(?:Tribunal|Plenário)[:\s]*',
+        r'^\s*(?:Diante do exposto|Pelo exposto|Ante o exposto)[,\s]*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?',
         r'^\s*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?',
     ]
 
@@ -2110,8 +2157,11 @@ def _aplicar_negrito(texto):
 
 def _processar_voto(voto_texto, relator, regras):
     """Pipeline completo de processamento do voto."""
-    # 0. Corrigir hifenização de palavras quebradas (NOVO)
-    texto = _corrigir_hifenizacao(voto_texto)
+    # 0. Limpar cabeçalhos e rodapés de páginas intermediárias (NOVO)
+    texto = _limpar_cabecalho_rodape(voto_texto)
+
+    # 0.5. Corrigir hifenização de palavras quebradas
+    texto = _corrigir_hifenizacao(texto)
 
     # 1. Substituições de frases e termos
     texto = _aplicar_substituicoes(texto, regras)
