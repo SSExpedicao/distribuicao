@@ -1727,10 +1727,10 @@ def _listar_despachos(usuario, modo_edicao):
     nome_usuario = usuario.get("nome", "")
 
     todos_ds = db_manager.buscar_todos(
-        "despachos_ds",
+       "despachos_ds",
         ordem_coluna="created_at",
-        ordem_desc=True,
-    )
+        ordem_desc=True,  # ← MUDAR DE False PARA True
+       )
 
     col_f1, col_f2 = st.columns(2)
     with col_f1:
@@ -3393,6 +3393,8 @@ def _gerenciar_config_doe():
 
 def renderizar(usuario: dict, modo_edicao: bool = False):
     """Funcao principal do modulo SEAT."""
+    import db_manager
+
     nome = usuario.get("nome", "Usuario")
     cargo = usuario.get("cargo", "operacional")
     setor = usuario.get("setor", "SEAT")
@@ -3407,9 +3409,22 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
     # Mover Despachos Singulares para Urgentes automaticamente
     _mover_despacho_singular_para_urgentes()
 
+    # Verificar se a sessao foi finalizada
+    try:
+        todos_processos = db_manager.buscar_todos("pauta_seat") or []
+        sessao_finalizada = any(p.get("sessao_finalizada") for p in todos_processos)
+    except Exception:
+        sessao_finalizada = False
+
     # Sidebars
+    # Despachos Singulares: SEMPRE visivel
     _renderizar_sidebar_ds(usuario)
-    _renderizar_sidebar_urgentes(usuario)
+
+    # Edicao, Revisao e Urgentes: ocultos quando sessao finalizada
+    if not sessao_finalizada:
+        _renderizar_sidebar_urgentes(usuario)
+
+    # Escala DOE: SEMPRE visivel
     _renderizar_sidebar_doe(usuario)
 
     tab_pauta, tab_distribuicao, tab_ds, tab_urgentes, tab_motor, tab_doe = st.tabs([
