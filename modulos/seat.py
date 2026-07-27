@@ -406,10 +406,8 @@ def _parse_csv(arquivo) -> list:
 def _incluir_processo_manual(modo_edicao: bool):
     """Formulario para incluir processo manualmente, um por vez."""
     st.markdown("### Incluir Processo")
-
     with st.form("form_incluir_manual"):
         col1, col2 = st.columns(2)
-
         with col1:
             processo_numero = st.text_input(
                 "Numero do Processo *",
@@ -419,7 +417,6 @@ def _incluir_processo_manual(modo_edicao: bool):
                 "Numero da Sessao *",
                 placeholder="Ex: 123/2026",
             )
-
         with col2:
             tipo_sessao = st.selectbox(
                 "Tipo de Sessao *",
@@ -430,7 +427,6 @@ def _incluir_processo_manual(modo_edicao: bool):
                 "Dia da Sessao *",
                 value=date.today(),
             )
-
         col3, col4 = st.columns(2)
         with col3:
             relator = st.text_input(
@@ -442,19 +438,15 @@ def _incluir_processo_manual(modo_edicao: bool):
                 "Observacoes (opcional)",
                 placeholder="Info adicional",
             )
-
         submit = st.form_submit_button("Incluir na Pauta", use_container_width=True)
-
         if submit:
             if not processo_numero.strip() or not numero_sessao.strip():
                 st.error("Numero do processo e numero da sessao sao obrigatorios.")
                 return
-
             # Higienizar dados antes de salvar
             numero_limpo = _higienizar_numero_processo(processo_numero.strip())
             relator_limpo = _higienizar_relator(relator.strip()) if relator else None
             dia_iso = dia_sessao.isoformat()
-
             # Verificar duplicidade
             if _verificar_duplicidade(numero_limpo, numero_sessao.strip(), dia_iso):
                 st.error(
@@ -462,7 +454,6 @@ def _incluir_processo_manual(modo_edicao: bool):
                     f"na sessao {numero_sessao} de {_formatar_data_curta(dia_iso)}."
                 )
                 return
-
             dados = {
                 "processo_numero": numero_limpo,
                 "numero_sessao": numero_sessao.strip(),
@@ -472,10 +463,10 @@ def _incluir_processo_manual(modo_edicao: bool):
                 "status": "inclusao",
                 "observacoes": observacoes.strip() if observacoes else "",
             }
-
             resultado = db_manager.inserir("pauta_seat", dados)
-
             if resultado:
+                # GATILHO DS: identifica despacho singular pendente
+                _identificar_ds_apos_inclusao(numero_limpo, resultado.get("id"))
                 st.success(f"Processo {numero_limpo} incluido na pauta SEAT.")
                 if relator and relator_limpo != relator.strip():
                     st.caption(f"Relator formatado: {relator.strip()} -> {relator_limpo}")
@@ -494,34 +485,27 @@ def _incluir_processo_lote(modo_edicao: bool):
         "O sistema remove o sufixo `-e` do numero do processo e adiciona `GC` "
         "antes das iniciais do relator (exceto GAVF / Subst.)."
     )
-
     arquivo = st.file_uploader(
         "Selecionar arquivo CSV",
         type=['csv'],
         key="csv_upload_seat",
     )
-
     if arquivo is None:
         return
-
     # Parse do CSV
     processos_csv = _parse_csv(arquivo)
-
     if not processos_csv:
         st.error(
             "Nenhum processo valido encontrado no arquivo. "
             "Verifique se as colunas `processo_numero` e `tipo_sessao` existem e estao preenchidas."
         )
         return
-
     # Detectar tipos de sessao unicos no arquivo
     tipos_encontrados = sorted(set(p['tipo_sessao'] for p in processos_csv if p['tipo_sessao']))
-
     st.success(
         f"CSV carregado: {len(processos_csv)} processos encontrados, "
         f"{len(tipos_encontrados)} tipo(s) de sessao."
     )
-
     # Mostrar preview dos dados higienizados
     with st.expander("Preview dos dados (apos higienizacao)", expanded=False):
         for p in processos_csv[:10]:
@@ -532,11 +516,9 @@ def _incluir_processo_lote(modo_edicao: bool):
             )
         if len(processos_csv) > 10:
             st.caption(f"... e mais {len(processos_csv) - 10} processo(s).")
-
     # Formulario para numero e data de cada tipo de sessao
     st.markdown("### Informacoes das Sessoes")
     st.markdown("Preencha o numero e a data para cada tipo de sessao encontrado no arquivo:")
-
     session_info = {}
     for i, tipo in enumerate(tipos_encontrados):
         st.markdown(f"**{tipo}**")
@@ -558,39 +540,32 @@ def _incluir_processo_lote(modo_edicao: bool):
             'dia': dia.isoformat(),
         }
         st.markdown("---")
-
     # Botao de confirmacao
     if st.button("Confirmar e Inserir", type="primary", key="csv_confirmar"):
         erros_validacao = []
         for tipo, info in session_info.items():
             if not info['numero']:
                 erros_validacao.append(f"Numero da sessao para {tipo} e obrigatorio.")
-
         if erros_validacao:
             for erro in erros_validacao:
                 st.error(erro)
             return
-
         inseridos = 0
         duplicados = 0
         erros = 0
         lista_duplicados = []
-
         for proc in processos_csv:
             tipo = proc['tipo_sessao']
             info = session_info.get(tipo)
-
             if not info:
                 erros += 1
                 continue
-
             if _verificar_duplicidade(proc['processo_numero'], info['numero'], info['dia']):
                 lista_duplicados.append(
                     f"{proc['processo_numero']} (sessao {info['numero']} de {_formatar_data_curta(info['dia'])})"
                 )
                 duplicados += 1
                 continue
-
             dados = {
                 "processo_numero": proc['processo_numero'],
                 "numero_sessao": info['numero'],
@@ -599,23 +574,21 @@ def _incluir_processo_lote(modo_edicao: bool):
                 "relator": proc.get('relator'),
                 "status": "inclusao",
             }
-
             resultado = db_manager.inserir("pauta_seat", dados)
             if resultado:
+                # GATILHO DS: identifica despacho singular pendente
+                _identificar_ds_apos_inclusao(proc['processo_numero'], resultado.get("id"))
                 inseridos += 1
             else:
                 erros += 1
-
         st.success(
             f"Importacao concluida: {inseridos} inseridos, "
             f"{duplicados} duplicados, {erros} erros."
         )
-
         if lista_duplicados:
             with st.expander(f"Ver {len(lista_duplicados)} processo(s) duplicado(s)"):
                 for dup in lista_duplicados:
                     st.warning(f"Duplicado: {dup}")
-
         if inseridos > 0:
             st.rerun()
 
@@ -950,119 +923,6 @@ def _renderizar_card_processo(processo: dict, modo_edicao: bool):
 
         st.markdown("---")
 
-def _renderizar_resumo_carga(modo_edicao: bool, usuario: dict = None):
-    """
-    Renderiza tabela de resumo de carga por colaborador.
-    
-    - Operacionais: veem apenas sua propria linha
-    - Gerente e acima: veem todos os membros da equipe
-    """
-    import pandas as pd
-
-    cargo_usuario = usuario.get("cargo", "operacional") if usuario else "operacional"
-    nome_usuario = usuario.get("nome", "") if usuario else ""
-    filtrar_por_usuario = (cargo_usuario == "operacional" and nome_usuario)
-
-    # Buscar todos os processos
-    todos_processos = db_manager.buscar_todos("pauta_seat")
-
-    # Buscar equipe SEAT
-    equipe = _obter_equipe_seat()
-
-    if not equipe:
-        return
-
-    # Se operacional, filtrar so o proprio nome
-    if filtrar_por_usuario:
-        nome_norm = _normalizar_texto(nome_usuario)
-        equipe_filtrada = [n for n in equipe if _normalizar_texto(n) == nome_norm]
-    else:
-        equipe_filtrada = equipe
-
-    # Calcular carga de cada membro
-    dados_resumo = []
-    for nome in equipe_filtrada:
-        nome_norm = _normalizar_texto(nome)
-
-        para_editar = 0
-        editados = 0
-        para_revisar = 0
-        revisados = 0
-
-        for p in todos_processos:
-            editor_p = _normalizar_texto(p.get("editor", "") or "")
-            revisor_p = _normalizar_texto(p.get("revisor", "") or "")
-            editado_p = bool(p.get("editado", False))
-            revisado_p = bool(p.get("revisado", False))
-
-            if editor_p == nome_norm:
-                if editado_p:
-                    editados += 1
-                else:
-                    para_editar += 1
-
-            if revisor_p == nome_norm:
-                if revisado_p:
-                    revisados += 1
-                else:
-                    para_revisar += 1
-
-        faltam = para_editar + para_revisar
-
-        dados_resumo.append({
-            "Nome": nome,
-            "Para Editar": para_editar,
-            "Editados": editados,
-            "Para Revisar": para_revisar,
-            "Revisados": revisados,
-            "Faltam": faltam,
-        })
-
-    if not dados_resumo:
-        return
-
-    df_resumo = pd.DataFrame(dados_resumo)
-
-    # Totais
-    total_para_editar = df_resumo["Para Editar"].sum()
-    total_editados = df_resumo["Editados"].sum()
-    total_para_revisar = df_resumo["Para Revisar"].sum()
-    total_revisados = df_resumo["Revisados"].sum()
-    total_faltam = df_resumo["Faltam"].sum()
-
-    # Titulo
-    if filtrar_por_usuario:
-        st.markdown(f"### 📊 Meu Resumo")
-    else:
-        st.markdown(f"### 📊 Resumo da Equipe")
-
-    # Tabela
-    st.dataframe(
-        df_resumo,
-        hide_index=True,
-        use_container_width=True,
-        column_config={
-            "Nome": st.column_config.TextColumn("Nome", width="medium"),
-            "Para Editar": st.column_config.NumberColumn("Para Editar", format="%d", width="small"),
-            "Editados": st.column_config.NumberColumn("Editados", format="%d", width="small"),
-            "Para Revisar": st.column_config.NumberColumn("Para Revisar", format="%d", width="small"),
-            "Revisados": st.column_config.NumberColumn("Revisados", format="%d", width="small"),
-            "Faltam": st.column_config.NumberColumn("Faltam", format="%d", width="small"),
-        },
-    )
-
-    # Linha de totais (apenas para gerente e acima)
-    if not filtrar_por_usuario:
-        st.markdown(
-            f"**Totais:** "
-            f"Para Editar: **{total_para_editar}** | "
-            f"Editados: **{total_editados}** | "
-            f"Para Revisar: **{total_para_revisar}** | "
-            f"Revisados: **{total_revisados}** | "
-            f"Faltam: **{total_faltam}**"
-        )
-
-    st.markdown("---")
 
 def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
     """Renderiza a aba de Pauta Ativa com filtros e lista de processos."""
