@@ -2867,6 +2867,468 @@ def _renderizar_sidebar_urgentes(usuario):
             height=len(df) * 35 + 40,
         )
 
+# ==================== ESCALA DOE ====================
+
+def _obter_config_doe():
+    """Obtém a data de início da rotação do DOE."""
+    from datetime import date, timedelta
+    try:
+        config = db_manager.buscar_todos("config_doe") or []
+        if config:
+            data_str = config[0].get("data_inicio_rotacao")
+            if data_str:
+                return date.fromisoformat(str(data_str)[:10])
+    except Exception:
+        pass
+    # Default: segunda-feira da semana atual
+    hoje = date.today()
+    return hoje - timedelta(days=hoje.weekday())
+
+def _salvar_config_doe(data_inicio):
+    """Salva a data de início da rotação."""
+    try:
+        config = db_manager.buscar_todos("config_doe") or []
+        if config:
+            db_manager.atualizar("config_doe", config[0]["id"], {
+                "data_inicio_rotacao": str(data_inicio),
+            })
+        else:
+            db_manager.inserir("config_doe", {
+                "data_inicio_rotacao": str(data_inicio),
+            })
+    except Exception:
+        pass
+
+def _obter_duplas_doe():
+    """Retorna todas as duplas ativas ordenadas."""
+    try:
+        return db_manager.buscar_todos(
+            "duplas_doe",
+            filtros={"ativo": True},
+            ordem_coluna="ordem",
+            ordem_desc=False,
+        ) or []
+    except Exception:
+        return []
+
+def _obter_semana_atual():
+    """Retorna (segunda, sexta) da semana atual."""
+    from datetime import date, timedelta
+    hoje = date.today()
+    segunda = hoje - timedelta(days=hoje.weekday())
+    sexta = segunda + timedelta(days=4)
+    return segunda, sexta
+
+def _obter_dupla_semana(data_referencia, duplas):
+    """Retorna qual dupla está escalada para a semana da data_referencia."""
+    from datetime import date, timedelta
+    if not duplas:
+        return None
+    data_inicio = _obter_config_doe()
+    dias_desde_segunda = data_inicio.weekday()
+    segunda_inicio = data_inicio - timedelta(days=dias_desde_segunda)
+    dias_diff = (data_referencia - segunda_inicio).days
+    if dias_diff < 0:
+        return None
+    semanas_diff = dias_diff // 7
+    indice = semanas_diff % len(duplas)
+    return duplas[indice]
+
+def _gerar_calendario_doe(duplas, num_semanas=8):
+    """Gera o calendário de DOE para as próximas N semanas."""
+    from datetime import date, timedelta
+    calendario = []
+    segunda_atual, _ = _obter_semana_atual()
+    for i in range(num_semanas):
+        segunda = segunda_atual + timedelta(weeks=i)
+        sexta = segunda + timedelta(days=4)
+        dupla = _obter_dupla_semana(segunda, duplas)
+        calendario.append({
+            "semana_inicio": segunda,
+            "semana_fim": sexta,
+            "dupla": dupla,
+        })
+    return calendario
+
+def _verificar_conflitos_ferias():
+    """Verifica todos os conflitos entre férias aprovadas e escala DOE."""
+    from datetime import date, timedelta
+    conflitos = []
+    try:
+        duplas = _obter_duplas_doe()
+        if not duplas:
+            return conflitos
+
+        ferias_todas = db_manager.buscar_todos(
+            "ferias_colaboradores",
+            filtros={"status": "aprovada"},
+        ) or []
+
+        segunda_atual, _ = _obter_semana_atual()
+
+        for ferias in ferias_todas:
+            colaborador = ferias.get("colaborador", "")
+            data_ini = date.fromisoformat(str(ferias.get("data_inicio"))[:10])
+            data_fim = date.fromisoformat(str(ferias.get("data_fim"))[:10])
+
+            for i in range(12):
+                segunda = segunda_atual + timedelta(weeks=i)
+                sexta = segunda + timedelta(days=4)
+
+                if segunda <= data_fim and sexta >= data_ini:
+                    dupla = _obter_dupla_semana(segunda, duplas)
+                    if dupla and colaborador in [dupla.get("membro1"), dupla.get("membro2")]:
+                        substituto = ferias.get("substituto", "")
+                        conflitos.append({
+                            "colaborador": colaborador,
+                            "semana_inicio": segunda,
+                            "semana_fim": sexta,
+                            "dupla": dupla,
+                            "ferias_inicio": data_ini,
+                            "ferias_fim": data_fim,
+                            "substituto": substituto,
+                            "ferias_id": ferias.get("id"),
+                        })
+    except Exception:
+        pass
+    return conflitos
+
+def _renderizar_sidebar_doe(usuario):
+    """Mostra a dupla escalada na semana atual na barra lateral."""
+    from datetime import date, timedelta
+    cargo = usuario.get("cargo", "operacional")
+    setor = usuario.get("setor", "")
+
+    if cargo not in ("criador", "raiz", "gerente") and "seat" not in _normalizar_texto(setor):
+        return
+
+    duplas = _obter_duplas_doe()
+    if not duplas:
+        return
+
+    segunda, sexta = _obter_semana_atual()
+    dupla_atual = _obter_dupla_semana(segunda, duplas)
+    if not dupla_atual:
+        return
+
+    with st.sidebar:
+        st.markdown("---")
+        st.markdown("##### 📰 Escala DOE (Esta Semana)")
+        st.write(f"**Período:** {segunda.strftime('%d/%m')} a {sexta.strftime('%d/%m')}")
+
+        # Verificar substitutos
+        membro1 = dupla_atual.get("membro1", "")
+        membro2 = dupla_atual.get("membro2", "")
+
+        conflitos = _verificar_conflitos_ferias()
+        conflitos_semana = [c for c in conflitos if c["semana_inicio"] == segunda]
+
+        for c in conflitos_semana:
+            if c["colaborador"] == membro1 and c.get("substituto"):
+                membro1 = f"~~{membro1}~~ → {c['substituto']}"
+            elif c["colaborador"] == membro2 and c.get("substituto"):
+                membro2 = f"~~{membro2}~~ → {c['substituto']}"
+
+        st.write(f"**Dupla:** {dupla_atual.get('nome_dupla', 'N/I')}")
+        st.write(f"• {membro1}")
+        st.write(f"• {membro2}")
+
+        # Alertas de férias sem substituto
+        for c in conflitos_semana:
+            if not c.get("substituto"):
+                st.warning(
+                    f"⚠️ **{c['colaborador']}** está de férias "
+                    f"({c['ferias_inicio'].strftime('%d/%m')} a {c['ferias_fim'].strftime('%d/%m')}). "
+                    f"Sem substituto designado!"
+                )
+
+def _renderizar_escala_doe(modo_edicao, usuario):
+    """Renderiza a aba de Escala DOE."""
+    from datetime import date, timedelta
+    import pandas as pd
+
+    st.markdown("### 📰 Escala DOE — Diário Oficial do Tribunal")
+    st.caption(
+        "Sistema de rodízio de duplas para a publicação do DOE. "
+        "As duplas são definidas pelos gerentes e o sistema cria a escala automaticamente."
+    )
+
+    cargo = usuario.get("cargo", "operacional")
+    is_gerente = cargo in ("criador", "raiz", "gerente")
+
+    # === Seção 1: Semana atual ===
+    st.markdown("---")
+    st.markdown("#### 📌 Semana Atual")
+
+    duplas = _obter_duplas_doe()
+    segunda, sexta = _obter_semana_atual()
+
+    if not duplas:
+        st.info("Nenhuma dupla cadastrada. Os gerentes podem cadastrar duplas abaixo.")
+    else:
+        dupla_atual = _obter_dupla_semana(segunda, duplas)
+        if dupla_atual:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Período", f"{segunda.strftime('%d/%m/%Y')} a {sexta.strftime('%d/%m/%Y')}")
+            with col2:
+                st.metric("Dupla", dupla_atual.get("nome_dupla", "N/I"))
+            with col3:
+                st.metric("Membros", f"{dupla_atual.get('membro1', '')} / {dupla_atual.get('membro2', '')}")
+
+            # Verificar férias
+            conflitos = _verificar_conflitos_ferias()
+            conflitos_semana = [c for c in conflitos if c["semana_inicio"] == segunda]
+            for c in conflitos_semana:
+                if c.get("substituto"):
+                    st.info(
+                        f"ℹ️ **{c['colaborador']}** está de férias. "
+                        f"Substituto: **{c['substituto']}**."
+                    )
+                else:
+                    st.warning(
+                        f"⚠️ **{c['colaborador']}** está de férias de "
+                        f"{c['ferias_inicio'].strftime('%d/%m/%Y')} a {c['ferias_fim'].strftime('%d/%m/%Y')}. "
+                        f"**Sem substituto designado!**"
+                    )
+                    if is_gerente:
+                        st.info("👆 Designe um substituto na aba 'Férias' abaixo.")
+        else:
+            st.warning("Não foi possível determinar a dupla da semana atual.")
+
+    # === Seção 2: Próximas semanas ===
+    st.markdown("---")
+    st.markdown("#### 📅 Próximas Semanas")
+
+    if duplas:
+        calendario = _gerar_calendario_doe(duplas, num_semanas=8)
+        dados_cal = []
+        for item in calendario:
+            dupla = item["dupla"]
+            dados_cal.append({
+                "Semana": f"{item['semana_inicio'].strftime('%d/%m')} a {item['semana_fim'].strftime('%d/%m')}",
+                "Dupla": dupla.get("nome_dupla", "N/I") if dupla else "—",
+                "Membro 1": dupla.get("membro1", "") if dupla else "—",
+                "Membro 2": dupla.get("membro2", "") if dupla else "—",
+            })
+        df_cal = pd.DataFrame(dados_cal)
+        st.dataframe(df_cal, hide_index=True, use_container_width=True)
+
+    # === Seção 3: Gerenciamento (apenas gerentes) ===
+    if is_gerente and modo_edicao:
+        st.markdown("---")
+        st.markdown("#### ⚙️ Gerenciamento")
+        st.caption("Apenas gerentes e criadores podem gerenciar duplas e férias.")
+
+        tab_duplas, tab_ferias, tab_config = st.tabs(["Duplas", "Férias", "Configuração"])
+
+        with tab_duplas:
+            _gerenciar_duplas_doe(usuario)
+
+        with tab_ferias:
+            _gerenciar_ferias_doe(usuario)
+
+        with tab_config:
+            _gerenciar_config_doe()
+    elif not is_gerente:
+        st.markdown("---")
+        st.info("Apenas gerentes e criadores podem gerenciar duplas e férias.")
+
+def _gerenciar_duplas_doe(usuario):
+    """Gerenciamento de duplas DOE (apenas gerentes)."""
+    st.markdown("##### Duplas Cadastradas")
+    duplas = _obter_duplas_doe()
+
+    if duplas:
+        for d in duplas:
+            with st.expander(
+                f"#{d.get('ordem', 0)} — {d.get('nome_dupla', '')} | "
+                f"{d.get('membro1', '')} + {d.get('membro2', '')}"
+            ):
+                with st.form(f"form_edit_dupla_{d['id']}"):
+                    st.markdown("**Editar Dupla**")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        edit_nome = st.text_input("Nome da Dupla", value=d.get("nome_dupla", ""), key=f"edit_nome_d_{d['id']}")
+                        edit_membro1 = st.text_input("Membro 1", value=d.get("membro1", ""), key=f"edit_m1_{d['id']}")
+                    with col2:
+                        edit_membro2 = st.text_input("Membro 2", value=d.get("membro2", ""), key=f"edit_m2_{d['id']}")
+                        edit_ordem = st.number_input("Ordem", min_value=1, value=int(d.get("ordem", 1)), key=f"edit_ord_{d['id']}")
+
+                    col_b1, col_b2 = st.columns(2)
+                    with col_b1:
+                        if st.form_submit_button("Salvar"):
+                            db_manager.atualizar("duplas_doe", d["id"], {
+                                "nome_dupla": edit_nome.strip(),
+                                "membro1": edit_membro1.strip(),
+                                "membro2": edit_membro2.strip(),
+                                "ordem": int(edit_ordem),
+                            })
+                            st.success("Dupla atualizada!")
+                            st.rerun()
+                    with col_b2:
+                        if st.form_submit_button("Desativar"):
+                            db_manager.atualizar("duplas_doe", d["id"], {"ativo": False})
+                            st.success("Dupla desativada!")
+                            st.rerun()
+    else:
+        st.info("Nenhuma dupla cadastrada.")
+
+    # Cadastrar nova dupla
+    st.markdown("---")
+    st.markdown("##### Cadastrar Nova Dupla")
+    with st.form("form_nova_dupla_doe"):
+        col1, col2 = st.columns(2)
+        with col1:
+            novo_nome = st.text_input("Nome da Dupla *", placeholder="Ex: Dupla A", key="nova_nome_d")
+            novo_membro1 = st.text_input("Membro 1 *", key="nova_m1_d")
+        with col2:
+            novo_membro2 = st.text_input("Membro 2 *", key="nova_m2_d")
+            nova_ordem = st.number_input("Ordem *", min_value=1, value=len(duplas) + 1, key="nova_ord_d")
+
+        if st.form_submit_button("Cadastrar Dupla", type="primary"):
+            if not novo_nome or not novo_membro1 or not novo_membro2:
+                st.error("Preencha todos os campos obrigatórios.")
+            else:
+                db_manager.inserir("duplas_doe", {
+                    "nome_dupla": novo_nome.strip(),
+                    "membro1": novo_membro1.strip(),
+                    "membro2": novo_membro2.strip(),
+                    "ordem": int(nova_ordem),
+                    "ativo": True,
+                })
+                st.success("Dupla cadastrada!")
+                st.rerun()
+
+def _gerenciar_ferias_doe(usuario):
+    """Gerenciamento de férias e substitutos (apenas gerentes)."""
+    from datetime import date, timedelta
+    st.markdown("##### Férias Cadastradas")
+
+    try:
+        ferias = db_manager.buscar_todos(
+            "ferias_colaboradores",
+            ordem_coluna="data_inicio",
+            ordem_desc=True,
+        ) or []
+    except Exception:
+        ferias = []
+
+    if ferias:
+        for f in ferias:
+            icone = "🟢" if f.get("status") == "aprovada" else "🟡"
+            substituto = f.get("substituto", "")
+            with st.expander(
+                f"{icone} {f.get('colaborador', '')} | "
+                f"{str(f.get('data_inicio', ''))[:10]} a {str(f.get('data_fim', ''))[:10]} | "
+                f"{f.get('status', '').upper()}"
+            ):
+                st.write(f"**Colaborador:** {f.get('colaborador', '')}")
+                st.write(f"**Período:** {f.get('data_inicio', '')} a {f.get('data_fim', '')}")
+                st.write(f"**Status:** {f.get('status', '')}")
+                if substituto:
+                    st.write(f"**Substituto:** {substituto}")
+                if f.get("observacoes"):
+                    st.write(f"**Observações:** {f.get('observacoes')}")
+
+                # Verificar conflito com escala
+                duplas = _obter_duplas_doe()
+                if duplas and f.get("status") == "aprovada":
+                    data_ini = date.fromisoformat(str(f.get("data_inicio"))[:10])
+                    data_fim = date.fromisoformat(str(f.get("data_fim"))[:10])
+                    colaborador = f.get("colaborador", "")
+                    segunda_atual, _ = _obter_semana_atual()
+
+                    for i in range(12):
+                        segunda = segunda_atual + timedelta(weeks=i)
+                        sexta = segunda + timedelta(days=4)
+                        if segunda <= data_fim and sexta >= data_ini:
+                            dupla = _obter_dupla_semana(segunda, duplas)
+                            if dupla and colaborador in [dupla.get("membro1"), dupla.get("membro2")]:
+                                if not substituto:
+                                    st.warning(
+                                        f"⚠️ **Conflito!** {colaborador} está escalado na semana "
+                                        f"{segunda.strftime('%d/%m')} a {sexta.strftime('%d/%m')} "
+                                        f"(Dupla: {dupla.get('nome_dupla', '')})."
+                                    )
+
+                # Designar substituto
+                if f.get("status") == "aprovada" and not substituto:
+                    with st.form(f"form_subst_{f['id']}"):
+                        novo_subst = st.text_input(
+                            "Designar Substituto",
+                            placeholder="Nome do substituto",
+                            key=f"subst_{f['id']}"
+                        )
+                        if st.form_submit_button("Designar"):
+                            if novo_subst:
+                                db_manager.atualizar("ferias_colaboradores", f["id"], {
+                                    "substituto": novo_subst.strip()
+                                })
+                                st.success(f"Substituto designado: {novo_subst.strip()}")
+                                st.rerun()
+
+                # Aprovar/rejeitar
+                if f.get("status") == "pendente":
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("Aprovar", key=f"ferias_ok_{f['id']}"):
+                            db_manager.atualizar("ferias_colaboradores", f["id"], {"status": "aprovada"})
+                            st.success("Férias aprovadas!")
+                            st.rerun()
+                    with col2:
+                        if st.button("Rejeitar", key=f"ferias_no_{f['id']}"):
+                            db_manager.atualizar("ferias_colaboradores", f["id"], {"status": "rejeitada"})
+                            st.rerun()
+    else:
+        st.info("Nenhuma férias cadastrada.")
+
+    # Cadastrar férias
+    st.markdown("---")
+    st.markdown("##### Cadastrar Férias")
+    with st.form("form_nova_ferias"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            ferias_colab = st.text_input("Colaborador *", key="ferias_c")
+            ferias_ini = st.date_input("Data Início *", key="ferias_i")
+        with col2:
+            ferias_fim = st.date_input("Data Fim *", key="ferias_f")
+            ferias_obs = st.text_area("Observações", key="ferias_o", height=60)
+        with col3:
+            ferias_status = st.selectbox("Status", options=["pendente", "aprovada"], key="ferias_s")
+
+        if st.form_submit_button("Cadastrar Férias", type="primary"):
+            if not ferias_colab:
+                st.error("Informe o nome do colaborador.")
+            elif ferias_fim < ferias_ini:
+                st.error("A data fim não pode ser anterior à data início.")
+            else:
+                db_manager.inserir("ferias_colaboradores", {
+                    "colaborador": ferias_colab.strip(),
+                    "data_inicio": str(ferias_ini),
+                    "data_fim": str(ferias_fim),
+                    "observacoes": ferias_obs.strip(),
+                    "status": ferias_status,
+                })
+                st.success("Férias cadastradas!")
+                st.rerun()
+
+def _gerenciar_config_doe():
+    """Configuração do DOE (data de início da rotação)."""
+    st.markdown("##### Configuração da Rotação")
+    st.caption(
+        "Define a data de início do rodízio. A primeira segunda-feira a partir desta data será a Semana 1."
+    )
+
+    data_atual = _obter_config_doe()
+
+    with st.form("form_config_doe"):
+        nova_data = st.date_input("Data de Início da Rotação", value=data_atual)
+        if st.form_submit_button("Salvar Configuração"):
+            _salvar_config_doe(nova_data)
+            st.success("Configuração salva!")
+            st.rerun()
+
 # ============================================================
 # FUNCAO PRINCIPAL
 # ============================================================
@@ -2887,8 +3349,10 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
     # Mover Despachos Singulares para Urgentes automaticamente
     _mover_despacho_singular_para_urgentes()
 
+    # Sidebars
     _renderizar_sidebar_ds(usuario)
     _renderizar_sidebar_urgentes(usuario)
+    _renderizar_sidebar_doe(usuario)
 
     tab_pauta, tab_distribuicao, tab_ds, tab_urgentes, tab_motor, tab_doe = st.tabs([
         "Pauta Ativa",
@@ -2896,7 +3360,7 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
         "Despachos Singulares",
         "Urgentes",
         "Motor NIP",
-        "Escala DOE (em breve)",
+        "Escala DOE",
     ])
 
     with tab_pauta:
@@ -2915,4 +3379,4 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
         _renderizar_motor_nip(modo_edicao, usuario)
 
     with tab_doe:
-        st.info("A Escala de Publicacao DOE sera implementada na proxima fase.")
+        _renderizar_escala_doe(modo_edicao, usuario)
