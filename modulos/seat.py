@@ -1518,19 +1518,13 @@ def _listar_despachos(usuario, modo_edicao):
     """Lista todos os DS cadastrados com seus documentos vinculados."""
     st.markdown("#### Despachos Cadastrados")
 
-    cargo = usuario.get("cargo", "operacional")
-    nome = usuario.get("nome", "")
-    filtrar = (cargo == "operacional" and nome)
+    nome_usuario = usuario.get("nome", "")
 
     todos_ds = db_manager.buscar_todos(
         "despachos_ds",
         ordem_coluna="created_at",
         ordem_desc=True,
     )
-
-    if filtrar:
-        nome_norm = _normalizar_texto(nome)
-        todos_ds = [d for d in todos_ds if _normalizar_texto(d.get("cadastrado_por", "")) == nome_norm]
 
     col_f1, col_f2 = st.columns(2)
     with col_f1:
@@ -1561,11 +1555,15 @@ def _listar_despachos(usuario, modo_edicao):
 
     for ds in todos_ds:
         status_icone = "🟡" if ds.get("status") == "pendente" else "🟢"
+        # Exibir alterado_por se existir, senao cadastrado_por
+        exibido_por = ds.get("alterado_por") or ds.get("cadastrado_por", "")
+        rotulo_por = "Alterado por" if ds.get("alterado_por") else "Cadastrado por"
+
         with st.expander(
             f"{status_icone} {ds.get('processo_numero', '')} | "
             f"{ds.get('tipo', '')} | "
             f"{ds.get('status', '').upper()} | "
-            f"Por: {ds.get('cadastrado_por', '')}"
+            f"{rotulo_por}: {exibido_por}"
         ):
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -1575,7 +1573,7 @@ def _listar_despachos(usuario, modo_edicao):
                 st.write(f"**Tipo:** {ds.get('tipo', '')}")
                 st.write(f"**Envio:** {ds.get('forma_envio', '-') or '-'}")
             with col3:
-                st.write(f"**Cadastrado por:** {ds.get('cadastrado_por', '')}")
+                st.write(f"**{rotulo_por}:** {exibido_por}")
                 st.write(f"**Recebido:** {'Sim' if ds.get('recebido_confirmado') else 'Nao'}")
 
             if ds.get("observacoes"):
@@ -1604,11 +1602,62 @@ def _listar_despachos(usuario, modo_edicao):
                         if modo_edicao and of.get("status") == "aguardando":
                             if st.button("OK", key=f"of_recv_{of['id']}", help="Marcar como recebido"):
                                 db_manager.atualizar("oficios_ds", of["id"], {"status": "recebido"})
+                                db_manager.atualizar("despachos_ds", ds["id"], {"alterado_por": nome_usuario})
                                 st.rerun()
             else:
                 st.caption("Nenhum documento vinculado.")
 
             if modo_edicao:
+                # Form para editar dados do DS
+                with st.form(f"form_edit_ds_{ds['id']}"):
+                    st.markdown("**Editar Despacho**")
+                    col_e1, col_e2 = st.columns(2)
+                    with col_e1:
+                        edit_processo = st.text_input(
+                            "Processo",
+                            value=ds.get("processo_numero", ""),
+                            key=f"edit_proc_{ds['id']}"
+                        )
+                        edit_relator = st.text_input(
+                            "Relator",
+                            value=ds.get("relator", "") or "",
+                            key=f"edit_rel_{ds['id']}"
+                        )
+                        edit_forma = st.selectbox(
+                            "Forma de Envio",
+                            options=["E-mail", "Mensageria", "Protocolo"],
+                            index=["E-mail", "Mensageria", "Protocolo"].index(ds.get("forma_envio", "E-mail")) if ds.get("forma_envio") in ["E-mail", "Mensageria", "Protocolo"] else 0,
+                            key=f"edit_forma_{ds['id']}"
+                        )
+                    with col_e2:
+                        edit_tipo = st.selectbox(
+                            "Tipo",
+                            options=["Despacho Singular", "Sustentacao Oral"],
+                            index=["Despacho Singular", "Sustentacao Oral"].index(ds.get("tipo", "Despacho Singular")) if ds.get("tipo") in ["Despacho Singular", "Sustentacao Oral"] else 0,
+                            key=f"edit_tipo_{ds['id']}"
+                        )
+                        edit_obs = st.text_area(
+                            "Observacoes",
+                            value=ds.get("observacoes", "") or "",
+                            height=60,
+                            key=f"edit_obs_{ds['id']}"
+                        )
+
+                    if st.form_submit_button("Salvar Alteracoes"):
+                        proc_higienizado = _higienizar_numero_processo(edit_processo) if edit_processo else ds.get("processo_numero", "")
+                        relator_higienizado = _higienizar_relator(edit_relator) if edit_relator else None
+                        db_manager.atualizar("despachos_ds", ds["id"], {
+                            "processo_numero": proc_higienizado,
+                            "relator": relator_higienizado,
+                            "tipo": edit_tipo,
+                            "forma_envio": edit_forma,
+                            "observacoes": edit_obs.strip(),
+                            "alterado_por": nome_usuario,
+                        })
+                        st.success("Alteracoes salvas!")
+                        st.rerun()
+
+                # Form para adicionar documento extra
                 with st.form(f"form_add_oficio_extra_{ds['id']}"):
                     st.markdown("**Adicionar Documento**")
                     col_a1, col_a2 = st.columns(2)
@@ -1643,6 +1692,7 @@ def _listar_despachos(usuario, modo_edicao):
                                 "tipo_envio": novo_envio,
                                 "status": "aguardando",
                             })
+                            db_manager.atualizar("despachos_ds", ds["id"], {"alterado_por": nome_usuario})
                             st.success("Documento adicionado!")
                             st.rerun()
                         else:
@@ -1650,14 +1700,20 @@ def _listar_despachos(usuario, modo_edicao):
 
                 col_btn1, col_btn2 = st.columns(2)
                 with col_btn1:
-                    if not ds.get("recebido_confirmado") and modo_edicao:
+                    if not ds.get("recebido_confirmado"):
                         if st.button("Marcar Recebido", key=f"ds_recv_{ds['id']}"):
-                            db_manager.atualizar("despachos_ds", ds["id"], {"recebido_confirmado": True})
+                            db_manager.atualizar("despachos_ds", ds["id"], {
+                                "recebido_confirmado": True,
+                                "alterado_por": nome_usuario,
+                            })
                             st.rerun()
                 with col_btn2:
-                    if ds.get("status") == "pendente" and modo_edicao:
+                    if ds.get("status") == "pendente":
                         if st.button("Marcar como Distribuido", key=f"ds_dist_{ds['id']}"):
-                            db_manager.atualizar("despachos_ds", ds["id"], {"status": "distribuido"})
+                            db_manager.atualizar("despachos_ds", ds["id"], {
+                                "status": "distribuido",
+                                "alterado_por": nome_usuario,
+                            })
                             st.rerun()
 
 def _renderizar_despachos_singulares(modo_edicao, usuario):
@@ -1675,7 +1731,7 @@ def _renderizar_despachos_singulares(modo_edicao, usuario):
         if modo_edicao:
             _cadastrar_despacho(usuario)
         else:
-            st.info("Modo visualizacao. O cadastro pode ser executado apenas por gerentes ou superior.")
+            st.info("Modo visualizacao. Apenas colaboradores do SEAT, gerentes e criador podem cadastrar.")
 
     with tab_lista:
         _listar_despachos(usuario, modo_edicao)
