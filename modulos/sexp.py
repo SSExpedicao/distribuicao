@@ -69,90 +69,16 @@ def _obter_colaboradores_por_cargo(tipo_sessao):
 
 def _sincronizar_com_seat():
     """
-    Puxa processos do SEAT (status 'encaminhado') que ainda não foram importados no SEXP.
-    Retorna (total_realmente_inseridos, total_prontos_no_seat).
+    Conta processos do SEAT com status 'encaminhado'.
+    Não insere em lugar nenhum — o SEXP lê diretamente da pauta_seat.
+    Retorna (total_encaminhados, total_encaminhados).
     """
     try:
         processos_seat = db_manager.buscar_todos("pauta_seat") or []
-        processos_prontos = [p for p in processos_seat if p.get("status") == "encaminhado"]
-
-        if not processos_prontos:
-            return 0, 0
-
-        ja_importados = db_manager.buscar_todos("distribuicao_sexp") or []
-        nums_importados = set()
-        for d in ja_importados:
-            nums_importados.add(_normalizar_numero_processo(d.get("processo_numero", "")))
-
-        try:
-            urgentes_seat = db_manager.buscar_todos("processos_urgentes") or []
-            nums_urgentes = set()
-            for u in urgentes_seat:
-                nums_urgentes.add(_normalizar_numero_processo(u.get("processo_numero", "")))
-        except Exception:
-            nums_urgentes = set()
-
-        novos = []
-        for p in processos_prontos:
-            p_num = _normalizar_numero_processo(p.get("processo_numero", ""))
-            if p_num and p_num not in nums_importados:
-                novos.append(p)
-
-        if not novos:
-            return 0, len(processos_prontos)
-
-        total_inseridos = 0
-        primeiro_erro = None
-
-        for p in novos:
-            p_num = _normalizar_numero_processo(p.get("processo_numero", ""))
-            is_urgente = p_num in nums_urgentes
-            tipo_sessao = p.get("tipo_sessao", "Sessão Ordinária")
-
-            tipo_norm = _normalizar_texto(tipo_sessao)
-            if "reservada" in tipo_norm:
-                tabela_destino = "Sessão Reservada"
-            elif is_urgente:
-                tabela_destino = "Urgentes"
-            elif "virtual" in tipo_norm:
-                tabela_destino = "Sessão Ordinária Virtual"
-            elif "administrativa" in tipo_norm:
-                tabela_destino = "Sessão Administrativa"
-            else:
-                tabela_destino = "Sessão Ordinária"
-
-            try:
-                resultado = db_manager.inserir("distribuicao_sexp", {
-                    "processo_numero": p_num,
-                    "relator": p.get("relator", "") or "",
-                    "tipo_sessao": tabela_destino,
-                    "expedidor": None,
-                    "expedido": False,
-                    "revisor": None,
-                    "revisado": False,
-                    "comentarios": "",
-                    "origem_seat_id": p.get("id"),
-                    "distribuido": False,
-                })
-
-                if resultado is not None:
-                    total_inseridos += 1
-                else:
-                    if primeiro_erro is None:
-                        primeiro_erro = f"Inserção retornou None para processo {p_num}"
-            except Exception as e:
-                if primeiro_erro is None:
-                    primeiro_erro = str(e)
-
-        # Se nada foi inserido, mostrar o erro
-        if total_inseridos == 0 and primeiro_erro:
-            st.error(f"❌ Erro ao importar processos: {primeiro_erro}")
-            st.error("Verifique se a tabela 'distribuicao_sexp' existe no Supabase e se as políticas de RLS estão configuradas.")
-            return 0, len(processos_prontos)
-
-        return total_inseridos, len(processos_prontos)
-    except Exception as e:
-        st.error(f"❌ Erro na sincronização: {str(e)}")
+        encaminhados = [p for p in processos_seat if p.get("status") == "encaminhado"]
+        total = len(encaminhados)
+        return total, total
+    except Exception:
         return 0, 0
 
 def _verificar_todos_revisados_seat():
@@ -166,6 +92,24 @@ def _verificar_todos_revisados_seat():
         return encaminhados == total, encaminhados, total
     except Exception:
         return False, 0, 0
+
+def _determinar_tabela_destino_sexp(processo, nums_urgentes):
+    """Determina em qual tabela do SEXP o processo deve aparecer."""
+    p_num = _normalizar_numero_processo(processo.get("processo_numero", ""))
+    is_urgente = p_num in nums_urgentes
+    tipo_sessao = processo.get("tipo_sessao", "Sessão Ordinária")
+    tipo_norm = _normalizar_texto(tipo_sessao)
+
+    if "reservada" in tipo_norm:
+        return "Sessão Reservada"
+    elif is_urgente:
+        return "Urgentes"
+    elif "virtual" in tipo_norm:
+        return "Sessão Ordinária Virtual"
+    elif "administrativa" in tipo_norm:
+        return "Sessão Administrativa"
+    else:
+        return "Sessão Ordinária"
 
 # ==================== DISTRIBUIÇÃO ====================
 
@@ -580,27 +524,45 @@ def _renderizar_distribuicao_sexp(usuario, modo_edicao):
     """Renderiza a aba de Distribuição com as tabelas por sessão."""
     cargo = usuario.get("cargo", "operacional")
     nome = usuario.get("nome", "")
-
     st.markdown("### 📤 Distribuição")
     st.caption("Processos distribuídos em cadeia de duplas (A expede → B revisa).")
 
     try:
-        todos = db_manager.buscar_todos("distribuicao_sexp") or []
+        todos = db_manager.buscar_todos(
+            "pauta_seat",
+            filtros={"status": "encaminhado"},
+            ordem_coluna="created_at",
+            ordem_desc=True,
+        ) or []
     except Exception:
         todos = []
 
-    distribuidos = [d for d in todos if d.get("distribuido", False)]
+    # Filtrar apenas os que já foram distribuídos no SEXP
+    distribuidos = [d for d in todos if d.get("distribuido_sexp", False)]
 
     if not distribuidos:
         st.info("Nenhum processo distribuído ainda. Vá na aba 'Pauta Ativa' para distribuir.")
         return
+
+    # Determinar tabela de destino de cada processo
+    try:
+        urgentes_seat = db_manager.buscar_todos("processos_urgentes") or []
+        nums_urgentes = set()
+        for u in urgentes_seat:
+            nums_urgentes.add(_normalizar_numero_processo(u.get("processo_numero", "")))
+    except Exception:
+        nums_urgentes = set()
 
     # Sub-tabs para cada tipo de sessão (exceto Urgentes que tem sua própria aba)
     tipos_com_processos = []
     for tipo in TIPOS_SESSAO_SEXP:
         if tipo == "Urgentes":
             continue
-        qtd = len([d for d in distribuidos if d.get("tipo_sessao") == tipo])
+        qtd = 0
+        for d in distribuidos:
+            tabela = _determinar_tabela_destino_sexp(d, nums_urgentes)
+            if tabela == tipo:
+                qtd += 1
         if qtd > 0:
             tipos_com_processos.append(tipo)
 
@@ -613,24 +575,30 @@ def _renderizar_distribuicao_sexp(usuario, modo_edicao):
     for idx, tipo in enumerate(tipos_com_processos):
         with sub_tabs[idx]:
             st.markdown(f"#### {tipo}")
-
             if "reservada" in _normalizar_texto(tipo):
                 st.caption("⚠️ Estagiários não participam desta sessão.")
             elif "administrativa" in _normalizar_texto(tipo):
                 st.caption("👤 Apenas gerentes participam desta sessão.")
 
-            processos = [d for d in distribuidos if d.get("tipo_sessao") == tipo]
+            processos = []
+            for d in distribuidos:
+                tabela = _determinar_tabela_destino_sexp(d, nums_urgentes)
+                if tabela == tipo:
+                    processos.append(d)
 
             if cargo == "operacional":
-                processos = [d for d in processos if d.get("expedidor") == nome or d.get("revisor") == nome]
+                processos = [
+                    d for d in processos
+                    if d.get("expedidor_sexp") == nome or d.get("revisor_sexp") == nome
+                ]
 
             if not processos:
                 st.info("Nenhum processo atribuído a você nesta sessão.")
                 return
 
             total = len(processos)
-            expedidos = len([p for p in processos if p.get("expedido")])
-            revisados = len([p for p in processos if p.get("revisado")])
+            expedidos = len([p for p in processos if p.get("expedido_sexp")])
+            revisados = len([p for p in processos if p.get("revisado_sexp")])
             pendentes = total - expedidos
 
             col1, col2, col3, col4 = st.columns(4)
