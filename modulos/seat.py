@@ -1384,12 +1384,6 @@ def _cadastrar_despacho(usuario):
             key="ds_forma_envio"
         )
 
-    recebido_confirmado = st.checkbox(
-        "Recebido confirmado",
-        value=False,
-        key="ds_recebido"
-    )
-
     observacoes = st.text_area(
         "Observacoes (opcional)",
         placeholder="Informacoes adicionais...",
@@ -1485,7 +1479,7 @@ def _cadastrar_despacho(usuario):
                 "relator": relator_higienizado,
                 "tipo": tipo,
                 "forma_envio": forma_envio,
-                "recebido_confirmado": recebido_confirmado,
+                "recebido_confirmado": False,
                 "cadastrado_por": nome_usuario,
                 "observacoes": observacoes.strip(),
                 "status": "pendente",
