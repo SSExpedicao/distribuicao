@@ -2192,8 +2192,8 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
     with tab_ds:
         _renderizar_despachos_singulares(modo_edicao, usuario)
 
-        with tab_motor:
+    with tab_motor:
         _renderizar_motor_nip(modo_edicao, usuario)
-
+      
     with tab_dodf:
         st.info("A Escala de Publicacao DODF sera implementada na sub-etapa 1I.")
