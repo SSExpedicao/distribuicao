@@ -1,5 +1,6 @@
 import streamlit as st
 from datetime import date, timedelta
+import db_manager  # ← ADICIONAR ESTA LINHA
 
 # ==================== CONSTANTES ====================
 
