@@ -1845,12 +1845,14 @@ def _extrair_voto(texto):
     return None
 
 def _aplicar_substituicoes(texto, regras):
-    """Aplica substituições de frases e termos cadastradas no banco."""
+    """Aplica substituições de frases e termos cadastradas no banco (case-insensitive)."""
+    import re
     for regra in regras:
         if regra.get("tipo") in ("frase", "termo") and regra.get("ativo", True):
             procurar = regra["procurar"]
             substituir = regra["substituir_por"]
-            texto = texto.replace(procurar, substituir)
+            # Case-insensitive: "da Decisão" casa com "da decisão"
+            texto = re.sub(re.escape(procurar), substituir, texto, flags=re.IGNORECASE)
     return texto
 
 def _transformar_verbos(texto, regras):
@@ -1924,11 +1926,12 @@ def _adicionar_preambulo(texto, relator):
     else:
         preambulo = "O Tribunal, por unanimidade, de acordo com o voto do Relator, decidiu:"
 
-    # Remove o texto original do voto
+    # Remover SOMENTE o texto do início do voto (não ocorrências no meio)
+    # Usar ^ para ancorar no início do texto
     padroes_remocao = [
-        r'(?:Pelo exposto|Ante o exposto)[,\s]*(?:em harmonia com o órgão instrutivo,?\s*)?VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio Plenário:\s*',
-        r'VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio Plenário:\s*',
-        r'VOTO\s*(?:no sentido de que\s*)?',
+        r'^\s*(?:Pelo exposto|Ante o exposto)[,\s]*(?:em harmonia com o órgão instrutivo,?\s*)?VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio Plenário:\s*',
+        r'^\s*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio Plenário:\s*',
+        r'^\s*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?',
     ]
 
     for padrao in padroes_remocao:
