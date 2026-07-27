@@ -1915,35 +1915,54 @@ def _identificar_relator(texto):
         return "OUTRO"
 
 def _extrair_voto(texto):
-    """Extrai somente a parte do voto do texto completo do PDF."""
+    """Extrai somente a parte do voto principal do texto completo do PDF."""
     import re
 
-    padroes_inicio = [
-        r'(?:Pelo exposto|Ante o exposto)[,\s]*(?:em harmonia com o órgão instrutivo,?\s*)?VOTO',
-        r'VOTO\s+(?:no sentido|por|que)',
+    # Padrões prioritários (voto principal — sempre têm "no sentido de que" + "egrégio")
+    padroes_prioritarios = [
+        r'(?:Diante do exposto|Pelo exposto|Ante o exposto)[,\s]*(?:em harmonia com o órgão instrutivo,?\s*)?VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio\s+(?:Tribunal|Plenário)[:\s]*',
+        r'VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio\s+(?:Tribunal|Plenário)[:\s]*',
+        r'(?:Diante do exposto|Pelo exposto|Ante o exposto)[,\s]*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?',
+        r'VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?',
     ]
 
-    for padrao in padroes_inicio:
-        match = re.search(padrao, texto, re.IGNORECASE)
-        if match:
-            inicio = match.start()
-            voto = texto[inicio:]
+    # Padrões de Voto de Vista que devem ser IGNORADOS
+    padrao_voto_vista = re.compile(
+        r'VOTO\s+em\s+harmonia',
+        re.IGNORECASE
+    )
 
-            # Remover assinatura no final
-            # Padrão: "Sala das Sessões, [data]. [NOME EM MAIÚSCULAS]"
-            assinatura_padroes = [
-                r'\n\s*Sala das Sessões.*',
-                r'\n\s*(?:Conselheir[oa]|Auditor|Conselheiro-Substituto)\s+',
-                r'\n\s*[A-ZÀ-Ú]{4,}\s*\n\s*[A-ZÀ-Ú]',
-            ]
-            for ass_padrao in assinatura_padroes:
-                ass_match = re.search(ass_padrao, voto, re.DOTALL)
-                if ass_match:
-                    voto = voto[:ass_match.start()]
+    inicio_voto = None
 
-            return voto.strip()
+    for padrao in padroes_prioritarios:
+        matches = list(re.finditer(padrao, texto, re.IGNORECASE))
+        if matches:
+            # Filtrar: pegar o primeiro match que NÃO seja um Voto de Vista
+            for match in matches:
+                trecho_apos = texto[match.start():match.start() + 80]
+                if not padrao_voto_vista.search(trecho_apos):
+                    inicio_voto = match.start()
+                    break
+            if inicio_voto is not None:
+                break
 
-    return None
+    if inicio_voto is None:
+        return None
+
+    voto = texto[inicio_voto:]
+
+    # Remover assinatura no final
+    assinatura_padroes = [
+        r'\n\s*Sala das Sessões.*',
+        r'\n\s*(?:Conselheir[oa]|Auditor|Conselheiro-Substituto)\s+',
+        r'\n\s*[A-ZÀ-Ú]{4,}\s*\n\s*[A-ZÀ-Ú]',
+    ]
+    for ass_padrao in assinatura_padroes:
+        ass_match = re.search(ass_padrao, voto, re.DOTALL)
+        if ass_match:
+            voto = voto[:ass_match.start()]
+
+    return voto.strip()
 
 def _aplicar_substituicoes(texto, regras):
     """Aplica substituições de frases e termos cadastradas no banco (case-insensitive)."""
