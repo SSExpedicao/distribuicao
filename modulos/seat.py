@@ -726,6 +726,399 @@ def _salvar_comentario(id_processo: int, comentario: str):
     st.success("Comentario salvo.")
     st.rerun()
 
+
+# ============================================================
+# DESPACHOS SINGULARES - FUNCOES
+# ============================================================
+
+def _verificar_ds_pendente(processo_numero):
+    """
+    Verifica se o processo tem um DS pendente.
+    Retorna o tipo ('Despacho Singular' ou 'Sustentacao Oral') ou None.
+    """
+    if not processo_numero:
+        return None
+
+    proc_higienizado = _higienizar_numero_processo(processo_numero)
+
+    resultados = db_manager.buscar_todos(
+        "despachos_ds",
+        filtros={"processo_numero": proc_higienizado, "status": "pendente"}
+    )
+
+    if resultados:
+        return resultados[0].get("tipo", "Despacho Singular")
+
+    return None
+
+def _marcar_ds_distribuido(processo_numero):
+    """Marca o DS como distribuido apos o processo entrar na pauta."""
+    if not processo_numero:
+        return
+
+    proc_higienizado = _higienizar_numero_processo(processo_numero)
+
+    resultados = db_manager.buscar_todos(
+        "despachos_ds",
+        filtros={"processo_numero": proc_higienizado, "status": "pendente"}
+    )
+
+    for ds in resultados:
+        db_manager.atualizar("despachos_ds", ds["id"], {"status": "distribuido"})
+
+def _identificar_ds_apos_inclusao(processo_numero, pauta_id):
+    """
+    Funcao gatilho: apos incluir um processo na pauta_seat, verifica se
+    existe um DS pendente para ele. Se sim, preenche o comentario e marca
+    o DS como distribuido.
+    """
+    if not processo_numero or not pauta_id:
+        return
+
+    ds_tipo = _verificar_ds_pendente(processo_numero)
+
+    if ds_tipo:
+        comentario_ds = ds_tipo.upper()
+        db_manager.atualizar("pauta_seat", pauta_id, {"comentario": comentario_ds})
+        _marcar_ds_distribuido(processo_numero)
+
+def _cadastrar_despacho(usuario):
+    """Formulario para cadastrar novo Despacho Singular."""
+    st.markdown("#### Cadastrar Novo Despacho")
+
+    nome_usuario = usuario.get("nome", "Sistema")
+
+    if "ds_oficios_temp" not in st.session_state:
+        st.session_state["ds_oficios_temp"] = []
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        processo_numero = st.text_input(
+            "Numero do Processo *",
+            placeholder="Ex: 00600-0007999/2022-63-e",
+            key="ds_processo_numero"
+        )
+        tipo = st.selectbox(
+            "Tipo *",
+            options=["Despacho Singular", "Sustentacao Oral"],
+            key="ds_tipo"
+        )
+
+    with col2:
+        relator = st.text_input(
+            "Relator (opcional)",
+            placeholder="Ex: AM ou GAVF / Subst.",
+            key="ds_relator"
+        )
+        forma_envio = st.selectbox(
+            "Forma de Envio *",
+            options=["E-mail", "Mensageria", "Protocolo"],
+            key="ds_forma_envio"
+        )
+
+    recebido_confirmado = st.checkbox(
+        "Recebido confirmado",
+        value=False,
+        key="ds_recebido"
+    )
+
+    observacoes = st.text_area(
+        "Observacoes (opcional)",
+        placeholder="Informacoes adicionais...",
+        height=60,
+        key="ds_observacoes"
+    )
+
+    st.markdown("---")
+    st.markdown("##### Documentos Vinculados (Oficios / Memorandos)")
+    st.caption("E obrigatorio cadastrar pelo menos 1 documento.")
+
+    # Mostrar documentos ja adicionados
+    if st.session_state["ds_oficios_temp"]:
+        for i, of in enumerate(st.session_state["ds_oficios_temp"]):
+            col_a, col_b, col_c, col_d, col_e = st.columns([2, 2, 2, 2, 1])
+            with col_a:
+                st.write(f"**{of['tipo_documento']}**")
+            with col_b:
+                st.write(f"N: {of['numero_oficio']}")
+            with col_c:
+                st.write(f"Para: {of['destinatario']}")
+            with col_d:
+                st.write(f"Envio: {of['tipo_envio']}")
+            with col_e:
+                if st.button("X", key=f"rm_of_{i}", help="Remover"):
+                    st.session_state["ds_oficios_temp"].pop(i)
+                    st.rerun()
+    else:
+        st.info("Nenhum documento adicionado ainda.")
+
+    # Form para adicionar documento
+    with st.form("form_add_oficio_ds"):
+        st.markdown("**Adicionar Documento**")
+        col_of1, col_of2 = st.columns(2)
+        with col_of1:
+            tipo_doc = st.selectbox(
+                "Tipo de Documento",
+                options=["Oficio", "Memorando"],
+                key="ds_oficio_tipo"
+            )
+            numero_oficio = st.text_input(
+                "Numero do Documento *",
+                placeholder="Ex: 123/2026",
+                key="ds_oficio_numero"
+            )
+        with col_of2:
+            destinatario = st.text_input(
+                "Destinatario *",
+                placeholder="Ex: Secretaria de Fazenda",
+                key="ds_oficio_dest"
+            )
+            tipo_envio_of = st.selectbox(
+                "Tipo de Envio",
+                options=["E-mail", "Mensageria", "Protocolo"],
+                key="ds_oficio_envio"
+            )
+
+        adicionar = st.form_submit_button("Adicionar Documento")
+
+        if adicionar:
+            if not numero_oficio or not destinatario:
+                st.error("Preencha o numero e o destinatario do documento.")
+            else:
+                st.session_state["ds_oficios_temp"].append({
+                    "tipo_documento": tipo_doc,
+                    "numero_oficio": numero_oficio,
+                    "destinatario": destinatario,
+                    "tipo_envio": tipo_envio_of,
+                    "status": "aguardando",
+                })
+                st.rerun()
+
+    st.markdown("---")
+
+    # Botao para salvar o DS completo
+    if st.button("Salvar Despacho", type="primary", use_container_width=True, key="btn_salvar_ds"):
+        if not processo_numero:
+            st.error("Numero do processo e obrigatorio.")
+        elif not st.session_state["ds_oficios_temp"]:
+            st.error("E obrigatorio cadastrar pelo menos 1 oficio/memorando.")
+        else:
+            proc_higienizado = _higienizar_numero_processo(processo_numero)
+            relator_higienizado = _higienizar_relator(relator) if relator else None
+
+            # Verificar se ja existe DS pendente
+            ds_existente = _verificar_ds_pendente(proc_higienizado)
+            if ds_existente:
+                st.error(f"Ja existe um DS pendente para o processo {proc_higienizado}.")
+                return
+
+            dados_ds = {
+                "processo_numero": proc_higienizado,
+                "relator": relator_higienizado,
+                "tipo": tipo,
+                "forma_envio": forma_envio,
+                "recebido_confirmado": recebido_confirmado,
+                "cadastrado_por": nome_usuario,
+                "observacoes": observacoes.strip(),
+                "status": "pendente",
+            }
+
+            resultado = db_manager.inserir("despachos_ds", dados_ds)
+
+            if resultado:
+                ds_id = resultado.get("id")
+
+                if ds_id:
+                    salvos = 0
+                    for of in st.session_state["ds_oficios_temp"]:
+                        dados_of = {
+                            "despacho_id": ds_id,
+                            "tipo_documento": of["tipo_documento"],
+                            "numero_oficio": of["numero_oficio"],
+                            "destinatario": of["destinatario"],
+                            "tipo_envio": of["tipo_envio"],
+                            "status": of["status"],
+                        }
+                        res_of = db_manager.inserir("oficios_ds", dados_of)
+                        if res_of:
+                            salvos += 1
+
+                    st.session_state["ds_oficios_temp"] = []
+                    st.success(f"Despacho cadastrado com sucesso! {salvos} documento(s) vinculado(s).")
+                    st.rerun()
+                else:
+                    st.success("Despacho cadastrado, mas houve erro ao vincular documentos. Adicione manualmente na lista.")
+                    st.rerun()
+            else:
+                st.error("Erro ao cadastrar despacho. Tente novamente.")
+
+def _listar_despachos(usuario, modo_edicao):
+    """Lista todos os DS cadastrados com seus documentos vinculados."""
+    st.markdown("#### Despachos Cadastrados")
+
+    cargo = usuario.get("cargo", "operacional")
+    nome = usuario.get("nome", "")
+    filtrar = (cargo == "operacional" and nome)
+
+    todos_ds = db_manager.buscar_todos(
+        "despachos_ds",
+        ordem_coluna="created_at",
+        ordem_desc=True,
+    )
+
+    if filtrar:
+        nome_norm = _normalizar_texto(nome)
+        todos_ds = [d for d in todos_ds if _normalizar_texto(d.get("cadastrado_por", "")) == nome_norm]
+
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        filtro_status = st.selectbox(
+            "Filtrar por status",
+            options=["todos", "pendente", "distribuido"],
+            key="ds_filtro_status"
+        )
+    with col_f2:
+        busca = st.text_input(
+            "Buscar por processo",
+            placeholder="Digite o numero...",
+            key="ds_busca"
+        )
+
+    if filtro_status != "todos":
+        todos_ds = [d for d in todos_ds if d.get("status") == filtro_status]
+
+    if busca.strip():
+        busca_lower = busca.strip().lower()
+        todos_ds = [d for d in todos_ds if busca_lower in (d.get("processo_numero", "") or "").lower()]
+
+    if not todos_ds:
+        st.info("Nenhum despacho cadastrado.")
+        return
+
+    st.write(f"**{len(todos_ds)} despacho(s) encontrado(s).**")
+
+    for ds in todos_ds:
+        status_icone = "🟡" if ds.get("status") == "pendente" else "🟢"
+        with st.expander(
+            f"{status_icone} {ds.get('processo_numero', '')} | "
+            f"{ds.get('tipo', '')} | "
+            f"{ds.get('status', '').upper()} | "
+            f"Por: {ds.get('cadastrado_por', '')}"
+        ):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.write(f"**Processo:** {ds.get('processo_numero', '')}")
+                st.write(f"**Relator:** {ds.get('relator', '-') or '-'}")
+            with col2:
+                st.write(f"**Tipo:** {ds.get('tipo', '')}")
+                st.write(f"**Envio:** {ds.get('forma_envio', '-') or '-'}")
+            with col3:
+                st.write(f"**Cadastrado por:** {ds.get('cadastrado_por', '')}")
+                st.write(f"**Recebido:** {'Sim' if ds.get('recebido_confirmado') else 'Nao'}")
+
+            if ds.get("observacoes"):
+                st.write(f"**Observacoes:** {ds.get('observacoes')}")
+
+            oficios = db_manager.buscar_todos(
+                "oficios_ds",
+                filtros={"despacho_id": ds["id"]},
+                ordem_coluna="created_at",
+                ordem_desc=False,
+            )
+
+            st.markdown("**Documentos Vinculados:**")
+            if oficios:
+                for of in oficios:
+                    col_a, col_b, col_c, col_d, col_e = st.columns([2, 2, 2, 2, 1])
+                    with col_a:
+                        st.write(f"{of.get('tipo_documento', '')} {of.get('numero_oficio', '')}")
+                    with col_b:
+                        st.write(f"Para: {of.get('destinatario', '')}")
+                    with col_c:
+                        st.write(f"Envio: {of.get('tipo_envio', '')}")
+                    with col_d:
+                        st.write(f"Status: {of.get('status', '')}")
+                    with col_e:
+                        if modo_edicao and of.get("status") == "aguardando":
+                            if st.button("OK", key=f"of_recv_{of['id']}", help="Marcar como recebido"):
+                                db_manager.atualizar("oficios_ds", of["id"], {"status": "recebido"})
+                                st.rerun()
+            else:
+                st.caption("Nenhum documento vinculado.")
+
+            if modo_edicao:
+                with st.form(f"form_add_oficio_extra_{ds['id']}"):
+                    st.markdown("**Adicionar Documento**")
+                    col_a1, col_a2 = st.columns(2)
+                    with col_a1:
+                        novo_tipo_doc = st.selectbox(
+                            "Tipo",
+                            options=["Oficio", "Memorando"],
+                            key=f"extra_tipo_{ds['id']}"
+                        )
+                        novo_numero = st.text_input(
+                            "Numero *",
+                            key=f"extra_numero_{ds['id']}"
+                        )
+                    with col_a2:
+                        novo_dest = st.text_input(
+                            "Destinatario *",
+                            key=f"extra_dest_{ds['id']}"
+                        )
+                        novo_envio = st.selectbox(
+                            "Tipo de Envio",
+                            options=["E-mail", "Mensageria", "Protocolo"],
+                            key=f"extra_envio_{ds['id']}"
+                        )
+
+                    if st.form_submit_button("Adicionar"):
+                        if novo_numero and novo_dest:
+                            db_manager.inserir("oficios_ds", {
+                                "despacho_id": ds["id"],
+                                "tipo_documento": novo_tipo_doc,
+                                "numero_oficio": novo_numero,
+                                "destinatario": novo_dest,
+                                "tipo_envio": novo_envio,
+                                "status": "aguardando",
+                            })
+                            st.success("Documento adicionado!")
+                            st.rerun()
+                        else:
+                            st.error("Preencha numero e destinatario.")
+
+                col_btn1, col_btn2 = st.columns(2)
+                with col_btn1:
+                    if not ds.get("recebido_confirmado") and modo_edicao:
+                        if st.button("Marcar Recebido", key=f"ds_recv_{ds['id']}"):
+                            db_manager.atualizar("despachos_ds", ds["id"], {"recebido_confirmado": True})
+                            st.rerun()
+                with col_btn2:
+                    if ds.get("status") == "pendente" and modo_edicao:
+                        if st.button("Marcar como Distribuido", key=f"ds_dist_{ds['id']}"):
+                            db_manager.atualizar("despachos_ds", ds["id"], {"status": "distribuido"})
+                            st.rerun()
+
+def _renderizar_despachos_singulares(modo_edicao, usuario):
+    """Funcao principal da aba de Despachos Singulares."""
+    st.markdown("### Controle de Despachos Singulares e Sustentacoes Orais")
+    st.caption(
+        "Cadastre despachos singulares e sustentacoes orais. "
+        "O sistema identificara automaticamente o processo quando ele for "
+        "incluido na distribuicao da pauta."
+    )
+
+    tab_cad, tab_lista = st.tabs(["Cadastrar", "Lista"])
+
+    with tab_cad:
+        if modo_edicao:
+            _cadastrar_despacho(usuario)
+        else:
+            st.info("Modo visualizacao. O cadastro pode ser executado apenas por gerentes ou superior.")
+
+    with tab_lista:
+        _listar_despachos(usuario, modo_edicao)
+      
 def renderizar_sidebar(usuario: dict, modo_edicao: bool = False):
     """
     Renderiza tabelas de carga na barra lateral.
