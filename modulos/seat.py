@@ -1783,6 +1783,375 @@ def _renderizar_despachos_singulares(modo_edicao, usuario):
     with tab_lista:
         _listar_despachos(usuario, modo_edicao)
       
+# ==================== MOTOR NIP ====================
+
+def _extrair_texto_pdf(arquivo):
+    """Extrai texto de um arquivo PDF usando pdfplumber."""
+    try:
+        import pdfplumber
+        texto = ""
+        with pdfplumber.open(arquivo) as pdf:
+            for pagina in pdf.pages:
+                pagina_texto = pagina.extract_text()
+                if pagina_texto:
+                    texto += pagina_texto + "\n"
+        return texto
+    except ImportError:
+        st.error("Biblioteca 'pdfplumber' não instalada. Execute: pip install pdfplumber")
+        return None
+    except Exception as e:
+        st.error(f"Erro ao extrair texto do PDF: {str(e)}")
+        return None
+
+def _identificar_relator(texto):
+    """Identifica o relator pelo cabeçalho do PDF."""
+    texto_upper = texto.upper()
+    if "ANILCÉIA MACHADO" in texto_upper or "GABINETE DA CONSELHEIRA ANILCÉIA" in texto_upper:
+        return "GCAM"
+    elif "VINÍCIUS FRAGOSO" in texto_upper:
+        return "VINICIUS_FRAGOSO"
+    else:
+        return "OUTRO"
+
+def _extrair_voto(texto):
+    """Extrai somente a parte do voto do texto completo do PDF."""
+    import re
+
+    padroes_inicio = [
+        r'(?:Pelo exposto|Ante o exposto)[,\s]*(?:em harmonia com o órgão instrutivo,?\s*)?VOTO',
+        r'VOTO\s+(?:no sentido|por|que)',
+    ]
+
+    for padrao in padroes_inicio:
+        match = re.search(padrao, texto, re.IGNORECASE)
+        if match:
+            inicio = match.start()
+            voto = texto[inicio:]
+
+            # Remover assinatura no final (se houver)
+            assinatura_padroes = [
+                r'\n\s*(?:Conselheir[oa]|Auditor|Conselheiro-Substituto)\s+',
+                r'\n\s*[A-ZÀ-Ú]{4,}\s*\n\s*[A-ZÀ-Ú]',
+            ]
+            for ass_padrao in assinatura_padroes:
+                ass_match = re.search(ass_padrao, voto)
+                if ass_match:
+                    voto = voto[:ass_match.start()]
+
+            return voto.strip()
+
+    return None
+
+def _aplicar_substituicoes(texto, regras):
+    """Aplica substituições de frases e termos cadastradas no banco."""
+    for regra in regras:
+        if regra.get("tipo") in ("frase", "termo") and regra.get("ativo", True):
+            procurar = regra["procurar"]
+            substituir = regra["substituir_por"]
+            texto = texto.replace(procurar, substituir)
+    return texto
+
+def _transformar_verbos(texto, regras):
+    """Transforma verbos do imperativo para infinitivo."""
+    import re
+
+    for regra in regras:
+        if regra.get("tipo") == "verbo" and regra.get("ativo", True):
+            imperativo = regra["procurar"]
+            infinitivo = regra["substituir_por"]
+            texto = re.sub(
+                re.escape(imperativo),
+                infinitivo,
+                texto,
+                flags=re.IGNORECASE
+            )
+    return texto
+
+def _ofuscar_cpf(texto):
+    """Ofusca CPFs no texto (3 primeiros e 2 últimos dígitos)."""
+    import re
+
+    def ofuscar(match):
+        cpf = match.group(0)
+        return f"***.{cpf[4:11]}-**"
+
+    return re.sub(r'\d{3}\.\d{3}\.\d{3}-\d{2}', ofuscar, texto)
+
+def _formatar_numerais(texto):
+    """Padroniza formatação de numerais romanos, letras de itens e abreviações."""
+    import re
+
+    # Roman numerals: I. → I –, I - → I –, I) → I –
+    texto = re.sub(r'\b([IVXLCDM]+)[\.\)]\s*', r'\1 – ', texto)
+    texto = re.sub(r'\b([IVXLCDM]+)\s*-\s*', r'\1 – ', texto)
+
+    # Letter items: a. → a), a) stays a)
+    texto = re.sub(r'\b([a-z])\.\s*', r'\1) ', texto)
+
+    # Standardize n.º, n° → nº
+    texto = texto.replace("n.º", "nº")
+    texto = texto.replace("n°", "nº")
+
+    # Add space after nº if missing: nº1.561 → nº 1.561
+    texto = re.sub(r'nº(\d)', r'nº \1', texto)
+
+    # LTDA – ME → LTDA. – ME (add period if missing)
+    texto = re.sub(r'LTDA(?!\.)\s*[-–]\s*ME', 'LTDA. – ME', texto)
+
+    return texto
+
+def _remover_e_antes_itens(texto):
+    """Remove 'e' antes de itens (I, II, a), b))."""
+    import re
+
+    # ; e V. → ; V.
+    texto = re.sub(r';\s+e\s+([IVXLCDM]+)', r'; \1', texto)
+    # ; e c. → ; c)
+    texto = re.sub(r';\s+e\s+([a-z])\)', r'; \1)', texto)
+
+    return texto
+
+def _adicionar_preambulo(texto, relator):
+    """Adiciona o preâmbulo correto baseado no relator e remove o texto original do voto."""
+    import re
+
+    if relator == "GCAM":
+        preambulo = "O Tribunal, por unanimidade, de acordo com o voto da Relatora, decidiu:"
+    elif relator == "VINICIUS_FRAGOSO":
+        preambulo = "O Tribunal, por unanimidade, de acordo com o voto do Relator, Conselheiro-Substituto VINÍCIUS FRAGOSO, atuando em substituição ao Conselheiro TAL, nos termos do art. 44, § 3º, do RI/TCDF, decidiu:"
+    else:
+        preambulo = "O Tribunal, por unanimidade, de acordo com o voto do Relator, decidiu:"
+
+    # Remove o texto original do voto
+    padroes_remocao = [
+        r'(?:Pelo exposto|Ante o exposto)[,\s]*(?:em harmonia com o órgão instrutivo,?\s*)?VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio Plenário:\s*',
+        r'VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio Plenário:\s*',
+        r'VOTO\s*(?:no sentido de que\s*)?',
+    ]
+
+    for padrao in padroes_remocao:
+        texto = re.sub(padrao, '', texto, flags=re.IGNORECASE)
+
+    return f"{preambulo} {texto.strip()}"
+
+def _formatar_teleprompt(texto):
+    """Formata o texto como teleprompt (texto corrido sem quebras)."""
+    import re
+
+    texto = re.sub(r'\n+', ' ', texto)
+    texto = re.sub(r'\t+', ' ', texto)
+    texto = re.sub(r'\r+', ' ', texto)
+    texto = re.sub(r' +', ' ', texto)
+
+    return texto.strip()
+
+def _aplicar_negrito(texto):
+    """Aplica negrito em numerais romanos, letras de itens, prazos e palavras-chave."""
+    import re
+
+    # Negito em numerais romanos seguidos de travessão
+    texto = re.sub(r'\b([IVXLCDM]+)\s*–', r'**\1** –', texto)
+
+    # Negrito em letras de itens: a), b), c)
+    texto = re.sub(r'\b([a-z])\)', r'**\1)**', texto)
+
+    # Negrito em prazos de 0 a 20 dias (incluindo "X (extenso) dias")
+    for i in range(21):
+        texto = re.sub(
+            rf'\b{i}\s*(?:\([^)]+\)\s*)?dias?\b',
+            lambda m: f'**{m.group(0)}**',
+            texto,
+            flags=re.IGNORECASE
+        )
+
+    # Negrito em palavras-chave
+    palavras_chave = [
+        "acórdãos", "Acórdão", "Urgente", "urgência",
+        "prioridade", "Governador", "Suspender licitação",
+        "suspender licitação"
+    ]
+    for palavra in palavras_chave:
+        texto = re.sub(rf'\b{re.escape(palavra)}\b', f'**{palavra}**', texto)
+
+    return texto
+
+def _processar_voto(voto_texto, relator, regras):
+    """Pipeline completo de processamento do voto."""
+    # 1. Substituições de frases e termos
+    texto = _aplicar_substituicoes(voto_texto, regras)
+
+    # 2. Transformação de verbos (imperativo → infinitivo)
+    texto = _transformar_verbos(texto, regras)
+
+    # 3. Ofuscar CPF
+    texto = _ofuscar_cpf(texto)
+
+    # 4. Formatar numerais
+    texto = _formatar_numerais(texto)
+
+    # 5. Remover "e" antes de itens
+    texto = _remover_e_antes_itens(texto)
+
+    # 6. Adicionar preâmbulo
+    texto = _adicionar_preambulo(texto, relator)
+
+    # 7. Formatar como teleprompt
+    texto = _formatar_teleprompt(texto)
+
+    # 8. Aplicar negrito
+    texto = _aplicar_negrito(texto)
+
+    return texto
+
+def _gerar_docx(texto_markdown):
+    """Gera um arquivo .docx a partir do texto com marcações markdown de negrito."""
+    try:
+        from docx import Document
+        from io import BytesIO
+        import re
+
+        doc = Document()
+        paragrafo = doc.add_paragraph()
+
+        partes = re.split(r'(\*\*.*?\*\*)', texto_markdown)
+        for parte in partes:
+            if parte.startswith('**') and parte.endswith('**'):
+                run = paragrafo.add_run(parte[2:-2])
+                run.bold = True
+            else:
+                paragrafo.add_run(parte)
+
+        buffer = BytesIO()
+        doc.save(buffer)
+        return buffer.getvalue()
+    except ImportError:
+        return None
+    except Exception:
+        return None
+
+def _obter_regras_padrao():
+    """Retorna regras padrão caso não existam no banco."""
+    return [
+        {"procurar": "Ministério Público junto ao Tribunal de Contas do Distrito Federal", "substituir_por": "Ministério Público junto ao Tribunal", "tipo": "frase", "ativo": True},
+        {"procurar": "os acórdãos que submeto à apreciação plenária", "substituir_por": "os acórdãos apresentados pelo Relator", "tipo": "frase", "ativo": True},
+        {"procurar": "o Acórdão ora submetido pelo Relator", "substituir_por": "os acórdãos apresentados pelo Relator", "tipo": "frase", "ativo": True},
+        {"procurar": "a ciência da decisão que vier a ser proferida", "substituir_por": "a ciência desta decisão", "tipo": "frase", "ativo": True},
+        {"procurar": "e da decisão que vier a ser proferida", "substituir_por": "e desta decisão", "tipo": "frase", "ativo": True},
+        {"procurar": "da decisão que vier a ser prolatada", "substituir_por": "desta decisão", "tipo": "frase", "ativo": True},
+        {"procurar": "presente feito", "substituir_por": "feito em apreço", "tipo": "frase", "ativo": True},
+        {"procurar": "presentes autos", "substituir_por": "autos em exame", "tipo": "frase", "ativo": True},
+        {"procurar": "em comento", "substituir_por": "em análise", "tipo": "frase", "ativo": True},
+        {"procurar": "Ministério Público de Contas", "substituir_por": "Ministério Público junto ao Tribunal - MPjTCDF", "tipo": "frase", "ativo": True},
+        {"procurar": "n.º", "substituir_por": "nº", "tipo": "termo", "ativo": True},
+        {"procurar": "n°", "substituir_por": "nº", "tipo": "termo", "ativo": True},
+        {"procurar": "tome", "substituir_por": "tomar", "tipo": "verbo", "ativo": True},
+        {"procurar": "conheça", "substituir_por": "conhecer", "tipo": "verbo", "ativo": True},
+        {"procurar": "dê", "substituir_por": "dar", "tipo": "verbo", "ativo": True},
+        {"procurar": "declare", "substituir_por": "declarar", "tipo": "verbo", "ativo": True},
+        {"procurar": "aprove", "substituir_por": "aprovar", "tipo": "verbo", "ativo": True},
+        {"procurar": "expeça", "substituir_por": "expedir", "tipo": "verbo", "ativo": True},
+        {"procurar": "autorize", "substituir_por": "autorizar", "tipo": "verbo", "ativo": True},
+        {"procurar": "faculte", "substituir_por": "facultar", "tipo": "verbo", "ativo": True},
+        {"procurar": "determine", "substituir_por": "determinar", "tipo": "verbo", "ativo": True},
+        {"procurar": "considere", "substituir_por": "considerar", "tipo": "verbo", "ativo": True},
+        {"procurar": "oficie", "substituir_por": "oficiar", "tipo": "verbo", "ativo": True},
+        {"procurar": "postergue", "substituir_por": "postergar", "tipo": "verbo", "ativo": True},
+        {"procurar": "notifique", "substituir_por": "notificar", "tipo": "verbo", "ativo": True},
+        {"procurar": "julgue", "substituir_por": "julgar", "tipo": "verbo", "ativo": True},
+    ]
+
+def _renderizar_motor_nip(modo_edicao, usuario):
+    """Função principal do Motor NIP - Edição Automática de Votos."""
+    st.markdown("### Motor NIP - Edição Automática de Votos")
+    st.caption(
+        "Faça upload do PDF do relatório/voto. O sistema extrai o voto, "
+        "aplica as regras de edição e entrega o texto pronto no formato teleprompt."
+    )
+
+    st.markdown("---")
+
+    # Upload do PDF
+    uploaded_file = st.file_uploader(
+        "📄 Upload do PDF do Relatório/Voto",
+        type=['pdf'],
+        key="motor_nip_upload"
+    )
+
+    if uploaded_file is not None:
+        with st.spinner("Processando PDF..."):
+            # 1. Extrair texto do PDF
+            texto_completo = _extrair_texto_pdf(uploaded_file)
+
+            if not texto_completo:
+                st.error("Não foi possível extrair texto do PDF.")
+                return
+
+            # 2. Identificar relator
+            relator = _identificar_relator(texto_completo)
+            relator_nome = {
+                "GCAM": "Anilcéia Machado (Relatora)",
+                "VINICIUS_FRAGOSO": "Vinícius Fragoso (Substituto)",
+                "OUTRO": "Relator identificado no PDF"
+            }
+            st.info(f"**Relator identificado:** {relator_nome.get(relator, relator)}")
+
+            # 3. Extrair voto
+            voto_extraido = _extrair_voto(texto_completo)
+
+            if not voto_extraido:
+                st.error("Não foi possível identificar o voto no PDF. Verifique se o arquivo contém a seção de voto.")
+                return
+
+            # 4. Buscar regras do banco
+            try:
+                regras = db_manager.buscar_todos(
+                    "regras_substituicao_nip",
+                    filtros={"ativo": True},
+                    ordem_coluna="ordem",
+                    ordem_desc=False,
+                )
+            except Exception:
+                regras = []
+
+            # Se não houver regras no banco, usar regras padrão
+            if not regras:
+                regras = _obter_regras_padrao()
+
+            # 5. Processar o voto
+            texto_editado = _processar_voto(voto_extraido, relator, regras)
+
+            # 6. Exibir resultado
+            st.markdown("---")
+            st.markdown("#### ✅ Voto Editado")
+
+            # Preview com formatação (bold visível)
+            st.markdown(f"> {texto_editado}")
+
+            st.markdown("---")
+
+            # Caixa de texto para copiar (texto plano sem markdown)
+            texto_plain = texto_editado.replace("**", "")
+            st.text_area(
+                "📋 Texto para copiar (clique na caixa, Ctrl+A, Ctrl+C):",
+                value=texto_plain,
+                height=300,
+                key="motor_nip_resultado"
+            )
+
+            # Download como .docx (com negrito preservado)
+            docx_data = _gerar_docx(texto_editado)
+            if docx_data:
+                st.download_button(
+                    label="📥 Baixar como Word (.docx) — com negrito",
+                    data=docx_data,
+                    file_name="voto_editado.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+
+            # Mostrar voto original (colapsável)
+            with st.expander("Ver voto original extraído do PDF"):
+                st.text(voto_extraido)
+
 # ============================================================
 # FUNCAO PRINCIPAL
 # ============================================================
@@ -1810,7 +2179,7 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
         "Pauta Ativa",
         "Distribuicao",
         "Despachos Singulares",
-        "Motor NIP (em breve)",
+        "Motor NIP",
         "Escala DODF (em breve)",
     ])
 
@@ -1823,8 +2192,8 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
     with tab_ds:
         _renderizar_despachos_singulares(modo_edicao, usuario)
 
-    with tab_motor:
-        st.info("O Motor NIP sera implementado nas proximas sub-etapas.")
+        with tab_motor:
+        _renderizar_motor_nip(modo_edicao, usuario)
 
     with tab_dodf:
         st.info("A Escala de Publicacao DODF sera implementada na sub-etapa 1I.")
