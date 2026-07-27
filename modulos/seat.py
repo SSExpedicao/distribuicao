@@ -1010,14 +1010,11 @@ def _renderizar_card_processo(processo: dict, modo_edicao: bool):
 
 def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
     """Renderiza a aba de Pauta Ativa com filtros e lista de processos."""
-
-    # Determinar se precisa filtrar por usuario
     cargo_usuario = usuario.get("cargo", "operacional") if usuario else "operacional"
     nome_usuario = usuario.get("nome", "") if usuario else ""
     filtrar_por_usuario = (cargo_usuario == "operacional" and nome_usuario)
 
     col_f1, col_f2, col_f3 = st.columns(3)
-    # ... resto da função permanece igual ...
 
     with col_f1:
         busca = st.text_input(
@@ -1025,7 +1022,6 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
             placeholder="Digite o numero...",
             key="busca_pauta_seat",
         )
-
     with col_f2:
         status_opcoes = ["todos"] + list(STATUS_FLOW.keys())
         status_labels = {"todos": "Todos os Status"}
@@ -1036,7 +1032,6 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
             format_func=lambda x: status_labels[x],
             key="filtro_status_seat",
         )
-
     with col_f3:
         filtro_tipo = st.selectbox(
             "Filtrar por tipo de sessao",
@@ -1046,10 +1041,8 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
 
     if modo_edicao:
         tab_manual, tab_lote = st.tabs(["Inclusao Manual", "Inclusao em Lote (CSV)"])
-
         with tab_manual:
             _incluir_processo_manual(modo_edicao)
-
         with tab_lote:
             _incluir_processo_lote(modo_edicao)
 
@@ -1060,13 +1053,6 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
         filtros["tipo_sessao"] = filtro_tipo
 
     processos = db_manager.buscar_todos(
-        "pauta_seat",
-        filtros=filtros if filtros else None,
-        ordem_coluna="created_at",
-        ordem_desc=True,
-    )
-
-        processos = db_manager.buscar_todos(
         "pauta_seat",
         filtros=filtros if filtros else None,
         ordem_coluna="created_at",
@@ -1087,33 +1073,49 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
             or _normalizar_texto(p.get("revisor", "")) == nome_norm
         ]
 
-    # === NOVO: Separar encaminhados dos ativos ===
+    # === Separar encaminhados dos ativos ===
     encaminhados = [p for p in processos if p.get("status") == "encaminhado"]
     ativos = [p for p in processos if p.get("status") != "encaminhado"]
 
-    # Contadores (inclui encaminhados na contagem)
+    # Contadores
     col_c1, col_c2, col_c3, col_c4, col_c5 = st.columns(5)
     with col_c1:
         st.metric("Total", len(processos))
     with col_c2:
-        st.metric("Inclusão", len([p for p in ativos if p.get("status") == "inclusao"]))
+        st.metric("Inclusao", len([p for p in ativos if p.get("status") == "inclusao"]))
     with col_c3:
-        st.metric("Em Edição", len([p for p in ativos if p.get("status") == "em_edicao"]))
+        st.metric("Em Edicao", len([p for p in ativos if p.get("status") == "em_edicao"]))
     with col_c4:
-        st.metric("Em Revisão", len([p for p in ativos if p.get("status") == "em_revisao"]))
+        st.metric("Em Revisao", len([p for p in ativos if p.get("status") == "em_revisao"]))
     with col_c5:
         st.metric("Encaminhados", len(encaminhados))
 
     st.markdown("---")
 
-    # Verificar se todos foram encaminhados
+    # === Botao Finalizar Sessao ===
     if processos and len(encaminhados) == len(processos):
         st.success(
-            f"🎉 **Todos os {len(encaminhados)} processos foram encaminhados para o SEXP!** "
-            f"Acesse a aba **Distribuição** para finalizar a sessão."
+            f"🎉 **Todos os {len(encaminhados)} processos foram editados, revisados e encaminhados!**"
         )
+
+        if modo_edicao and cargo_usuario in ("gerente", "criador", "raiz"):
+            st.markdown("---")
+            if st.button(
+                "📋 Finalizar Sessão",
+                type="primary",
+                use_container_width=True,
+                key="btn_finalizar_sessao"
+            ):
+                for p in encaminhados:
+                    db_manager.atualizar("pauta_seat", p["id"], {
+                        "sessao_finalizada": True,
+                    })
+                st.success("✅ Sessão finalizada! Os processos estão disponíveis no SEXP.")
+                st.rerun()
+            st.caption("Ao finalizar, a sessão será encerrada e os processos não voltarão para a Pauta Ativa.")
         st.markdown("---")
 
+    # === Listar processos ativos (nao encaminhados) ===
     if not ativos:
         if filtrar_por_usuario:
             st.info(f"Todos os seus processos foram encaminhados para o SEXP. ✅")
@@ -1125,48 +1127,6 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
         else:
             st.markdown(f"### Pauta Ativa ({len(ativos)} processo{'s' if len(ativos) != 1 else ''})")
         for processo in ativos:
-            _renderizar_card_processo(processo, modo_edicao)
-  
-  # Filtro de busca por numero (client-side)
-    if busca.strip():
-        busca_lower = busca.strip().lower()
-        processos = [p for p in processos if busca_lower in (p.get("processo_numero", "") or "").lower()]
-
-    # FILTRAR POR USUARIO: operacionais so veem seus processos
-    if filtrar_por_usuario:
-        nome_norm = _normalizar_texto(nome_usuario)
-        processos = [
-            p for p in processos
-            if _normalizar_texto(p.get("editor", "")) == nome_norm
-            or _normalizar_texto(p.get("revisor", "")) == nome_norm
-        ]
-
-    # Contadores
-    col_c1, col_c2, col_c3, col_c4, col_c5 = st.columns(5)
-    with col_c1:
-        st.metric("Total", len(processos))
-    with col_c2:
-        st.metric("Inclusao", len([p for p in processos if p.get("status") == "inclusao"]))
-    with col_c3:
-        st.metric("Em Edicao", len([p for p in processos if p.get("status") == "em_edicao"]))
-    with col_c4:
-        st.metric("Em Revisao", len([p for p in processos if p.get("status") == "em_revisao"]))
-    with col_c5:
-        st.metric("Encaminhados", len([p for p in processos if p.get("status") == "encaminhado"]))
-
-    st.markdown("---")
-
-    if not processos:
-        if filtrar_por_usuario:
-            st.info(f"Nenhum processo atribuido a voce ({nome_usuario}).")
-        else:
-            st.info("Nenhum processo encontrado na pauta SEAT.")
-    else:
-        if filtrar_por_usuario:
-            st.markdown(f"### Meus Processos ({len(processos)})")
-        else:
-            st.markdown(f"### Pauta Ativa ({len(processos)} processo{'s' if len(processos) != 1 else ''})")
-        for processo in processos:
             _renderizar_card_processo(processo, modo_edicao)
 
 # ============================================================
