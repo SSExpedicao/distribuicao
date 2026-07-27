@@ -1851,7 +1851,6 @@ def _aplicar_substituicoes(texto, regras):
         if regra.get("tipo") in ("frase", "termo") and regra.get("ativo", True):
             procurar = regra["procurar"]
             substituir = regra["substituir_por"]
-            # Case-insensitive: "da Decisão" casa com "da decisão"
             texto = re.sub(re.escape(procurar), substituir, texto, flags=re.IGNORECASE)
     return texto
 
@@ -1926,8 +1925,6 @@ def _adicionar_preambulo(texto, relator):
     else:
         preambulo = "O Tribunal, por unanimidade, de acordo com o voto do Relator, decidiu:"
 
-    # Remover SOMENTE o texto do início do voto (não ocorrências no meio)
-    # Usar ^ para ancorar no início do texto
     padroes_remocao = [
         r'^\s*(?:Pelo exposto|Ante o exposto)[,\s]*(?:em harmonia com o órgão instrutivo,?\s*)?VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio Plenário:\s*',
         r'^\s*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio Plenário:\s*',
@@ -2100,16 +2097,12 @@ def _renderizar_motor_nip(modo_edicao, usuario):
 
     if uploaded_file is not None:
         with st.spinner("Processando PDF..."):
-            # 1. Extrair texto
             texto_completo = _extrair_texto_pdf(uploaded_file)
             if not texto_completo:
                 st.error("Não foi possível extrair texto do PDF.")
                 return
 
-            # 2. Extrair numero do processo
             numero_processo = _extrair_numero_processo(texto_completo)
-
-            # 3. Identificar relator (sigla)
             relator_sigla = _identificar_relator_sigla(texto_completo)
             relator_tipo = _identificar_relator(texto_completo)
 
@@ -2125,13 +2118,11 @@ def _renderizar_motor_nip(modo_edicao, usuario):
             else:
                 st.warning("Número do processo não encontrado automaticamente.")
 
-            # 4. Extrair voto
             voto_extraido = _extrair_voto(texto_completo)
             if not voto_extraido:
                 st.error("Não foi possível identificar o voto no PDF.")
                 return
 
-            # 5. Buscar regras
             try:
                 regras = db_manager.buscar_todos(
                     "regras_substituicao_nip",
@@ -2144,10 +2135,8 @@ def _renderizar_motor_nip(modo_edicao, usuario):
             if not regras:
                 regras = _obter_regras_padrao()
 
-            # 6. Processar o voto
             texto_editado = _processar_voto(voto_extraido, relator_tipo, regras)
 
-            # 7. Verificar urgencia e SERCON
             palavras_urg = _obter_palavras_urgencia()
             palavras_sercon = _obter_palavras_sercon()
 
@@ -2162,146 +2151,104 @@ def _renderizar_motor_nip(modo_edicao, usuario):
                 if is_urgent:
                     st.warning(f"⚠️ Processo identificado como **URGENTE** — Motivo: {motivo_urg}")
 
-            # 8. Exibir resultado
-            st.markdown("---")
-            st.markdown("#### ✅ Voto Editado")
-            st.markdown(f"> {texto_editado}")
+        st.markdown("---")
+        st.markdown("#### ✅ Voto Editado")
+        st.markdown(f"> {texto_editado}")
 
-            st.markdown("---")
+        st.markdown("---")
 
-            # 9. Caixa de texto para copiar
-            texto_plain = texto_editado.replace("**", "")
-            st.text_area(
-                "📋 Texto para copiar (Ctrl+A, Ctrl+C):",
-                value=texto_plain,
-                height=300,
-                key="motor_nip_resultado"
+        texto_plain = texto_editado.replace("**", "")
+        st.text_area(
+            "📋 Texto para copiar (Ctrl+A, Ctrl+C):",
+            value=texto_plain,
+            height=300,
+            key="motor_nip_resultado"
+        )
+
+        docx_data = _gerar_docx(texto_editado)
+        if docx_data:
+            st.download_button(
+                label="📥 Baixar como Word (.docx) — com negrito",
+                data=docx_data,
+                file_name="voto_editado.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             )
 
-            # 10. Download .docx
-            docx_data = _gerar_docx(texto_editado)
-            if docx_data:
-                st.download_button(
-                    label="📥 Baixar como Word (.docx) — com negrito",
-                    data=docx_data,
-                    file_name="voto_editado.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                )
+        st.markdown("---")
+        st.markdown("#### 📋 Confirmação de Edição")
 
-            # 11. Painel de confirmacao
-            st.markdown("---")
-            st.markdown("#### 📋 Confirmação de Edição")
+        col1, col2 = st.columns(2)
+        with col1:
+            proc_input = st.text_input(
+                "Número do Processo",
+                value=numero_processo or "",
+                key="motor_nip_proc"
+            )
+        with col2:
+            relator_input = st.text_input(
+                "Relator (sigla)",
+                value=relator_sigla,
+                key="motor_nip_relator"
+            )
 
-            col1, col2 = st.columns(2)
-            with col1:
-                proc_input = st.text_input(
-                    "Número do Processo",
-                    value=numero_processo or "",
-                    key="motor_nip_proc"
-                )
-            with col2:
-                relator_input = st.text_input(
-                    "Relator (sigla)",
-                    value=relator_sigla,
-                    key="motor_nip_relator"
-                )
+        marcar_urgente = False
+        if is_urgent and not is_sercon:
+            marcar_urgente = st.checkbox(
+                f"Marcar como urgente (motivo: {motivo_urg})",
+                value=True,
+                key="motor_nip_urgente"
+            )
 
-            # Checkbox de urgente (so aparece se for urgente e nao for SERCON)
-            marcar_urgente = False
-            if is_urgent and not is_sercon:
-                marcar_urgente = st.checkbox(
-                    f"Marcar como urgente (motivo: {motivo_urg})",
-                    value=True,
-                    key="motor_nip_urgente"
-                )
+        if st.button("✅ Marcar como Editado", key="motor_nip_editado", type="primary"):
+            if not proc_input:
+                st.error("Informe o número do processo.")
+                return
 
-            # Botao Editado
-              if st.button("✅ Marcar como Editado", key="motor_nip_editado", type="primary"):
-                if not proc_input:
-                    st.error("Informe o número do processo.")
-                    return
+            proc_normalizado = _normalizar_numero_processo(proc_input)
 
-                proc_normalizado = _normalizar_numero_processo(proc_input)
+            try:
+                todos_pauta = db_manager.buscar_todos("pauta_seat") or []
+                processo_pauta = None
+                for p in todos_pauta:
+                    p_num = _normalizar_numero_processo(p.get("numero_processo", ""))
+                    if p_num == proc_normalizado:
+                        processo_pauta = p
+                        break
 
-                # Buscar processo na pauta (comparação robusta)
-                try:
-                    todos_pauta = db_manager.buscar_todos("pauta_seat") or []
-                    processo_pauta = None
-                    for p in todos_pauta:
-                        p_num = _normalizar_numero_processo(p.get("numero_processo", ""))
-                        if p_num == proc_normalizado:
-                            processo_pauta = p
-                            break
+                if processo_pauta:
+                    db_manager.atualizar("pauta_seat", processo_pauta["id"], {"editado": True})
+                    st.success("✅ Processo marcado como editado na Pauta Ativa!")
 
-                    if processo_pauta:
-                        # Marcar como editado
-                        db_manager.atualizar("pauta_seat", processo_pauta["id"], {"editado": True})
-                        st.success("✅ Processo marcado como editado na Pauta Ativa!")
+                    if marcar_urgente:
+                        db_manager.inserir("processos_urgentes", {
+                            "processo_numero": proc_normalizado,
+                            "relator": relator_input,
+                            "motivo": motivo_urg,
+                            "tipo_sessao": processo_pauta.get("tipo_sessao", ""),
+                            "sessao_numero": str(processo_pauta.get("numero_sessao", "")),
+                            "dia_sessao": str(processo_pauta.get("dia_sessao", ""))[:10],
+                        })
+                        st.success("✅ Processo adicionado à lista de Urgentes!")
 
-                        # Se urgente, salvar na tabela de urgentes
-                        if marcar_urgente:
-                            db_manager.inserir("processos_urgentes", {
-                                "processo_numero": proc_normalizado,
-                                "relator": relator_input,
-                                "motivo": motivo_urg,
-                                "tipo_sessao": processo_pauta.get("tipo_sessao", ""),
-                                "sessao_numero": str(processo_pauta.get("numero_sessao", "")),
-                                "dia_sessao": str(processo_pauta.get("dia_sessao", ""))[:10],
-                            })
-                            st.success("✅ Processo adicionado à lista de Urgentes!")
+                    if is_sercon:
+                        db_manager.inserir("processos_sercon", {
+                            "processo_numero": proc_normalizado,
+                            "relator": relator_input,
+                            "situacao": situacao_sercon,
+                        })
+                        st.success("✅ Processo enviado para o SERCON!")
+                else:
+                    nums_pauta = [_normalizar_numero_processo(p.get("numero_processo", "")) for p in todos_pauta]
+                    st.warning(
+                        f"Processo não encontrado na Pauta Ativa.\n\n"
+                        f"**Número buscado:** `{proc_normalizado}`\n\n"
+                        f"**Processos na pauta:** {', '.join(nums_pauta)}"
+                    )
+            except Exception as e:
+                st.error(f"Erro ao atualizar: {str(e)}")
 
-                        # Se SERCON, salvar na tabela do SERCON
-                        if is_sercon:
-                            db_manager.inserir("processos_sercon", {
-                                "processo_numero": proc_normalizado,
-                                "relator": relator_input,
-                                "situacao": situacao_sercon,
-                            })
-                            st.success("✅ Processo enviado para o SERCON!")
-                    else:
-                        # Debug: mostrar o que foi comparado
-                        st.warning(
-                            f"Processo não encontrado na Pauta Ativa.\n\n"
-                            f"**Número buscado:** `{proc_normalizado}`\n\n"
-                            f"**Processos na pauta:** "
-                            f"{', '.join([_normalizar_numero_processo(p.get('numero_processo', '')) for p in todos_pauta])}"
-                        )
-                except Exception as e:
-                    st.error(f"Erro ao atualizar: {str(e)}")
-
-                    if processo_pauta:
-                        # Marcar como editado
-                        db_manager.atualizar("pauta_seat", processo_pauta["id"], {"editado": True})
-                        st.success("✅ Processo marcado como editado na Pauta Ativa!")
-
-                        # Se urgente, salvar na tabela de urgentes
-                        if marcar_urgente:
-                            db_manager.inserir("processos_urgentes", {
-                                "processo_numero": proc_normalizado,
-                                "relator": relator_input,
-                                "motivo": motivo_urg,
-                                "tipo_sessao": processo_pauta.get("tipo_sessao", ""),
-                                "sessao_numero": str(processo_pauta.get("numero_sessao", "")),
-                                "dia_sessao": str(processo_pauta.get("dia_sessao", ""))[:10],
-                            })
-                            st.success("✅ Processo adicionado à lista de Urgentes!")
-
-                        # Se SERCON, salvar na tabela do SERCON
-                        if is_sercon:
-                            db_manager.inserir("processos_sercon", {
-                                "processo_numero": proc_normalizado,
-                                "relator": relator_input,
-                                "situacao": situacao_sercon,
-                            })
-                            st.success("✅ Processo enviado para o SERCON!")
-                    else:
-                        st.warning("Processo não encontrado na Pauta Ativa. Verifique o número.")
-                except Exception as e:
-                    st.error(f"Erro ao atualizar: {str(e)}")
-
-            # Voto original (colapsavel)
-            with st.expander("Ver voto original extraído do PDF"):
-                st.text(voto_extraido)
+        with st.expander("Ver voto original extraído do PDF"):
+            st.text(voto_extraido)
 
 # ==================== URGENTES E SERCON ====================
 
@@ -2320,18 +2267,15 @@ def _normalizar_numero_processo(numero):
     """Normaliza o número do processo removendo sufixos, espaços e caracteres invisíveis."""
     if not numero:
         return ""
-    # Converter para string e remover TODOS os espaços, quebras de linha, tabs
     numero = str(numero).strip()
     numero = numero.replace(" ", "")
     numero = numero.replace("\n", "")
     numero = numero.replace("\r", "")
     numero = numero.replace("\t", "")
-    # Remover sufixo -e (com ou sem espaço antes)
     if numero.endswith("-e"):
         numero = numero[:-2]
     if numero.endswith("-E"):
         numero = numero[:-2]
-    # Remover possíveis espaços invisíveis (zero-width, non-breaking space, etc.)
     numero = numero.replace("\u200b", "")
     numero = numero.replace("\u00a0", "")
     numero = numero.replace("\ufeff", "")
