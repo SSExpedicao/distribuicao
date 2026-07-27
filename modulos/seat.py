@@ -2079,7 +2079,7 @@ def _obter_regras_padrao():
     ]
 
 def _renderizar_motor_nip(modo_edicao, usuario):
-    """Função principal do Motor NIP - Edição Automática de Votos."""
+    """Funcao principal do Motor NIP - Edicao Automatica de Votos."""
     st.markdown("### Motor NIP - Edição Automática de Votos")
     st.caption(
         "Faça upload do PDF do relatório/voto. O sistema extrai o voto, "
@@ -2088,7 +2088,6 @@ def _renderizar_motor_nip(modo_edicao, usuario):
 
     st.markdown("---")
 
-    # Upload do PDF
     uploaded_file = st.file_uploader(
         "📄 Upload do PDF do Relatório/Voto",
         type=['pdf'],
@@ -2097,30 +2096,38 @@ def _renderizar_motor_nip(modo_edicao, usuario):
 
     if uploaded_file is not None:
         with st.spinner("Processando PDF..."):
-            # 1. Extrair texto do PDF
+            # 1. Extrair texto
             texto_completo = _extrair_texto_pdf(uploaded_file)
-
             if not texto_completo:
                 st.error("Não foi possível extrair texto do PDF.")
                 return
 
-            # 2. Identificar relator
-            relator = _identificar_relator(texto_completo)
+            # 2. Extrair numero do processo
+            numero_processo = _extrair_numero_processo(texto_completo)
+
+            # 3. Identificar relator (sigla)
+            relator_sigla = _identificar_relator_sigla(texto_completo)
+            relator_tipo = _identificar_relator(texto_completo)
+
             relator_nome = {
-                "GCAM": "Anilcéia Machado (Relatora)",
-                "VINICIUS_FRAGOSO": "Vinícius Fragoso (Substituto)",
-                "OUTRO": "Relator identificado no PDF"
+                "GCAM": "GCAM (Anilcéia Machado — Relatora)",
+                "VINICIUS_FRAGOSO": "GAVF (Vinícius Fragoso — Substituto)",
+                "OUTRO": relator_sigla,
             }
-            st.info(f"**Relator identificado:** {relator_nome.get(relator, relator)}")
+            st.info(f"**Relator identificado:** {relator_nome.get(relator_tipo, relator_sigla)}")
 
-            # 3. Extrair voto
+            if numero_processo:
+                st.info(f"**Processo identificado:** {numero_processo}")
+            else:
+                st.warning("Número do processo não encontrado automaticamente.")
+
+            # 4. Extrair voto
             voto_extraido = _extrair_voto(texto_completo)
-
             if not voto_extraido:
-                st.error("Não foi possível identificar o voto no PDF. Verifique se o arquivo contém a seção de voto.")
+                st.error("Não foi possível identificar o voto no PDF.")
                 return
 
-            # 4. Buscar regras do banco
+            # 5. Buscar regras
             try:
                 regras = db_manager.buscar_todos(
                     "regras_substituicao_nip",
@@ -2130,33 +2137,44 @@ def _renderizar_motor_nip(modo_edicao, usuario):
                 )
             except Exception:
                 regras = []
-
-            # Se não houver regras no banco, usar regras padrão
             if not regras:
                 regras = _obter_regras_padrao()
 
-            # 5. Processar o voto
-            texto_editado = _processar_voto(voto_extraido, relator, regras)
+            # 6. Processar o voto
+            texto_editado = _processar_voto(voto_extraido, relator_tipo, regras)
 
-            # 6. Exibir resultado
+            # 7. Verificar urgencia e SERCON
+            palavras_urg = _obter_palavras_urgencia()
+            palavras_sercon = _obter_palavras_sercon()
+
+            is_sercon, situacao_sercon = _verificar_sercon(voto_extraido, palavras_sercon)
+
+            if is_sercon:
+                is_urgent = False
+                motivo_urg = ""
+                st.warning(f"⚠️ Processo identificado para **SERCON** — Situação: {situacao_sercon}")
+            else:
+                is_urgent, motivo_urg = _verificar_urgencia(voto_extraido, palavras_urg)
+                if is_urgent:
+                    st.warning(f"⚠️ Processo identificado como **URGENTE** — Motivo: {motivo_urg}")
+
+            # 8. Exibir resultado
             st.markdown("---")
             st.markdown("#### ✅ Voto Editado")
-
-            # Preview com formatação (bold visível)
             st.markdown(f"> {texto_editado}")
 
             st.markdown("---")
 
-            # Caixa de texto para copiar (texto plano sem markdown)
+            # 9. Caixa de texto para copiar
             texto_plain = texto_editado.replace("**", "")
             st.text_area(
-                "📋 Texto para copiar (clique na caixa, Ctrl+A, Ctrl+C):",
+                "📋 Texto para copiar (Ctrl+A, Ctrl+C):",
                 value=texto_plain,
                 height=300,
                 key="motor_nip_resultado"
             )
 
-            # Download como .docx (com negrito preservado)
+            # 10. Download .docx
             docx_data = _gerar_docx(texto_editado)
             if docx_data:
                 st.download_button(
@@ -2166,9 +2184,338 @@ def _renderizar_motor_nip(modo_edicao, usuario):
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 )
 
-            # Mostrar voto original (colapsável)
+            # 11. Painel de confirmacao
+            st.markdown("---")
+            st.markdown("#### 📋 Confirmação de Edição")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                proc_input = st.text_input(
+                    "Número do Processo",
+                    value=numero_processo or "",
+                    key="motor_nip_proc"
+                )
+            with col2:
+                relator_input = st.text_input(
+                    "Relator (sigla)",
+                    value=relator_sigla,
+                    key="motor_nip_relator"
+                )
+
+            # Checkbox de urgente (so aparece se for urgente e nao for SERCON)
+            marcar_urgente = False
+            if is_urgent and not is_sercon:
+                marcar_urgente = st.checkbox(
+                    f"Marcar como urgente (motivo: {motivo_urg})",
+                    value=True,
+                    key="motor_nip_urgente"
+                )
+
+            # Botao Editado
+            if st.button("✅ Marcar como Editado", key="motor_nip_editado", type="primary"):
+                if not proc_input:
+                    st.error("Informe o número do processo.")
+                    return
+
+                proc_normalizado = _normalizar_numero_processo(proc_input)
+
+                # Buscar processo na pauta
+                try:
+                    todos_pauta = db_manager.buscar_todos("pauta_seat") or []
+                    processo_pauta = None
+                    for p in todos_pauta:
+                        p_num = _normalizar_numero_processo(p.get("numero_processo", ""))
+                        if p_num == proc_normalizado:
+                            processo_pauta = p
+                            break
+
+                    if processo_pauta:
+                        # Marcar como editado
+                        db_manager.atualizar("pauta_seat", processo_pauta["id"], {"editado": True})
+                        st.success("✅ Processo marcado como editado na Pauta Ativa!")
+
+                        # Se urgente, salvar na tabela de urgentes
+                        if marcar_urgente:
+                            db_manager.inserir("processos_urgentes", {
+                                "processo_numero": proc_normalizado,
+                                "relator": relator_input,
+                                "motivo": motivo_urg,
+                                "tipo_sessao": processo_pauta.get("tipo_sessao", ""),
+                                "sessao_numero": str(processo_pauta.get("numero_sessao", "")),
+                                "dia_sessao": str(processo_pauta.get("dia_sessao", ""))[:10],
+                            })
+                            st.success("✅ Processo adicionado à lista de Urgentes!")
+
+                        # Se SERCON, salvar na tabela do SERCON
+                        if is_sercon:
+                            db_manager.inserir("processos_sercon", {
+                                "processo_numero": proc_normalizado,
+                                "relator": relator_input,
+                                "situacao": situacao_sercon,
+                            })
+                            st.success("✅ Processo enviado para o SERCON!")
+                    else:
+                        st.warning("Processo não encontrado na Pauta Ativa. Verifique o número.")
+                except Exception as e:
+                    st.error(f"Erro ao atualizar: {str(e)}")
+
+            # Voto original (colapsavel)
             with st.expander("Ver voto original extraído do PDF"):
                 st.text(voto_extraido)
+
+# ==================== URGENTES E SERCON ====================
+
+_RELATOR_SIGLA_MAP = {
+    "MÁRCIO MICHEL": "GCMM",
+    "MANOEL DE ANDRADE": "GCMA",
+    "RENATO RAINHA": "GCRR",
+    "ANILCÉIA MACHADO": "GCAM",
+    "INÁCIO MAGALHÃES FILHO": "GCIM",
+    "PAULO TADEU": "GCPT",
+    "ANDRÉ CLEMENTE": "GCAC",
+    "VINÍCIUS FRAGOSO": "GAVF",
+}
+
+def _normalizar_numero_processo(numero):
+    """Remove o sufixo -e do numero do processo."""
+    numero = numero.strip()
+    if numero.endswith("-e"):
+        numero = numero[:-2]
+    return numero
+
+def _extrair_numero_processo(texto):
+    """Extrai o numero do processo do cabecalho do PDF."""
+    import re
+    # Padrao: Processo nº: 00600-00009313/2025-11-e (ou sem -e)
+    padrao = r'Processo\s*n[º°.o]*\s*:?\s*\n?\s*(\d{5}-\d{8}/\d{4}-\d{2})(?:-e)?'
+    match = re.search(padrao, texto, re.IGNORECASE)
+    if match:
+        return _normalizar_numero_processo(match.group(1))
+    # Fallback: procurar o padrao do numero em qualquer lugar
+    padrao_fallback = r'(\d{5}-\d{8}/\d{4}-\d{2})(?:-e)?'
+    match = re.search(padrao_fallback, texto)
+    if match:
+        return _normalizar_numero_processo(match.group(1))
+    return None
+
+def _identificar_relator_sigla(texto):
+    """Identifica o relator pelo texto e retorna a sigla."""
+    texto_upper = texto.upper()
+    for nome, sigla in _RELATOR_SIGLA_MAP.items():
+        if nome in texto_upper:
+            return sigla
+    return "N/I"
+
+def _verificar_prazo(texto):
+    """Verifica se ha prazos de 0 a 20 dias no texto."""
+    import re
+    padrao = r'\b(\d{1,2})\s*(?:\([^)]+\)\s*)?(?:dias?|dia)\b'
+    matches = re.findall(padrao, texto, re.IGNORECASE)
+    prazos = []
+    for match in matches:
+        try:
+            num = int(match)
+            if 0 <= num <= 20:
+                prazos.append(f"{num} dias")
+        except ValueError:
+            pass
+    return prazos
+
+def _obter_palavras_urgencia():
+    """Retorna a lista de palavras de urgencia do banco ou padrao."""
+    try:
+        palavras = db_manager.buscar_todos("palavras_urgencia_nip", filtros={"ativo": True})
+        if palavras:
+            return list(set([p["palavra"] for p in palavras]))
+    except Exception:
+        pass
+    return [
+        "urgente", "urgência", "prioritário", "prioridade", "brevidade",
+        "importância", "imediato", "imediatamente", "suspender", "suspensão",
+        "revoga", "abster", "abstenção", "anula", "anular", "negar",
+        "continuidade", "continuação", "prosseguimento", "reabertura", "abertura",
+        "licita", "licitação", "licitatório", "certame", "homologar", "adjudicar",
+        "governador", "chefe do poder", "referendar", "ratificar",
+        "despacho singular", "sustentação oral", "Covid", "Corona",
+        "prorrog", "aprovar", "minuta", "pagamento", "prazo de",
+    ]
+
+def _obter_palavras_sercon():
+    """Retorna a lista de palavras de SERCON do banco ou padrao."""
+    try:
+        palavras = db_manager.buscar_todos("palavras_sercon_nip", filtros={"ativo": True})
+        if palavras:
+            return palavras
+    except Exception:
+        pass
+    return [
+        {"palavra": "acórdão", "situacao": "acórdão"},
+        {"palavra": "acórdãos", "situacao": "acórdão"},
+        {"palavra": "notificação", "situacao": "notificação"},
+        {"palavra": "notificar", "situacao": "notificação"},
+        {"palavra": "cientificação", "situacao": "cientificação"},
+        {"palavra": "cientificar", "situacao": "cientificação"},
+        {"palavra": "audiência", "situacao": "audiência"},
+        {"palavra": "convocação para audiência", "situacao": "audiência"},
+    ]
+
+def _verificar_urgencia(texto, palavras):
+    """Verifica se o texto contem palavras de urgencia. Retorna (is_urgent, motivos)."""
+    texto_lower = texto.lower()
+    motivos = []
+
+    for palavra in palavras:
+        if palavra.lower() in texto_lower:
+            motivos.append(palavra)
+
+    # Verificar prazos de 0 a 20 dias
+    prazos = _verificar_prazo(texto)
+    motivos.extend(prazos)
+
+    # Deduplicar mantendo ordem
+    motivos_unicos = []
+    for m in motivos:
+        if m not in motivos_unicos:
+            motivos_unicos.append(m)
+
+    return len(motivos_unicos) > 0, ", ".join(motivos_unicos) if motivos_unicos else ""
+
+def _verificar_sercon(texto, palavras_sercon):
+    """Verifica se o texto contem palavras de SERCON. Retorna (is_sercon, situacao)."""
+    texto_lower = texto.lower()
+    for item in palavras_sercon:
+        palavra = item.get("palavra", "").lower()
+        situacao = item.get("situacao", "")
+        if palavra and palavra in texto_lower:
+            return True, situacao
+    return False, ""
+
+def _renderizar_urgentes(modo_edicao, usuario):
+    """Renderiza a tab de Urgentes com 4 tabelas por tipo de sessao."""
+    st.markdown("### Processos Urgentes")
+    st.caption("Processos identificados como urgentes, organizados por tipo de sessao.")
+
+    # Buscar processos urgentes
+    try:
+        urgentes = db_manager.buscar_todos("processos_urgentes")
+    except Exception:
+        urgentes = []
+
+    if not urgentes:
+        st.info("Nenhum processo urgente cadastrado ainda.")
+        return
+
+    # Buscar datas das ultimas sessoes de cada tipo
+    todos_processos = db_manager.buscar_todos("pauta_seat") or []
+    datas_recentes = {}
+    for p in todos_processos:
+        tipo = p.get("tipo_sessao", "")
+        dia = p.get("dia_sessao")
+        if not tipo or not dia:
+            continue
+        if "urgente" in _normalizar_texto(tipo):
+            continue
+        dia_str = str(dia)[:10]
+        tipo_key = _normalizar_texto(tipo)
+        if tipo_key not in datas_recentes or dia_str > datas_recentes[tipo_key]:
+            datas_recentes[tipo_key] = dia_str
+
+    # Filtrar urgentes apenas das ultimas sessoes
+    urgentes_filtrados = []
+    for u in urgentes:
+        dia_u = str(u.get("dia_sessao", ""))[:10]
+        tipo_u = _normalizar_texto(u.get("tipo_sessao", ""))
+        if tipo_u in datas_recentes and dia_u == datas_recentes[tipo_u]:
+            urgentes_filtrados.append(u)
+
+    # Agrupar por tipo de sessao
+    tipos_sessao = {
+        "sessao ordinaria": "Sessão Ordinária",
+        "sessao reservada": "Sessão Reservada",
+        "sessao administrativa": "Sessão Administrativa",
+        "sessao ordinaria virtual": "Sessão Ordinária Virtual",
+    }
+
+    for tipo_key, tipo_label in tipos_sessao.items():
+        processos_tipo = [
+            u for u in urgentes_filtrados
+            if _normalizar_texto(u.get("tipo_sessao", "")) == tipo_key
+        ]
+
+        st.markdown(f"#### {tipo_label}")
+        if processos_tipo:
+            import pandas as pd
+            dados = []
+            for u in processos_tipo:
+                dados.append({
+                    "Processo": u.get("processo_numero", ""),
+                    "Relator": u.get("relator", ""),
+                    "Motivo": u.get("motivo", ""),
+                })
+            df = pd.DataFrame(dados)
+            st.dataframe(df, hide_index=True, use_container_width=True, height=len(df) * 35 + 40)
+        else:
+            st.caption("Nenhum processo urgente nesta sessão.")
+        st.markdown("---")
+
+def _renderizar_sidebar_urgentes(usuario):
+    """Mostra a tabela de urgentes na sidebar, abaixo dos Despachos Singulares."""
+    import pandas as pd
+
+    cargo = usuario.get("cargo", "operacional")
+    if cargo not in ("criador", "raiz", "gerente"):
+        return
+
+    try:
+        urgentes = db_manager.buscar_todos("processos_urgentes")
+    except Exception:
+        urgentes = []
+
+    if not urgentes:
+        return
+
+    # Filtrar apenas das ultimas sessoes
+    todos_processos = db_manager.buscar_todos("pauta_seat") or []
+    datas_recentes = {}
+    for p in todos_processos:
+        tipo = p.get("tipo_sessao", "")
+        dia = p.get("dia_sessao")
+        if not tipo or not dia:
+            continue
+        if "urgente" in _normalizar_texto(tipo):
+            continue
+        dia_str = str(dia)[:10]
+        tipo_key = _normalizar_texto(tipo)
+        if tipo_key not in datas_recentes or dia_str > datas_recentes[tipo_key]:
+            datas_recentes[tipo_key] = dia_str
+
+    urgentes_filtrados = []
+    for u in urgentes:
+        dia_u = str(u.get("dia_sessao", ""))[:10]
+        tipo_u = _normalizar_texto(u.get("tipo_sessao", ""))
+        if tipo_u in datas_recentes and dia_u == datas_recentes[tipo_u]:
+            urgentes_filtrados.append(u)
+
+    if not urgentes_filtrados:
+        return
+
+    with st.sidebar:
+        st.markdown("---")
+        st.markdown("##### Urgentes (Recentes)")
+        dados = []
+        for u in urgentes_filtrados:
+            dados.append({
+                "Processo": u.get("processo_numero", ""),
+                "Relator": u.get("relator", ""),
+                "Motivo": u.get("motivo", ""),
+            })
+        df = pd.DataFrame(dados)
+        st.dataframe(
+            df,
+            hide_index=True,
+            use_container_width=True,
+            height=len(df) * 35 + 40,
+        )
 
 # ============================================================
 # FUNCAO PRINCIPAL
@@ -2190,15 +2537,16 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
     st.markdown("---")
 
     # renderizar_sidebar ja e chamada pelo app.py via sidebar_placeholder
-    # Apenas _renderizar_sidebar_ds precisa ser chamada aqui
     _renderizar_sidebar_ds(usuario)
+    _renderizar_sidebar_urgentes(usuario)
 
-    tab_pauta, tab_distribuicao, tab_ds, tab_motor, tab_DOETCDF = st.tabs([
+    tab_pauta, tab_distribuicao, tab_ds, tab_urgentes, tab_motor, tab_doe = st.tabs([
         "Pauta Ativa",
         "Distribuicao",
         "Despachos Singulares",
+        "Urgentes",
         "Motor NIP",
-        "Escala DOETCDF (em breve)",
+        "Escala DOE (em breve)",
     ])
 
     with tab_pauta:
@@ -2210,8 +2558,11 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
     with tab_ds:
         _renderizar_despachos_singulares(modo_edicao, usuario)
 
+    with tab_urgentes:
+        _renderizar_urgentes(modo_edicao, usuario)
+
     with tab_motor:
         _renderizar_motor_nip(modo_edicao, usuario)
-      
-    with tab_DOETCDF:
-        st.info("A Escala de Publicacao DOETCDF sera implementada na sub-etapa 1I.")
+
+    with tab_dodf:
+        st.info("A Escala de Publicacao DOE sera implementada na proxima fase.")
