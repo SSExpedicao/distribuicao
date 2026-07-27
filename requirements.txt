@@ -9,3 +9,5 @@ pdfplumber>=0.7.0
 python-docx>=0.8.11
 pypdf
 supabase
+pdfplumber
+python-docx
