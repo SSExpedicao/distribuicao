@@ -1345,6 +1345,43 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
 # DESPACHOS SINGULARES - FUNCOES
 # ============================================================
 
+def _verificar_despacho_singular_tab(numero_processo):
+    """Verifica se um processo está cadastrado na tab de Despachos Singulares."""
+    try:
+        proc_norm = _normalizar_numero_processo(numero_processo)
+        # Tenta múltiplos nomes possíveis de tabela
+        despachos = None
+        for tabela in ["despachos_singulares", "despacho_singular", "ds_seat"]:
+            try:
+                despachos = db_manager.buscar_todos(tabela) or []
+                if despachos:
+                    break
+            except Exception:
+                continue
+
+        if not despachos:
+            return False, ""
+
+        for d in despachos:
+            # Tenta múltiplos nomes de campo
+            d_num = _normalizar_numero_processo(
+                d.get("numero_processo") or
+                d.get("processo_numero") or
+                d.get("numero") or
+                d.get("processo") or
+                ""
+            )
+            if d_num == proc_norm:
+                # Verificar se é Sustentação Oral ou Despacho Singular
+                tipo = _normalizar_texto(str(d.get("tipo", "")))
+                obs = _normalizar_texto(str(d.get("observacoes", "")))
+                if "sustentação oral" in tipo or "sustentação oral" in obs:
+                    return True, "Sustentação Oral"
+                return True, "Despacho Singular"
+        return False, ""
+    except Exception:
+        return False, ""
+
 def _verificar_despacho_singular(processo_pauta):
     """Verifica se um processo da pauta é Despacho Singular."""
     if not processo_pauta:
@@ -2185,15 +2222,23 @@ def _renderizar_motor_nip(modo_edicao, usuario):
 
             texto_editado = _processar_voto(voto_extraido, relator_tipo, regras)
 
+                        # 7. Verificar urgencia e SERCON
             palavras_urg = _obter_palavras_urgencia()
             palavras_sercon = _obter_palavras_sercon()
 
             is_sercon, situacao_sercon = _verificar_sercon(voto_extraido, palavras_sercon)
 
+            # Verificar se está na tab de Despachos Singulares
+            is_ds, ds_motivo = _verificar_despacho_singular_tab(numero_processo or "")
+
             if is_sercon:
                 is_urgent = False
                 motivo_urg = ""
                 st.warning(f"⚠️ Processo identificado para **SERCON** — Situação: {situacao_sercon}")
+            elif is_ds:
+                is_urgent = True
+                motivo_urg = ds_motivo
+                st.warning(f"⚠️ Processo identificado como **URGENTE** — Motivo: {ds_motivo}")
             else:
                 is_urgent, motivo_urg = _verificar_urgencia(voto_extraido, palavras_urg)
                 if is_urgent:
