@@ -1791,7 +1791,6 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
     """
     Funcao principal do modulo SEAT.
     """
-
     nome = usuario.get("nome", "Usuario")
     cargo = usuario.get("cargo", "operacional")
     setor = usuario.get("setor", "SEAT")
@@ -1803,9 +1802,9 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
 
     st.markdown("---")
 
-    # SIDEBAR: tabelas de carga + DS recentes
-    renderizar_sidebar(usuario, modo_edicao)
-    _renderizar_sidebar_ds(usuario)  # <-- NOVA LINHA
+    # renderizar_sidebar ja e chamada pelo app.py via sidebar_placeholder
+    # Apenas _renderizar_sidebar_ds precisa ser chamada aqui
+    _renderizar_sidebar_ds(usuario)
 
     tab_pauta, tab_distribuicao, tab_ds, tab_motor, tab_dodf = st.tabs([
         "Pauta Ativa",
