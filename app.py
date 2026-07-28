@@ -184,8 +184,8 @@ def barra_lateral():
     st.sidebar.markdown(f"### 👤 {nome}")
     st.sidebar.markdown(f"**{cargo_exibicao}**")
     st.sidebar.markdown(f"Setor: **{setor}**")
-    f cargo == "operacional":
-      st.sidebar.markdown(f"Vínculo: **{vinculo}**")
+    if cargo == "operacional":
+       st.sidebar.markdown(f"Vínculo: **{vinculo}**")
 
     # PLACEHOLDER: o modulo pode inserir conteudo aqui
     sidebar_placeholder = st.sidebar.container()
