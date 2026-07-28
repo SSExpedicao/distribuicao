@@ -48,34 +48,46 @@ def _tem_permissao_gestao(usuario):
 
 # ==================== COLABORADORES (FONTE ÚNICA: usuarios_acesso) ====================
 
+def _get_nome_curto(colab):
+    """Extrai rigorosamente o Nome de Guerra limpo; se não houver, usa o primeiro nome."""
+    if not colab:
+        return ""
+    ng = colab.get("nome_guerra")
+    if ng and str(ng).strip():
+        return str(ng).strip()
+    nome_comp = str(colab.get("nome", "")).strip()
+    return nome_comp.split()[0] if nome_comp else ""
+
 def _obter_colaboradores():
-    """Busca os colaboradores da SEXP diretamente na tabela central do sistema."""
+    """
+    Busca colaboradores diretamente em 'usuarios_acesso' (SSOT).
+    Elimina o uso de tabelas paralelas.
+    """
     try:
-        return db_manager.buscar_todos(
-            "usuarios_acesso",
-            filtros={"ativo": True, "setor": "SEXP"},
-            ordem_coluna="nome_guerra",
-            ordem_desc=False,
-        ) or []
+        todos = db_manager.buscar_todos("usuarios_acesso", filtros={"ativo": True}) or []
+        # Filtra rigorosamente quem está lotado no setor SEXP (independente de maiúsculas/minúsculas)
+        return [u for u in todos if _normalizar_texto(u.get("setor", "")) == "sexp"]
     except Exception:
         return []
 
 def _obter_colaboradores_por_cargo(tipo_sessao):
     """
-    Retorna colaboradores elegíveis para um tipo de sessão.
-    - Reservada: exclui estagiários
-    - Administrativa: apenas gerentes
-    - Outras: todos exceto gerentes
+    Retorna colaboradores elegíveis para o rodízio.
+    CORREÇÃO: Gerentes AGORA PARTICIPAM normalmente de todas as sessões ordinárias e urgentes!
     """
     todos = _obter_colaboradores()
     tipo_norm = _normalizar_texto(tipo_sessao)
 
     if "reservada" in tipo_norm:
-        return [c for c in todos if _normalizar_texto(c.get("cargo", "")) != "estagiario" and _normalizar_texto(c.get("cargo", "")) != "gerente"]
-    elif "administrativa" in tipo_norm:
-        return [c for c in todos if _normalizar_texto(c.get("cargo", "")) in ("gerente", "criador", "raiz")]
+        # Em sessões reservadas, apenas estagiários ficam de fora
+        return [
+            c for c in todos 
+            if _normalizar_texto(c.get("cargo", "")) != "estagiario" 
+            and _normalizar_texto(c.get("vinculo", "")) != "estagiario"
+        ]
     else:
-        return [c for c in todos if _normalizar_texto(c.get("cargo", "")) not in ("gerente", "criador", "raiz")]
+        # Em todas as outras (Ordinária, Urgentes, etc), TODOS participam (incluindo Gerentes e Chefes!)
+        return todos
 
 # ==================== SINCRONIZAÇÃO COM SEAT ====================
 
@@ -185,31 +197,55 @@ def _gerar_cadeia_duplas(colaboradores):
     return duplas
 
 def _executar_distribuicao(tipo_sessao, colaboradores_selecionados):
-    """Executa a distribuição de processos para um tipo de sessão específico."""
+    """Executa a distribuição em cadeia garantindo a gravação no banco de dados com fallback."""
     try:
         todos = db_manager.buscar_todos("distribuicao_sexp") or []
-        processos = [d for d in todos if d.get("tipo_sessao") == tipo_sessao and not d.get("distribuido", False)]
+        processos = [
+            d for d in todos 
+            if d.get("tipo_sessao") == tipo_sessao 
+            and not d.get("distribuido", False) 
+            and not d.get("removido_pauta", False)
+        ]
 
-        if not processos:
-            return 0
-
-        if not colaboradores_selecionados or len(colaboradores_selecionados) < 2:
+        if not processos or not colaboradores_selecionados or len(colaboradores_selecionados) < 2:
             return 0
 
         duplas = _gerar_cadeia_duplas([{"nome": n} for n in colaboradores_selecionados])
         if not duplas:
             return 0
 
+        sucessos = 0
+        cliente = db_manager.get_supabase()
+
         for i, p in enumerate(processos):
             par = duplas[i % len(duplas)]
-            db_manager.atualizar("distribuicao_sexp", p["id"], {
+            dados_update = {
                 "expedidor": par[0],
                 "revisor": par[1],
                 "distribuido": True,
-            })
+            }
 
-        return len(processos)
-    except Exception:
+            # 1ª Tentativa: Atualizar pelo ID padrão usando db_manager
+            id_reg = p.get("id") or p.get("id_distribuicao") or p.get("id_processo")
+            res = None
+            if id_reg:
+                res = db_manager.atualizar("distribuicao_sexp", id_reg, dados_update)
+
+            # 2ª Tentativa (Fallback Blindado): Se falhou pelo ID, atualiza direto pelo número do processo
+            if res is None and cliente and p.get("processo_numero"):
+                try:
+                    resp = cliente.table("distribuicao_sexp").update(dados_update).eq("processo_numero", p["processo_numero"]).execute()
+                    if resp.data:
+                        res = resp.data[0]
+                except Exception as err:
+                    print(f"[FALLBACK UPDATE ERRO] {err}")
+
+            if res is not None:
+                sucessos += 1
+
+        return sucessos
+    except Exception as e:
+        print(f"[ERRO GRAVE DISTRIBUICAO] {e}")
         return 0
 
 # ==================== SIDEBAR ====================
@@ -377,9 +413,11 @@ def _renderizar_pauta_ativa_sexp(usuario, modo_edicao):
             st.metric("Distribuídos", len(distribuidos))
 
 
+        # Quadro de Seleção de Colaboradores (Liberado para toda a equipe operando no setor!)
         if modo_edicao and nao_distribuidos:
             elegiveis = _obter_colaboradores_por_cargo(tipo)
-            nomes_elegiveis = [c.get("nome", "") for c in elegiveis]
+            # Extrai APENAS o Nome de Guerra, remove duplicidades e ordena em ordem alfabética!
+            nomes_elegiveis = sorted(list(set([_get_nome_curto(c) for c in elegiveis if _get_nome_curto(c)])))
 
             if nomes_elegiveis:
                 with st.expander(f"⚙️ Distribuir {len(nao_distribuidos)} processo(s) de {tipo}", expanded=True):
@@ -400,7 +438,7 @@ def _renderizar_pauta_ativa_sexp(usuario, modo_edicao):
                                 st.success(f"✅ {qtd} processo(s) distribuído(s) em cadeia com sucesso!")
                                 st.rerun()
                             else:
-                                st.error("Erro ao distribuir processos no banco de dados.")
+                                st.error("Erro ao distribuir processos no banco de dados. Verifique a conexão com o Supabase.")
             else:
                 st.warning("Nenhum colaborador elegível ativo cadastrado para este tipo de sessão.")
 
