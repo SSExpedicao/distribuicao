@@ -1092,27 +1092,52 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
 
     st.markdown("---")
 
-    # === Botao Finalizar Sessao ===
-    if processos and len(encaminhados) == len(processos):
-        st.success(
-            f"🎉 **Todos os {len(encaminhados)} processos foram editados, revisados e encaminhados!**"
-        )
+    # === Botão Finalizar Sessão (Liberado para toda a equipe operando na SEAT) ===
+    if processos and modo_edicao:
+        st.markdown("---")
+        pendentes = len(processos) - len(encaminhados)
 
-        if modo_edicao and cargo_usuario in ("gerente", "criador", "raiz"):
-            st.markdown("---")
-            if st.button(
-                "📋 Finalizar Sessão",
-                type="primary",
-                use_container_width=True,
-                key="btn_finalizar_sessao"
-            ):
-                for p in encaminhados:
-                    db_manager.atualizar("pauta_seat", p["id"], {
-                        "sessao_finalizada": True,
-                    })
-                st.success("✅ Sessão finalizada! Os processos estão disponíveis no SEXP.")
+        if pendentes == 0:
+            st.success(f"🎉 **Todos os {len(encaminhados)} processos foram revisados! A sessão está pronta para envio.**")
+        else:
+            st.warning(
+                f"⚠️ **Alerta de Pendência:** Ainda há **{pendentes}** processo(s) sem revisão final nesta pauta.\n\n"
+                f"Se você finalizar agora, apenas os **{len(encaminhados)}** processos já revisados serão enviados para a SEXP."
+            )
+
+        # Trava de segurança: se houver pendentes, exige marcação do checkbox para liberar o botão
+        confirmar_envio = True
+        if pendentes > 0:
+            confirmar_envio = st.checkbox(
+                f"Estou ciente das pendências e desejo finalizar a sessão enviando apenas os {len(encaminhados)} processos revisados para a SEXP.",
+                key="chk_confirmar_finalizacao_seat"
+            )
+
+        if st.button(
+            "📋 Finalizar Sessão e Enviar para SEXP",
+            type="primary",
+            use_container_width=True,
+            disabled=not confirmar_envio,
+            key="btn_finalizar_sessao_geral"
+        ):
+            if len(encaminhados) == 0:
+                st.error("Nenhum processo foi revisado ainda. Impossível enviar sessão vazia para a SEXP.")
+            else:
+                with st.spinner("Enviando processos para a SEXP..."):
+                    salvos = 0
+                    for p in encaminhados:
+                        # Marca como finalizada para destravar a leitura no SEXP
+                        res = db_manager.atualizar("pauta_seat", p["id"], {
+                            "sessao_finalizada": True,
+                            "status": "encaminhado"
+                        })
+                        if res:
+                            salvos += 1
+
+                st.success(f"✅ Sessão finalizada com sucesso! {salvos} processo(s) enviado(s) para a SEXP.")
                 st.rerun()
-            st.caption("Ao finalizar, a sessão será encerrada e os processos não voltarão para a Pauta Ativa.")
+
+        st.caption("Ao finalizar, os processos revisados migram para a esteira da Expedição (SEXP) e não poderão mais ser alterados na SEAT.")
         st.markdown("---")
 
     # === Listar processos ativos (nao encaminhados) ===
