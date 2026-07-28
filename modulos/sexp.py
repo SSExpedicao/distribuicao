@@ -681,130 +681,412 @@ def _renderizar_card_processo_sexp(p, modo_edicao, usuario):
                             st.rerun()
 
 def _renderizar_distribuicao_sexp(usuario, modo_edicao):
+
     """Renderiza a aba de Distribuição com tabelas interativas SEPARADAS por Sessão/Data e botão restrito a gerentes."""
+
     import pandas as pd
+
     cargo = _normalizar_texto(usuario.get("cargo", "operacional"))
+
     is_gerente = _tem_permissao_gestao(usuario)
 
+
+
     st.markdown("### 📤 Distribuição — Esteira Operacional")
+
     st.caption("As tabelas são geradas e isoladas automaticamente pelo Número e Dia da Sessão.")
 
+
+
     try:
+
         todos = db_manager.buscar_todos("distribuicao_sexp", ordem_coluna="id", ordem_desc=False) or []
+
     except Exception:
+
         todos = []
+
+
 
     distribuidos = [d for d in todos if d.get("distribuido", False) and not d.get("removido_pauta", False) and not d.get("sessao_finalizada", False)]
 
+
+
     if not distribuidos:
+
         st.info("Nenhum processo tramitando na esteira de distribuição no momento.")
+
         return
 
+
+
     try:
+
         urgentes_seat = db_manager.buscar_todos("processos_urgentes") or []
+
         nums_urgentes = {_normalizar_numero_processo(u.get("processo_numero", "")) for u in urgentes_seat}
+
     except Exception:
+
         nums_urgentes = set()
+
+
 
     tipos_com_processos = [t for t in TIPOS_SESSAO_SEXP if t != "Urgentes" and any(_determinar_tabela_destino_sexp(d, nums_urgentes) == t for d in distribuidos)]
 
+
+
     if not tipos_com_processos:
+
         st.info("Nenhum processo distribuído.")
+
         return
+
+
 
     sub_tabs = st.tabs(tipos_com_processos)
 
+
+
     for idx_tab, tipo in enumerate(tipos_com_processos):
+
         with sub_tabs[idx_tab]:
+
             procs_tipo = [d for d in distribuidos if _determinar_tabela_destino_sexp(d, nums_urgentes) == tipo]
+
             if cargo == "operacional" and not is_gerente:
+
                 procs_tipo = [d for d in procs_tipo if _eh_o_colaborador(usuario, d.get("expedidor")) or _eh_o_colaborador(usuario, d.get("revisor"))]
 
+
+
             if not procs_tipo:
+
                 st.info("Nenhum processo atribuído a você neste tipo de sessão.")
+
                 continue
 
+
+
             # AGRUPAMENTO ANTI-AGLOMERAÇÃO: Separa rigorosamente por Número da Sessão e Dia
+
             sessoes_isoladas = {}
+
             for p in procs_tipo:
+
                 num_s = p.get("numero_sessao") or p.get("sessao_numero") or "S/N"
+
                 dia_raw = str(p.get("dia_sessao", ""))[:10]
+
                 dia_fmt = _formatar_data_curta(dia_raw) if ("-" in dia_raw or "/" in dia_raw) else (dia_raw or "Data N/I")
+
                 chave_sessao = f"Sessão {num_s} — ({dia_fmt})"
+
                 
+
                 if chave_sessao not in sessoes_isoladas:
+
                     sessoes_isoladas[chave_sessao] = []
+
                 sessoes_isoladas[chave_sessao].append(p)
 
+
+
             # Desenha uma tabela interativa independente para cada sessão/data
+
             for idx_ses, (chave, processos) in enumerate(sessoes_isoladas.items()):
+
                 st.markdown(f"#### 📅 {chave}")
+
                 total = len(processos)
+
                 expedidos = sum(1 for p in processos if p.get("expedido", False))
+
                 revisados = sum(1 for p in processos if p.get("revisado", False))
 
+
+
                 col1, col2, col3, col4 = st.columns(4)
+
                 col1.metric("Total", total)
+
                 col2.metric("Pendentes", total - expedidos)
+
                 col3.metric("Expedidos", expedidos)
+
                 col4.metric("Revisados", revisados)
 
+
+
                 dados_df = []
+
                 for p in processos:
+
                     id_reg = p.get("id") or p.get("id_distribuicao") or p.get("id_processo")
+
                     dados_df.append({
+
                         "ID": id_reg,
+
                         "Processo Nº": p.get("processo_numero", ""),
+
                         "Relator": p.get("relator", "") or "-",
+
                         "Expedidor": p.get("expedidor", "") or "-",
+
                         "Expedido ✅": bool(p.get("expedido", False)),
+
                         "Revisor": p.get("revisor", "") or "-",
+
                         "Revisado ✅": bool(p.get("revisado", False)),
+
                         "Comentários": p.get("comentarios", "") or ""
+
                     })
+
+
 
                 df = pd.DataFrame(dados_df)
 
+
+
                 if modo_edicao:
+
                     df_editado = st.data_editor(
+
                         df,
+
                         column_config={
+
                             "ID": None,
+
                             "Processo Nº": st.column_config.TextColumn("Nº Processo", disabled=True),
+
                             "Relator": st.column_config.TextColumn("Relator", disabled=True),
+
                             "Expedidor": st.column_config.TextColumn("Expedidor", disabled=True),
+
                             "Expedido ✅": st.column_config.CheckboxColumn("Expedido?", default=False),
+
                             "Revisor": st.column_config.TextColumn("Revisor", disabled=True),
+
                             "Revisado ✅": st.column_config.CheckboxColumn("Revisado?", default=False),
+
                             "Comentários": st.column_config.TextColumn("Observações", disabled=True)
+
                         },
+
                         hide_index=True, use_container_width=True, key=f"tbl_dist_{tipo}_{idx_tab}_{idx_ses}"
+
                     )
 
+
+
                     if not df.equals(df_editado):
+
                         for index, row in df_editado.iterrows():
+
                             if row["Expedido ✅"] != df.loc[index, "Expedido ✅"] or row["Revisado ✅"] != df.loc[index, "Revisado ✅"]:
+
                                 db_manager.atualizar("distribuicao_sexp", int(row["ID"]), {
+
                                     "expedido": bool(row["Expedido ✅"]),
+
                                     "revisado": bool(row["Revisado ✅"])
+
                                 })
+
                         st.success("🎉 Tabela atualizada no banco!")
+
                         st.rerun()
+
                 else:
+
                     st.dataframe(df.drop(columns=["ID"]), hide_index=True, use_container_width=True)
 
+
+
                 # BOTÃO DE FINALIZAR SESSÃO: Exclusivo para o Gerente / Criador!
+
                 if modo_edicao and is_gerente:
+
                     confirmar = st.checkbox(f"Estou ciente e desejo arquivar a {chave}", key=f"chk_{tipo}_{idx_tab}_{idx_ses}")
+
                     if st.button(f"🔒 Finalizar Sessão ({chave})", key=f"btn_fim_{tipo}_{idx_tab}_{idx_ses}", type="primary", disabled=not confirmar):
+
                         with st.spinner(f"Arquivando pauta {chave}..."):
+
                             for p in processos:
+
                                 id_fechar = p.get("id") or p.get("id_distribuicao") or p.get("id_processo")
+
                                 if id_fechar:
+
                                     db_manager.atualizar("distribuicao_sexp", id_fechar, {"sessao_finalizada": True, "status": "arquivado"})
+
                         st.success(f"✅ {chave} encerrada e arquivada!")
+
                         st.rerun()
+
                 st.markdown("---")
+
+
+
+            # Montando a Tabela Interativa
+
+            dados_df = []
+
+            for p in processos:
+
+                id_reg = p.get("id") or p.get("id_distribuicao") or p.get("id_processo")
+
+                dados_df.append({
+
+                    "ID": id_reg,
+
+                    "Processo Nº": p.get("processo_numero", ""),
+
+                    "Relator": p.get("relator", "") or "-",
+
+                    "Expedidor": p.get("expedidor", "") or "-",
+
+                    "Expedido ✅": bool(p.get("expedido", False)),
+
+                    "Revisor": p.get("revisor", "") or "-",
+
+                    "Revisado ✅": bool(p.get("revisado", False)),
+
+                    "Comentários / Forma Despacho": p.get("comentarios", "") or p.get("forma_despacho", "") or ""
+
+                })
+
+
+
+            df = pd.DataFrame(dados_df)
+
+
+
+            # Se estiver em modo edição, usa tabela interativa onde os checkboxes alteram o banco!
+
+            if modo_edicao:
+
+                df_editado = st.data_editor(
+
+                    df,
+
+                    column_config={
+
+                        "ID": None, # Ocultada
+
+                        "Processo Nº": st.column_config.TextColumn("Nº Processo", disabled=True),
+
+                        "Relator": st.column_config.TextColumn("Relator", disabled=True),
+
+                        "Expedidor": st.column_config.TextColumn("Expedidor", disabled=True),
+
+                        "Expedido ✅": st.column_config.CheckboxColumn("Expedido?", default=False),
+
+                        "Revisor": st.column_config.TextColumn("Revisor", disabled=True),
+
+                        "Revisado ✅": st.column_config.CheckboxColumn("Revisado?", default=False),
+
+                        "Comentários / Forma Despacho": st.column_config.TextColumn("Observações", disabled=True)
+
+                    },
+
+                    hide_index=True,
+
+                    use_container_width=True,
+
+                    key=f"editor_tab_{tipo}_{idx}"
+
+                )
+
+
+
+                # Sincroniza alterações feitas direto nos checkboxes da tabela com o Supabase
+
+                if not df.equals(df_editado):
+
+                    for index, row in df_editado.iterrows():
+
+                        id_linha = row["ID"]
+
+                        exp_atual = row["Expedido ✅"]
+
+                        rev_atual = row["Revisado ✅"]
+
+                        exp_antigo = df.loc[index, "Expedido ✅"]
+
+                        rev_antigo = df.loc[index, "Revisado ✅"]
+
+
+
+                        if exp_atual != exp_antigo or rev_atual != rev_antigo:
+
+                            db_manager.atualizar("distribuicao_sexp", int(id_linha), {
+
+                                "expedido": bool(exp_atual),
+
+                                "revisado": bool(rev_atual)
+
+                            })
+
+                    st.success("🎉 Alteração gravada na tabela com sucesso!")
+
+                    st.rerun()
+
+            else:
+
+                st.dataframe(df.drop(columns=["ID"]), hide_index=True, use_container_width=True)
+
+
+
+            st.markdown("---")
+
+            
+
+            # Botão de Finalizar Sessão no rodapé
+
+            if modo_edicao:
+
+                faltam_fechar = total - revisados
+
+                if faltam_fechar == 0:
+
+                    st.success(f"🎉 **Todos os {total} processos de {tipo} foram expedidos e revisados!**")
+
+                else:
+
+                    st.warning(f"⚠️ **Atenção:** Ainda restam **{faltam_fechar}** processo(s) pendentes de revisão final nesta sessão.")
+
+
+
+                confirmar = st.checkbox(
+
+                    f"Estou ciente das pendências e desejo encerrar a esteira operatória da {tipo}.", 
+
+                    key=f"chk_encerrar_{tipo}_{idx}"
+
+                )
+
+
+
+                if st.button(f"🔒 Finalizar Sessão ({tipo}) e Arquivar Pauta", key=f"btn_fim_sexp_{tipo}_{idx}", type="primary", disabled=not confirmar, use_container_width=True):
+
+                    with st.spinner("Arquivando pauta e liberando esteira..."):
+
+                        for p in processos:
+
+                            id_fechar = p.get("id") or p.get("id_distribuicao") or p.get("id_processo")
+
+                            if id_fechar:
+
+                                db_manager.atualizar("distribuicao_sexp", id_fechar, {"sessao_finalizada": True, "status": "arquivado"})
+
+                    st.success(f"✅ {tipo} encerrada com sucesso!")
+
+                    st.rerun()
 # ==================== URGENTES ====================
 
 def _renderizar_urgentes_sexp(usuario, modo_edicao):
