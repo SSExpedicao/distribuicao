@@ -73,11 +73,15 @@ MODULOS_SISTEMA = {
 # RBAC: PERMISSOES POR CARGO
 # ============================================================
 
+# ============================================================
+# RBAC: PERMISSOES POR CARGO / NIVEL DE ACESSO
+# ============================================================
+
 def obter_modulos_permitidos(cargo: str, setor: str) -> list:
     """Define quais modulos o usuario ve na barra lateral."""
-    if cargo in ("criador", "raiz", "secretaria"):
+    if cargo in ("criador", "raiz", "secretaria", "SUPER_ADMIN_CRIADOR", "ADMIN_GABINETE", "ESPECTADORA_GLOBAL"):
         return ["GAB", "SEAT", "SEXP", "SERCON", "SEMAND"]
-    elif cargo == "gerente":
+    elif cargo in ("gerente", "GESTOR_SETORIAL"):
         modulos = ["GAB"]
         if setor in MODULOS_SISTEMA and setor != "GAB":
             modulos.append(setor)
@@ -87,16 +91,14 @@ def obter_modulos_permitidos(cargo: str, setor: str) -> list:
 
 def obter_modo_edicao(cargo: str, modulo_key: str, setor_usuario: str) -> bool:
     """Determina se o usuario pode editar no modulo atual."""
-    if cargo == "criador":
+    if cargo in ("criador", "SUPER_ADMIN_CRIADOR"):
         return True
-    if cargo == "raiz":
+    if cargo in ("raiz", "secretaria", "ADMIN_GABINETE", "ESPECTADORA_GLOBAL"):
         return modulo_key == "GAB"
-    if cargo == "secretaria":
-        return modulo_key == "GAB"
-    if cargo == "gerente":
+    if cargo in ("gerente", "GESTOR_SETORIAL"):
         return modulo_key == "GAB" or modulo_key == setor_usuario
     return modulo_key == setor_usuario
-
+        
 # ============================================================
 # TELA DE LOGIN
 # ============================================================
@@ -145,25 +147,26 @@ def barra_lateral():
     Renderiza a barra lateral com info do usuario e navegacao.
     Cria um placeholder para o modulo inserir conteudo na sidebar.
     """
+   # Cabecalho da barra_lateral
     usuario = st.session_state.get("usuario", {})
     nome = usuario.get("nome", "Usuario")
-    cargo = usuario.get("cargo", "operacional")
+    # ALTERAÇÃO AQUI: Prioriza ler 'nivel_acesso' do banco, se não achar, lê 'cargo'
+    cargo = usuario.get("nivel_acesso", usuario.get("cargo", "operacional"))
     setor = usuario.get("setor", "SEAT")
     vinculo = usuario.get("vinculo", "servidor")
 
     cargo_exibicao = {
         "criador": "👑 Criador",
+        "SUPER_ADMIN_CRIADOR": "👑 Criador",
         "raiz": "🔴 Nivel Raiz",
+        "ADMIN_GABINETE": "🏛️ Gestão Gabinete",
         "secretaria": "🟠 Secretaria",
+        "ESPECTADORA_GLOBAL": "👁️ Espectadora Global",
         "gerente": "🟡 Chefe de Setor",
+        "GESTOR_SETORIAL": "🟡 Gerente Setorial",
         "operacional": "🟢 Operacional",
+        "OPERACIONAL": "🟢 Operacional",
     }.get(cargo, cargo)
-
-    vinculo_exibicao = {
-        "servidor": "Servidor",
-        "terceirizado": "Terceirizado",
-        "estagiario": "Estagiario",
-    }.get(vinculo, vinculo)
 
     # Cabecalho do usuario
     st.sidebar.markdown(f"### 👤 {nome}")
@@ -260,7 +263,8 @@ def renderizar_modulo(modulo_key: str, sidebar_placeholder=None):
 
     if hasattr(modulo, "renderizar"):
         usuario = st.session_state.get("usuario", {})
-        cargo = usuario.get("cargo", "operacional")
+        # ALTERAÇÃO AQUI: Prioriza ler 'nivel_acesso' para habilitar edição
+        cargo = usuario.get("nivel_acesso", usuario.get("cargo", "operacional"))
         setor = usuario.get("setor", "SEAT")
         modo_edicao = obter_modo_edicao(cargo, modulo_key, setor)
 
