@@ -198,14 +198,25 @@ def _gerar_cadeia_duplas(colaboradores):
 
 def _executar_distribuicao(tipo_sessao, colaboradores_selecionados):
     """
-    Executa a distribuição em cadeia com ataque triplo de gravação (ID, Processo, Conexão Direta)
-    e exibe o erro exato na interface caso o Supabase recuse a operação.
+    Executa a distribuição em cadeia com pareamento normalizado de sessões
+    e fallback blindado de gravação no banco de dados.
     """
     try:
         todos = db_manager.buscar_todos("distribuicao_sexp") or []
+        
+        # Puxa os urgentes para classificar os processos rigorosamente igual à interface
+        try:
+            urgentes_seat = db_manager.buscar_todos("processos_urgentes") or []
+            nums_urgentes = {
+                _normalizar_numero_processo(u.get("processo_numero", "")) for u in urgentes_seat
+            }
+        except Exception:
+            nums_urgentes = set()
+
+        # CORREÇÃO BINÁRIA: Usa _determinar_tabela_destino_sexp para enxergar os 38 processos!
         processos = [
             d for d in todos 
-            if d.get("tipo_sessao") == tipo_sessao 
+            if _determinar_tabela_destino_sexp(d, nums_urgentes) == tipo_sessao 
             and not d.get("distribuido", False) 
             and not d.get("removido_pauta", False)
         ]
@@ -232,6 +243,7 @@ def _executar_distribuicao(tipo_sessao, colaboradores_selecionados):
                 "expedidor": par[0],
                 "revisor": par[1],
                 "distribuido": True,
+                "tipo_sessao": tipo_sessao,  # Salva o nome padronizado no banco para sempre!
             }
 
             res = None
@@ -259,7 +271,6 @@ def _executar_distribuicao(tipo_sessao, colaboradores_selecionados):
             if res:
                 sucessos += 1
 
-        # Se nenhum processo foi gravado, exibe o diagnóstico real na tela para não ficarmos cegos
         if sucessos == 0 and erros_detalhados:
             with st.expander("🛠️ Diagnóstico do Erro no Supabase (Clique para ver detalhes)", expanded=True):
                 for erro in set(erros_detalhados):
