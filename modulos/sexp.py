@@ -373,8 +373,8 @@ def _renderizar_pauta_ativa_sexp(usuario, modo_edicao):
         with col3:
             st.metric("Distribuídos", len(distribuidos))
 
-        # Quadro de Seleção de Colaboradores (Liberado para o seu perfil!)
-        if is_gerente and modo_edicao and nao_distribuidos:
+
+        if modo_edicao and nao_distribuidos:
             elegiveis = _obter_colaboradores_por_cargo(tipo)
             nomes_elegiveis = [c.get("nome", "") for c in elegiveis]
 
