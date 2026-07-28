@@ -13,6 +13,18 @@ import importlib
 from datetime import datetime
 
 # ============================================================
+# VÍNCULOS VÁLIDOS — Usado no dropdown do GAB (cadastro)
+# e como referência para o monitor DODF/DOE
+# ============================================================
+VINCULOS_VALIDOS = [
+    "Efetivo",
+    "Cedido",
+    "Comissionado",
+    "Estagiário",
+    "Terceirizado"
+]
+
+# ============================================================
 # CONFIGURACAO DA PAGINA
 # ============================================================
 st.set_page_config(
@@ -172,8 +184,8 @@ def barra_lateral():
     st.sidebar.markdown(f"### 👤 {nome}")
     st.sidebar.markdown(f"**{cargo_exibicao}**")
     st.sidebar.markdown(f"Setor: **{setor}**")
-    if cargo == "operacional":
-        st.sidebar.markdown(f"Vinculo: **{vinculo_exibicao}**")
+    f cargo == "operacional":
+      st.sidebar.markdown(f"Vínculo: **{vinculo}**")
 
     # PLACEHOLDER: o modulo pode inserir conteudo aqui
     sidebar_placeholder = st.sidebar.container()
