@@ -37,6 +37,15 @@ def _normalizar_numero_processo(numero):
 
 # ==================== COLABORADORES ====================
 
+def _tem_permissao_gestao(usuario):
+    """Verifica se o usuário tem perfil de gestão (Chefia, Gabinete ou Criador)."""
+    nivel = usuario.get("nivel_acesso", "")
+    cargo = _normalizar_texto(usuario.get("cargo", ""))
+    return (
+        nivel in ("SUPER_ADMIN_CRIADOR", "ADMIN_GABINETE", "GESTOR_SETORIAL") or
+        cargo in ("gerente", "criador", "raiz")
+    )
+
 def _obter_colaboradores():
     try:
         return db_manager.buscar_todos(
@@ -69,13 +78,10 @@ def _obter_colaboradores_por_cargo(tipo_sessao):
 
 def _sincronizar_com_seat():
     """
-    Sincroniza processos finalizados da SEAT para a tabela da SEXP.
-    Lê de 'pauta_seat' (status 'encaminhado' ou sessao_finalizada == True)
-    e copia automaticamente para 'distribuicao_sexp'.
-    Retorna (qtd_novos_importados, total_em_distribuicao_sexp).
+    Sincroniza processos finalizados da SEAT para a tabela da SEXP,
+    padronizando os nomes dos tipos de sessão automaticamente.
     """
     try:
-        # 1. Buscar processos na SEAT prontos para expedição
         processos_seat = db_manager.buscar_todos("pauta_seat") or []
         prontos_seat = [
             p for p in processos_seat 
@@ -86,7 +92,11 @@ def _sincronizar_com_seat():
         if not prontos_seat:
             return 0, len(todos_sexp)
 
-        # 2. Mapear o que já existe na SEXP para não duplicar
+        urgentes_seat = db_manager.buscar_todos("processos_urgentes") or []
+        nums_urgentes = {
+            _normalizar_numero_processo(u.get("processo_numero", "")) for u in urgentes_seat
+        }
+
         nums_existentes = {
             _normalizar_numero_processo(d.get("processo_numero", "")) 
             for d in todos_sexp if d.get("processo_numero")
@@ -98,11 +108,13 @@ def _sincronizar_com_seat():
             if not num_norm or num_norm in nums_existentes:
                 continue
 
-            # 3. Inserir o processo na esteira da SEXP
+            # Converte "Ordinaria" para "Sessão Ordinária" ao salvar no SEXP
+            tipo_sexp = _determinar_tabela_destino_sexp(p, nums_urgentes)
+            
             novo_registro = {
                 "processo_numero": p.get("processo_numero", ""),
                 "relator": p.get("relator", ""),
-                "tipo_sessao": p.get("tipo_sessao", "Sessão Ordinária"),
+                "tipo_sessao": tipo_sexp,
                 "distribuido": False,
                 "expedido": False,
                 "revisado": False,
@@ -114,8 +126,7 @@ def _sincronizar_com_seat():
                 novos_inseridos += 1
                 nums_existentes.add(num_norm)
 
-        total_atualizado = len(todos_sexp) + novos_inseridos
-        return novos_inseridos, total_atualizado
+        return novos_inseridos, len(todos_sexp) + novos_inseridos
 
     except Exception as e:
         print(f"[ERRO SINCRONIZACAO SEXP] {e}")
@@ -301,9 +312,8 @@ def _renderizar_sidebar_sexp(usuario):
 # ==================== PAUTA ATIVA ====================
 
 def _renderizar_pauta_ativa_sexp(usuario, modo_edicao):
-    """Renderiza a aba de Pauta Ativa do SEXP."""
-    cargo = usuario.get("cargo", "operacional")
-    is_gerente = cargo in ("gerente", "criador", "raiz")
+    """Renderiza a aba de Pauta Ativa do SEXP com verificação robusta de RBAC e tipos."""
+    is_gerente = _tem_permissao_gestao(usuario)
 
     st.markdown("### 📋 Pauta Ativa — SEXP")
     st.caption(
@@ -312,12 +322,12 @@ def _renderizar_pauta_ativa_sexp(usuario, modo_edicao):
     )
 
     # Sincronizar com SEAT
-    novos, total_prontos = _sincronizar_com_seat()
+    novos, _ = _sincronizar_com_seat()
     if novos > 0:
-        st.success(f"✅ {novos} processo(s) importado(s) da SEAT!")
+        st.success(f"✅ {novos} novo(s) processo(s) importado(s) da SEAT!")
         st.markdown("---")
 
-    # Verificar se todos os processos da SEAT foram revisados
+    # Verificar situação da SEAT
     todos_revisados, encaminhados, total_seat = _verificar_todos_revisados_seat()
     if todos_revisados and total_seat > 0:
         st.success(
@@ -332,17 +342,25 @@ def _renderizar_pauta_ativa_sexp(usuario, modo_edicao):
 
     st.markdown("---")
 
-    # Listar processos por tipo de sessão
     try:
         todos_sexp = db_manager.buscar_todos("distribuicao_sexp") or []
+        urgentes_seat = db_manager.buscar_todos("processos_urgentes") or []
+        nums_urgentes = {
+            _normalizar_numero_processo(u.get("processo_numero", "")) for u in urgentes_seat
+        }
     except Exception:
         todos_sexp = []
+        nums_urgentes = set()
+
+    tem_algum_exibido = False
 
     for tipo in TIPOS_SESSAO_SEXP:
-        processos = [d for d in todos_sexp if d.get("tipo_sessao") == tipo]
+        # Usa o tradutor de tipos para encontrar os 48 processos que já estão no seu banco!
+        processos = [d for d in todos_sexp if _determinar_tabela_destino_sexp(d, nums_urgentes) == tipo]
         if not processos:
             continue
 
+        tem_algum_exibido = True
         nao_distribuidos = [d for d in processos if not d.get("distribuido", False)]
         distribuidos = [d for d in processos if d.get("distribuido", False)]
 
@@ -355,33 +373,35 @@ def _renderizar_pauta_ativa_sexp(usuario, modo_edicao):
         with col3:
             st.metric("Distribuídos", len(distribuidos))
 
-        # Seleção de colaboradores para distribuição
+        # Quadro de Seleção de Colaboradores (Liberado para o seu perfil!)
         if is_gerente and modo_edicao and nao_distribuidos:
             elegiveis = _obter_colaboradores_por_cargo(tipo)
             nomes_elegiveis = [c.get("nome", "") for c in elegiveis]
 
             if nomes_elegiveis:
-                with st.expander(f"⚙️ Distribuir {len(nao_distribuidos)} processo(s) de {tipo}"):
-                    st.markdown("**Selecione os colaboradores que participarão:**")
+                with st.expander(f"⚙️ Distribuir {len(nao_distribuidos)} processo(s) de {tipo}", expanded=True):
+                    st.markdown("**Selecione os colaboradores que participarão do rodízio em cadeias:**")
                     selecionados = st.multiselect(
-                        "Colaboradores",
+                        "Colaboradores Elegíveis",
                         options=nomes_elegiveis,
                         default=nomes_elegiveis,
                         key=f"multiselect_{tipo}"
                     )
 
-                    if st.button(f"📤 Distribuir {len(nao_distribuidos)} processo(s)", key=f"btn_dist_{tipo}", type="primary"):
+                    if st.button(f"📤 Distribuir {len(nao_distribuidos)} processo(s)", key=f"btn_dist_{tipo}", type="primary", use_container_width=True):
                         if len(selecionados) < 2:
-                            st.error("Selecione pelo menos 2 colaboradores para formar duplas.")
+                            st.error("Selecione pelo menos 2 colaboradores para formar a cadeia de duplas (A expede → B revisa).")
                         else:
                             qtd = _executar_distribuicao(tipo, selecionados)
                             if qtd > 0:
-                                st.success(f"✅ {qtd} processo(s) distribuído(s)!")
+                                st.success(f"✅ {qtd} processo(s) distribuído(s) em cadeia com sucesso!")
                                 st.rerun()
                             else:
-                                st.error("Erro ao distribuir processos.")
+                                st.error("Erro ao distribuir processos no banco de dados.")
+            else:
+                st.warning("Nenhum colaborador elegível ativo cadastrado para este tipo de sessão.")
 
-        # Listar processos
+        # Listagem dos Cards de Processos
         for p in processos:
             distribuido = p.get("distribuido", False)
             expedido = p.get("expedido", False)
@@ -421,9 +441,9 @@ def _renderizar_pauta_ativa_sexp(usuario, modo_edicao):
 
         st.markdown("---")
 
-    if not todos_sexp:
-        st.info("Nenhum processo importado da SEAT ainda. Aguarde a revisão na SEAT.")
-
+    if not todos_sexp or not tem_algum_exibido:
+        st.info("Nenhum processo importado da SEAT ainda. Aguarde a finalização da sessão na SEAT.")
+        
 # ==================== DISTRIBUIÇÃO ====================
 
 def _renderizar_card_processo_sexp(p, modo_edicao, usuario):
