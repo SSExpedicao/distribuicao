@@ -197,7 +197,10 @@ def _gerar_cadeia_duplas(colaboradores):
     return duplas
 
 def _executar_distribuicao(tipo_sessao, colaboradores_selecionados):
-    """Executa a distribuição em cadeia garantindo a gravação no banco de dados com fallback."""
+    """
+    Executa a distribuição em cadeia com ataque triplo de gravação (ID, Processo, Conexão Direta)
+    e exibe o erro exato na interface caso o Supabase recuse a operação.
+    """
     try:
         todos = db_manager.buscar_todos("distribuicao_sexp") or []
         processos = [
@@ -207,7 +210,12 @@ def _executar_distribuicao(tipo_sessao, colaboradores_selecionados):
             and not d.get("removido_pauta", False)
         ]
 
-        if not processos or not colaboradores_selecionados or len(colaboradores_selecionados) < 2:
+        if not processos:
+            st.warning("Nenhum processo pendente encontrado para este tipo de sessão.")
+            return 0
+
+        if not colaboradores_selecionados or len(colaboradores_selecionados) < 2:
+            st.error("Selecione pelo menos 2 colaboradores para formar a cadeia de duplas.")
             return 0
 
         duplas = _gerar_cadeia_duplas([{"nome": n} for n in colaboradores_selecionados])
@@ -215,6 +223,7 @@ def _executar_distribuicao(tipo_sessao, colaboradores_selecionados):
             return 0
 
         sucessos = 0
+        erros_detalhados = []
         cliente = db_manager.get_supabase()
 
         for i, p in enumerate(processos):
@@ -225,27 +234,41 @@ def _executar_distribuicao(tipo_sessao, colaboradores_selecionados):
                 "distribuido": True,
             }
 
-            # 1ª Tentativa: Atualizar pelo ID padrão usando db_manager
-            id_reg = p.get("id") or p.get("id_distribuicao") or p.get("id_processo")
             res = None
+            id_reg = p.get("id") or p.get("id_distribuicao") or p.get("id_processo")
+
+            # 1ª Tentativa: Via db_manager usando o ID
             if id_reg:
-                res = db_manager.atualizar("distribuicao_sexp", id_reg, dados_update)
-
-            # 2ª Tentativa (Fallback Blindado): Se falhou pelo ID, atualiza direto pelo número do processo
-            if res is None and cliente and p.get("processo_numero"):
                 try:
-                    resp = cliente.table("distribuicao_sexp").update(dados_update).eq("processo_numero", p["processo_numero"]).execute()
-                    if resp.data:
-                        res = resp.data[0]
-                except Exception as err:
-                    print(f"[FALLBACK UPDATE ERRO] {err}")
+                    res = db_manager.atualizar("distribuicao_sexp", id_reg, dados_update)
+                except Exception as err_mgr:
+                    erros_detalhados.append(f"Erro ID {id_reg}: {str(err_mgr)}")
 
-            if res is not None:
+            # 2ª Tentativa (Ataque Direto Supabase): Se db_manager falhou ou retornou vazio
+            if not res and cliente and p.get("processo_numero"):
+                try:
+                    num_proc = p["processo_numero"]
+                    resp = cliente.table("distribuicao_sexp").update(dados_update).eq("processo_numero", num_proc).execute()
+                    if resp.data and len(resp.data) > 0:
+                        res = resp.data[0]
+                    else:
+                        erros_detalhados.append(f"Proc {num_proc}: Supabase não encontrou a linha ou RLS bloqueou.")
+                except Exception as err_api:
+                    erros_detalhados.append(f"API Supabase Proc {p.get('processo_numero')}: {str(err_api)}")
+
+            if res:
                 sucessos += 1
 
+        # Se nenhum processo foi gravado, exibe o diagnóstico real na tela para não ficarmos cegos
+        if sucessos == 0 and erros_detalhados:
+            with st.expander("🛠️ Diagnóstico do Erro no Supabase (Clique para ver detalhes)", expanded=True):
+                for erro in set(erros_detalhados):
+                    st.error(erro)
+
         return sucessos
+
     except Exception as e:
-        print(f"[ERRO GRAVE DISTRIBUICAO] {e}")
+        st.error(f"Erro crítico no algoritmo de distribuição: {str(e)}")
         return 0
 
 # ==================== SIDEBAR ====================
