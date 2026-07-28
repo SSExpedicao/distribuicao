@@ -133,12 +133,7 @@ def tela_login():
                     return False
 
         st.markdown("---")
-        st.caption("**Credenciais de teste:**")
-        st.caption("Criador: mat. `1918` / senha `tcdf.ss2025`")
-        st.caption("Raiz: mat. `1001` / senha `tcdf.ss2025`")
-        st.caption("Secretaria: mat. `2001` / senha `tcdf.ss2025`")
-        st.caption("Gerente SEAT: mat. `3001` / senha `tcdf.ss2025`")
-        st.caption("Operacional SEAT: mat. `4001` / senha `tcdf.ss2025`")
+       
 
     return False
 
