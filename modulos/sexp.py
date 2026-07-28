@@ -69,18 +69,58 @@ def _obter_colaboradores_por_cargo(tipo_sessao):
 
 def _sincronizar_com_seat():
     """
-    Conta processos do SEAT com status 'encaminhado'.
-    Não insere em lugar nenhum — o SEXP lê diretamente da pauta_seat.
-    Retorna (total_encaminhados, total_encaminhados).
+    Sincroniza processos finalizados da SEAT para a tabela da SEXP.
+    Lê de 'pauta_seat' (status 'encaminhado' ou sessao_finalizada == True)
+    e copia automaticamente para 'distribuicao_sexp'.
+    Retorna (qtd_novos_importados, total_em_distribuicao_sexp).
     """
     try:
+        # 1. Buscar processos na SEAT prontos para expedição
         processos_seat = db_manager.buscar_todos("pauta_seat") or []
-        encaminhados = [p for p in processos_seat if p.get("status") == "encaminhado"]
-        total = len(encaminhados)
-        return total, total
-    except Exception:
-        return 0, 0
+        prontos_seat = [
+            p for p in processos_seat 
+            if p.get("status") == "encaminhado" or p.get("sessao_finalizada") is True
+        ]
+        
+        todos_sexp = db_manager.buscar_todos("distribuicao_sexp") or []
+        if not prontos_seat:
+            return 0, len(todos_sexp)
 
+        # 2. Mapear o que já existe na SEXP para não duplicar
+        nums_existentes = {
+            _normalizar_numero_processo(d.get("processo_numero", "")) 
+            for d in todos_sexp if d.get("processo_numero")
+        }
+
+        novos_inseridos = 0
+        for p in prontos_seat:
+            num_norm = _normalizar_numero_processo(p.get("processo_numero", ""))
+            if not num_norm or num_norm in nums_existentes:
+                continue
+
+            # 3. Inserir o processo na esteira da SEXP
+            novo_registro = {
+                "processo_numero": p.get("processo_numero", ""),
+                "relator": p.get("relator", ""),
+                "tipo_sessao": p.get("tipo_sessao", "Sessão Ordinária"),
+                "distribuido": False,
+                "expedido": False,
+                "revisado": False,
+                "comentarios": p.get("comentarios", "") or "",
+            }
+            
+            res = db_manager.inserir("distribuicao_sexp", novo_registro)
+            if res:
+                novos_inseridos += 1
+                nums_existentes.add(num_norm)
+
+        total_atualizado = len(todos_sexp) + novos_inseridos
+        return novos_inseridos, total_atualizado
+
+    except Exception as e:
+        print(f"[ERRO SINCRONIZACAO SEXP] {e}")
+        return 0, 0
+        
 def _verificar_todos_revisados_seat():
     """Verifica se todos os processos da SEAT já foram revisados (encaminhados)."""
     try:
@@ -521,7 +561,7 @@ def _renderizar_card_processo_sexp(p, modo_edicao, usuario):
                             st.rerun()
 
 def _renderizar_distribuicao_sexp(usuario, modo_edicao):
-    """Renderiza a aba de Distribuição com as tabelas por sessão."""
+    """Renderiza a aba de Distribuição com as tabelas por sessão na SEXP."""
     cargo = usuario.get("cargo", "operacional")
     nome = usuario.get("nome", "")
     st.markdown("### 📤 Distribuição")
@@ -529,19 +569,18 @@ def _renderizar_distribuicao_sexp(usuario, modo_edicao):
 
     try:
         todos = db_manager.buscar_todos(
-            "pauta_seat",
-            filtros={"status": "encaminhado"},
-            ordem_coluna="created_at",
+            "distribuicao_sexp",
+            ordem_coluna="id",
             ordem_desc=True,
         ) or []
     except Exception:
         todos = []
 
     # Filtrar apenas os que já foram distribuídos no SEXP
-    distribuidos = [d for d in todos if d.get("distribuido_sexp", False)]
+    distribuidos = [d for d in todos if d.get("distribuido", False)]
 
     if not distribuidos:
-        st.info("Nenhum processo distribuído ainda. Vá na aba 'Pauta Ativa' para distribuir.")
+        st.info("Nenhum processo distribuído ainda. Vá na aba 'Pauta Ativa' para selecionar a equipe e distribuir.")
         return
 
     # Determinar tabela de destino de cada processo
@@ -553,16 +592,11 @@ def _renderizar_distribuicao_sexp(usuario, modo_edicao):
     except Exception:
         nums_urgentes = set()
 
-    # Sub-tabs para cada tipo de sessão (exceto Urgentes que tem sua própria aba)
     tipos_com_processos = []
     for tipo in TIPOS_SESSAO_SEXP:
         if tipo == "Urgentes":
             continue
-        qtd = 0
-        for d in distribuidos:
-            tabela = _determinar_tabela_destino_sexp(d, nums_urgentes)
-            if tabela == tipo:
-                qtd += 1
+        qtd = sum(1 for d in distribuidos if _determinar_tabela_destino_sexp(d, nums_urgentes) == tipo)
         if qtd > 0:
             tipos_com_processos.append(tipo)
 
@@ -580,16 +614,12 @@ def _renderizar_distribuicao_sexp(usuario, modo_edicao):
             elif "administrativa" in _normalizar_texto(tipo):
                 st.caption("👤 Apenas gerentes participam desta sessão.")
 
-            processos = []
-            for d in distribuidos:
-                tabela = _determinar_tabela_destino_sexp(d, nums_urgentes)
-                if tabela == tipo:
-                    processos.append(d)
+            processos = [d for d in distribuidos if _determinar_tabela_destino_sexp(d, nums_urgentes) == tipo]
 
             if cargo == "operacional":
                 processos = [
                     d for d in processos
-                    if d.get("expedidor_sexp") == nome or d.get("revisor_sexp") == nome
+                    if d.get("expedidor") == nome or d.get("revisor") == nome
                 ]
 
             if not processos:
@@ -597,8 +627,8 @@ def _renderizar_distribuicao_sexp(usuario, modo_edicao):
                 return
 
             total = len(processos)
-            expedidos = len([p for p in processos if p.get("expedido_sexp")])
-            revisados = len([p for p in processos if p.get("revisado_sexp")])
+            expedidos = len([p for p in processos if p.get("expedido", False)])
+            revisados = len([p for p in processos if p.get("revisado", False)])
             pendentes = total - expedidos
 
             col1, col2, col3, col4 = st.columns(4)
