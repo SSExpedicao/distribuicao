@@ -501,12 +501,13 @@ def _renderizar_pauta_ativa_sexp(usuario, modo_edicao):
     if not todos_sexp or not tem_algum_exibido:
         st.info("Nenhum processo aguardando distribuição na pauta.")
 
-        # Listagem dos Cards de Processos
+                st.markdown("---")
+        
+        # Listagem dos Cards de Processos (DENTRO do loop por tipo)
         for p in processos:
             distribuido = p.get("distribuido", False)
             expedido = p.get("expedido", False)
             revisado = p.get("revisado", False)
-
             if revisado:
                 icone = "✅"
             elif expedido:
@@ -515,7 +516,6 @@ def _renderizar_pauta_ativa_sexp(usuario, modo_edicao):
                 icone = "📋"
             else:
                 icone = "⏳"
-
             with st.expander(
                 f"{icone} {p.get('processo_numero', '')} | "
                 f"Relator: {p.get('relator', '-') or '-'} | "
@@ -531,7 +531,6 @@ def _renderizar_pauta_ativa_sexp(usuario, modo_edicao):
                 with col3:
                     st.write(f"**Expedido:** {'Sim ✅' if expedido else 'Não ⏳'}")
                     st.write(f"**Revisado:** {'Sim ✅' if revisado else 'Não ⏳'}")
-
                 comentarios = p.get("comentarios", "") or ""
                 if comentarios:
                     st.write(f"**Comentários:**")
@@ -539,7 +538,10 @@ def _renderizar_pauta_ativa_sexp(usuario, modo_edicao):
                 else:
                     st.write("**Comentários:** Nenhum")
 
-        st.markdown("---")
+    # Mensagem fora do loop — apenas se NÃO há nada para mostrar
+    if not todos_sexp or not tem_algum_exibido:
+        st.info("Nenhum processo aguardando distribuição na pauta. Aguarde a finalização da sessão na SEAT.")
+        return
 
     if not todos_sexp or not tem_algum_exibido:
         st.info("Nenhum processo importado da SEAT ainda. Aguarde a finalização da sessão na SEAT.")
