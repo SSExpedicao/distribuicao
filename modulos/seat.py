@@ -192,9 +192,25 @@ def _formatar_data_curta(data_iso: str) -> str:
 # ============================================================
 
 def _obter_equipe_seat() -> list:
-    """Retorna lista com os Nomes de Guerra dos membros ativos da equipe SEAT."""
-    membros = db_manager.listar_equipe(setor="SEAT", apenas_ativos=True)
-    return [m.get("nome_guerra") or m.get("nome", "") for m in membros if m.get("nome_guerra") or m.get("nome")]
+    """
+    Retorna lista com os Nomes de Guerra de TODOS os membros da SEAT (incluindo Gerentes),
+    lendo diretamente da Fonte Única da Verdade (usuarios_acesso).
+    """
+    try:
+        todos = db_manager.buscar_todos("usuarios_acesso", filtros={"ativo": True}) or []
+        membros_seat = [u for u in todos if _normalizar_texto(u.get("setor", "")) == "seat"]
+        
+        nomes = []
+        for m in membros_seat:
+            ng = m.get("nome_guerra")
+            if ng and str(ng).strip():
+                nomes.append(str(ng).strip())
+            elif m.get("nome"):
+                nomes.append(str(m["nome"]).strip().split()[0])
+                
+        return sorted(list(set(nomes)))
+    except Exception:
+        return []
 
 def _obter_afastados() -> list:
     """Retorna lista de nomes de membros atualmente afastados."""
