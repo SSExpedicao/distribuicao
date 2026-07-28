@@ -391,34 +391,43 @@ def semear_usuarios_iniciais() -> bool:
 # OPERACOES ESPECIFICAS: EQUIPE
 # ============================================================
 
+# ============================================================
+# OPERACOES ESPECIFICAS: EQUIPE (FONTE ÚNICA: usuarios_acesso)
+# ============================================================
+
 def listar_equipe(setor: Optional[str] = None, apenas_ativos: bool = True) -> List[Dict[str, Any]]:
-    """Lista membros da equipe, opcionalmente filtrados por setor."""
+    """Lista membros da equipe lendo da Fonte Única da Verdade (usuarios_acesso)."""
     filtros = {}
     if setor:
         filtros["setor"] = setor
     if apenas_ativos:
         filtros["ativo"] = True
 
-    return buscar_todos("equipe", filtros=filtros, ordem_coluna="nome")
+    # Lê de usuarios_acesso e prioriza ordenação pelo nome de guerra
+    return buscar_todos("usuarios_acesso", filtros=filtros, ordem_coluna="nome_guerra")
 
-def adicionar_membro_equipe(nome: str, cargo: str, setor: str, funcao: str) -> Optional[Dict[str, Any]]:
-    """Adiciona um novo membro a equipe."""
-    return inserir("equipe", {
+def adicionar_membro_equipe(nome: str, cargo: str, setor: str, vinculo: str = "servidor", nome_guerra: str = "") -> Optional[Dict[str, Any]]:
+    """Adiciona um novo colaborador diretamente em usuarios_acesso."""
+    matricula_gerada = f"E{random.randint(10000, 99999)}"
+    return inserir("usuarios_acesso", {
+        "matricula": matricula_gerada,
         "nome": nome,
+        "nome_guerra": nome_guerra or nome.split()[0],
+        "senha": "tcdf.2026",
         "cargo": cargo,
         "setor": setor,
-        "funcao": funcao,
+        "vinculo": vinculo,
         "ativo": True,
     })
 
 def atualizar_membro_equipe(id_membro: int, dados: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Atualiza dados de um membro da equipe."""
-    return atualizar("equipe", id_membro, dados)
+    """Atualiza dados de um colaborador na tabela de acesso."""
+    return atualizar("usuarios_acesso", id_membro, dados)
 
 def remover_membro_equipe(id_membro: int) -> bool:
-    """Inativa um membro da equipe (soft delete)."""
-    return atualizar("equipe", id_membro, {"ativo": False}) is not None
-
+    """Inativa um colaborador no sistema (soft delete)."""
+    return atualizar("usuarios_acesso", id_membro, {"ativo": False}) is not None
+        
 # ============================================================
 # OPERACOES ESPECIFICAS: AFASTAMENTOS
 # ============================================================
