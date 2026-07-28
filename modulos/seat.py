@@ -3204,31 +3204,23 @@ def _verificar_radar_choques(data_ini, data_fim, id_ignorar=None):
     return choques
 
 def _renderizar_ausencias_seat(modo_edicao: bool, usuario: dict):
-    """Renderiza a aba de Férias e Afastamentos da SEAT."""
+    """Renderiza a aba de Férias e Afastamentos da SEAT (Apenas Operacional)."""
     from datetime import date
     import pandas as pd
 
     st.markdown("### 🌴 Férias e Afastamentos Médicos")
     st.caption(
-        "Solicitação de férias com análise de gestão e registro imediato de atestados médicos. "
-        "Pedidos aprovados e atestados são exibidos no quadro público do setor."
+        "Solicitação de férias e registro imediato de atestados médicos. "
+        "A análise e aprovação dos pedidos são realizadas pela chefia no Módulo Gabinete."
     )
 
     # Identificação automática pelo login
     nome_usuario = usuario.get("nome", "Colaborador")
     matricula_usuario = str(usuario.get("matricula", ""))
-    cargo_usuario = usuario.get("cargo", "operacional")
-    nivel_acesso = usuario.get("nivel_acesso", "OPERACIONAL")
 
-    is_gestor = (
-        nivel_acesso in ("SUPER_ADMIN_CRIADOR", "ADMIN_GABINETE", "GESTOR_SETORIAL") or
-        cargo_usuario in ("criador", "raiz", "gerente")
-    )
-
-    tab_solicitar, tab_quadro, tab_gestao = st.tabs([
+    tab_solicitar, tab_quadro = st.tabs([
         "➕ Nova Solicitação",
         "📅 Quadro Público de Ausências",
-        "🛡️ Painel de Gestão (Chefia)" if is_gestor else "🔒 Painel de Gestão",
     ])
 
     # --- ABA 1: NOVA SOLICITAÇÃO ---
@@ -3260,7 +3252,7 @@ def _renderizar_ausencias_seat(modo_edicao: bool, usuario: dict):
                     dias_total = (data_fim - data_ini).days + 1
                     tipo_db = "FERIAS" if tipo_registro == "Férias" else "ATESTADO"
                     
-                    # Férias vão para análise; Atestado tem bypass (NOTIFICADO)
+                    # Férias vão para análise do Gabinete; Atestado tem bypass (NOTIFICADO)
                     status_inicial = "PENDENTE" if tipo_db == "FERIAS" else "NOTIFICADO"
 
                     dados_ausencia = {
@@ -3278,7 +3270,7 @@ def _renderizar_ausencias_seat(modo_edicao: bool, usuario: dict):
                     res = db_manager.inserir("solicitacoes_ausencia", dados_ausencia)
                     if res:
                         if tipo_db == "FERIAS":
-                            st.success(f"✅ Solicitação de férias ({dias_total} dias) enviada para análise da chefia.")
+                            st.success(f"✅ Solicitação de férias ({dias_total} dias) enviada para análise da chefia no Gabinete.")
                         else:
                             st.success(f"✅ Atestado médico ({dias_total} dias) notificado com sucesso e publicado no quadro!")
                         st.rerun()
@@ -3300,7 +3292,7 @@ def _renderizar_ausencias_seat(modo_edicao: bool, usuario: dict):
         except Exception:
             todas_ausencias = []
 
-        # Exibe apenas aprovados e atestados no quadro geral
+        # Exibe apenas aprovados e atestados no quadro geral do setor
         publicas = [a for a in todas_ausencias if a.get("status") in ("APROVADA", "NOTIFICADO")]
 
         if not publicas:
@@ -3320,71 +3312,6 @@ def _renderizar_ausencias_seat(modo_edicao: bool, usuario: dict):
                 })
             df_quadro = pd.DataFrame(dados_quadro)
             st.dataframe(df_quadro, hide_index=True, use_container_width=True)
-
-    # --- ABA 3: GESTÃO E RADAR DE CHOQUES ---
-    with tab_gestao:
-        if not is_gestor:
-            st.warning("Acesso restrito. Apenas gestores setoriais, Gabinete e Criador podem analisar solicitações.")
-            return
-
-        st.markdown("#### 🛡️ Análise de Solicitações — Radar de Choques")
-        st.caption("O sistema monitora sobreposições de datas em tempo real para evitar desfalques operacionais no setor.")
-
-        try:
-            pendentes = [a for a in todas_ausencias if a.get("status") == "PENDENTE"]
-        except Exception:
-            pendentes = []
-
-        if not pendentes:
-            st.info("Não há solicitações de férias pendentes de análise na SEAT.")
-        else:
-            for p in pendentes:
-                id_solic = p.get("id")
-                nome_solic = p.get("colaborador_nome", "")
-                ini_solic = date.fromisoformat(str(p.get("data_inicio"))[:10])
-                fim_solic = date.fromisoformat(str(p.get("data_fim"))[:10])
-                dias_solic = p.get("dias_afastado", 0)
-
-                with st.expander(
-                    f"🟡 PENDENTE: {nome_solic} | Período: {ini_solic.strftime('%d/%m/%Y')} a {fim_solic.strftime('%d/%m/%Y')} ({dias_solic} dias)",
-                    expanded=True
-                ):
-                    st.write(f"**Matrícula:** `{p.get('matricula', '')}` | **Setor:** `{p.get('setor', '')}`")
-                    if p.get("observacoes"):
-                        st.write(f"**Observação do colaborador:** {p.get('observacoes')}")
-
-                    # RADAR DE CHOQUES EM TEMPO REAL
-                    choques = _verificar_radar_choques(ini_solic, fim_solic, id_ignorar=id_solic)
-
-                    st.markdown("---")
-                    if not choques:
-                        st.success("🟢 **Radar de Choques:** Nenhum conflito de datas. Equipe completa no período.")
-                    else:
-                        st.warning(
-                            f"🟡 **Radar de Choques — Atenção:** Há **{len(choques)}** colaborador(es) com ausência prevista no mesmo período!"
-                        )
-                        for ch in choques:
-                            st.write(
-                                f"• **{ch['colaborador']}** ({ch['tipo']}): "
-                                f"ausente de {ch['inicio']} a {ch['fim']}."
-                            )
-                        if len(choques) >= 2:
-                            st.error(
-                                f"🔴 **Alerta Crítico de Desfalque:** A aprovação desta solicitação deixará o setor SEAT "
-                                f"com **{len(choques) + 1} membros a menos** simultaneamente no período."
-                            )
-
-                    col_b1, col_b2 = st.columns(2)
-                    with col_b1:
-                        if st.button("✅ Aprovar Férias", key=f"aprov_{id_solic}", type="primary", use_container_width=True):
-                            db_manager.atualizar("solicitacoes_ausencia", id_solic, {"status": "APROVADA"})
-                            st.success(f"Férias de {nome_solic} aprovadas!")
-                            st.rerun()
-                    with col_b2:
-                        if st.button("❌ Rejeitar", key=f"rej_{id_solic}", use_container_width=True):
-                            db_manager.atualizar("solicitacoes_ausencia", id_solic, {"status": "REJEITADA"})
-                            st.warning("Solicitação rejeitada.")
-                            st.rerun()
 
 # ============================================================
 # FUNCAO PRINCIPAL
