@@ -795,8 +795,8 @@ def _renderizar_distribuicao_sexp(usuario, modo_edicao):
 
                 # BOTÃO DE FINALIZAR SESSÃO: Exclusivo para o Gerente / Criador!
                 if modo_edicao and is_gerente:
-                    confirmar = st.checkbox(f"Estou ciente e desejo arquivar a {chave}", key=f"chk_{tipo}_{idx_ses}")
-                    if st.button(f"🔒 Finalizar Sessão ({chave})", key=f"btn_fim_{tipo}_{idx_ses}", type="primary", disabled=not confirmar):
+                    confirmar = st.checkbox(f"Estou ciente e desejo arquivar a {chave}", key=f"chk_{tipo}_{idx_tab}_{idx_ses}")
+                    if st.button(f"🔒 Finalizar Sessão ({chave})", key=f"btn_fim_{tipo}_{idx_tab}_{idx_ses}", type="primary", disabled=not confirmar):
                         with st.spinner(f"Arquivando pauta {chave}..."):
                             for p in processos:
                                 id_fechar = p.get("id") or p.get("id_distribuicao") or p.get("id_processo")
