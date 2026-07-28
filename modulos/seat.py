@@ -3101,18 +3101,15 @@ def _renderizar_sidebar_doe(usuario):
                 )
 
 def _renderizar_escala_doe(modo_edicao, usuario):
-    """Renderiza a aba de Escala DOE."""
+    """Renderiza a aba de Escala DOE em modo visualização limpa."""
     from datetime import date, timedelta
     import pandas as pd
 
     st.markdown("### 📰 Escala DOE — Diário Oficial do Tribunal")
     st.caption(
-        "Sistema de rodízio de duplas para a publicação do DOE. "
-        "As duplas são definidas pelos gerentes e o sistema cria a escala automaticamente."
+        "Visualização do rodízio de duplas para a publicação do DOE. "
+        "A gestão de duplas, regras de rodízio e atribuição de substitutos são administradas pelo Gabinete."
     )
-
-    cargo = usuario.get("cargo", "operacional")
-    is_gerente = cargo in ("criador", "raiz", "gerente")
 
     # === Seção 1: Semana atual ===
     st.markdown("---")
@@ -3122,7 +3119,7 @@ def _renderizar_escala_doe(modo_edicao, usuario):
     segunda, sexta = _obter_semana_atual()
 
     if not duplas:
-        st.info("Nenhuma dupla cadastrada. Os gerentes podem cadastrar duplas abaixo.")
+        st.info("Nenhuma dupla ativa no momento. A escala será disponibilizada após configuração pelo Gabinete.")
     else:
         dupla_atual = _obter_dupla_semana(segunda, duplas)
         if dupla_atual:
@@ -3130,27 +3127,25 @@ def _renderizar_escala_doe(modo_edicao, usuario):
             with col1:
                 st.metric("Período", f"{segunda.strftime('%d/%m/%Y')} a {sexta.strftime('%d/%m/%Y')}")
             with col2:
-                st.metric("Dupla", dupla_atual.get("nome_dupla", "N/I"))
+                st.metric("Dupla Escalada", dupla_atual.get("nome_dupla", "N/I"))
             with col3:
-                st.metric("Membros", f"{dupla_atual.get('membro1', '')} / {dupla_atual.get('membro2', '')}")
+                st.metric("Membros Titulares", f"{dupla_atual.get('membro1', '')} / {dupla_atual.get('membro2', '')}")
 
-            # Verificar férias
+            # Verificar ausências (férias aprovadas ou atestados) na semana atual
             conflitos = _verificar_conflitos_ferias()
             conflitos_semana = [c for c in conflitos if c["semana_inicio"] == segunda]
             for c in conflitos_semana:
                 if c.get("substituto"):
                     st.info(
-                        f"ℹ️ **{c['colaborador']}** está de férias. "
-                        f"Substituto: **{c['substituto']}**."
+                        f"🔄 **Substituição Ativa:** {c['colaborador']} está ausente no período. "
+                        f"Substituto em atuação: **{c['substituto']}**."
                     )
                 else:
                     st.warning(
-                        f"⚠️ **{c['colaborador']}** está de férias de "
+                        f"⚠️ **Alerta Operacional:** {c['colaborador']} está ausente de "
                         f"{c['ferias_inicio'].strftime('%d/%m/%Y')} a {c['ferias_fim'].strftime('%d/%m/%Y')}. "
-                        f"**Sem substituto designado!**"
+                        f"**Aguardando designação de substituto pelo Gabinete.**"
                     )
-                    if is_gerente:
-                        st.info("👆 Designe um substituto na aba 'Férias' abaixo.")
         else:
             st.warning("Não foi possível determinar a dupla da semana atual.")
 
@@ -3172,220 +3167,224 @@ def _renderizar_escala_doe(modo_edicao, usuario):
         df_cal = pd.DataFrame(dados_cal)
         st.dataframe(df_cal, hide_index=True, use_container_width=True)
 
-    # === Seção 3: Gerenciamento (apenas gerentes) ===
-    if is_gerente and modo_edicao:
-        st.markdown("---")
-        st.markdown("#### ⚙️ Gerenciamento")
-        st.caption("Apenas gerentes e criadores podem gerenciar duplas e férias.")
+# ============================================================
+# SUBMÓDULO: FÉRIAS E AFASTAMENTOS (SEAT)
+# ============================================================
 
-        tab_duplas, tab_ferias, tab_config = st.tabs(["Duplas", "Férias", "Configuração"])
+def _verificar_radar_choques(data_ini, data_fim, id_ignorar=None):
+    """
+    Radar de Choques: verifica se há outros colaboradores da SEAT ausentes no mesmo período.
+    Retorna lista de colisões encontradas.
+    """
+    from datetime import date
+    try:
+        solicitacoes = db_manager.buscar_todos("solicitacoes_ausencia") or []
+    except Exception:
+        return []
 
-        with tab_duplas:
-            _gerenciar_duplas_doe(usuario)
+    choques = []
+    for s in solicitacoes:
+        if id_ignorar and str(s.get("id")) == str(id_ignorar):
+            continue
+        # Considera apenas pedidos aprovados ou atestados notificados
+        if s.get("status") not in ("APROVADA", "NOTIFICADO"):
+            continue
 
-        with tab_ferias:
-            _gerenciar_ferias_doe(usuario)
+        s_ini = date.fromisoformat(str(s.get("data_inicio"))[:10])
+        s_fim = date.fromisoformat(str(s.get("data_fim"))[:10])
 
-        with tab_config:
-            _gerenciar_config_doe()
-    elif not is_gerente:
-        st.markdown("---")
-        st.info("Apenas gerentes e criadores podem gerenciar duplas e férias.")
+        # Verifica intersecção de datas
+        if data_ini <= s_fim and data_fim >= s_ini:
+            choques.append({
+                "colaborador": s.get("colaborador_nome", "Colaborador"),
+                "tipo": s.get("tipo", "AUSENCIA"),
+                "inicio": s_ini.strftime("%d/%m/%Y"),
+                "fim": s_fim.strftime("%d/%m/%Y"),
+            })
+    return choques
 
-def _gerenciar_duplas_doe(usuario):
-    """Gerenciamento de duplas DOE (apenas gerentes)."""
-    st.markdown("##### Duplas Cadastradas")
-    duplas = _obter_duplas_doe()
+def _renderizar_ausencias_seat(modo_edicao: bool, usuario: dict):
+    """Renderiza a aba de Férias e Afastamentos da SEAT."""
+    from datetime import date
+    import pandas as pd
 
-    if duplas:
-        for d in duplas:
-            with st.expander(
-                f"#{d.get('ordem', 0)} — {d.get('nome_dupla', '')} | "
-                f"{d.get('membro1', '')} + {d.get('membro2', '')}"
-            ):
-                with st.form(f"form_edit_dupla_{d['id']}"):
-                    st.markdown("**Editar Dupla**")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        edit_nome = st.text_input("Nome da Dupla", value=d.get("nome_dupla", ""), key=f"edit_nome_d_{d['id']}")
-                        edit_membro1 = st.text_input("Membro 1", value=d.get("membro1", ""), key=f"edit_m1_{d['id']}")
-                    with col2:
-                        edit_membro2 = st.text_input("Membro 2", value=d.get("membro2", ""), key=f"edit_m2_{d['id']}")
-                        edit_ordem = st.number_input("Ordem", min_value=1, value=int(d.get("ordem", 1)), key=f"edit_ord_{d['id']}")
+    st.markdown("### 🌴 Férias e Afastamentos Médicos")
+    st.caption(
+        "Solicitação de férias com análise de gestão e registro imediato de atestados médicos. "
+        "Pedidos aprovados e atestados são exibidos no quadro público do setor."
+    )
+
+    # Identificação automática pelo login
+    nome_usuario = usuario.get("nome", "Colaborador")
+    matricula_usuario = str(usuario.get("matricula", ""))
+    cargo_usuario = usuario.get("cargo", "operacional")
+    nivel_acesso = usuario.get("nivel_acesso", "OPERACIONAL")
+
+    is_gestor = (
+        nivel_acesso in ("SUPER_ADMIN_CRIADOR", "ADMIN_GABINETE", "GESTOR_SETORIAL") or
+        cargo_usuario in ("criador", "raiz", "gerente")
+    )
+
+    tab_solicitar, tab_quadro, tab_gestao = st.tabs([
+        "➕ Nova Solicitação",
+        "📅 Quadro Público de Ausências",
+        "🛡️ Painel de Gestão (Chefia)" if is_gestor else "🔒 Painel de Gestão",
+    ])
+
+    # --- ABA 1: NOVA SOLICITAÇÃO ---
+    with tab_solicitar:
+        st.markdown(f"**Colaborador Solicitante:** `{nome_usuario}` (Matrícula: `{matricula_usuario}`)")
+        st.info("O sistema identifica seu perfil automaticamente. Selecione o tipo de registro abaixo.")
+
+        tipo_registro = st.radio("Tipo de Registro", ["Férias", "Atestado Médico"], horizontal=True)
+
+        with st.form("form_registro_ausencia"):
+            col1, col2 = st.columns(2)
+            with col1:
+                data_ini = st.date_input("Data de Início *", value=date.today())
+            with col2:
+                data_fim = st.date_input("Data de Retorno / Fim *", value=date.today())
+
+            observacoes = st.text_area(
+                "Observações / Motivo",
+                placeholder="Informações adicionais para a chefia ou equipe...",
+                height=70,
+            )
+
+            submit_ausencia = st.form_submit_button("Registrar no Sistema", type="primary", use_container_width=True)
+
+            if submit_ausencia:
+                if data_fim < data_ini:
+                    st.error("A data de término não pode ser anterior à data de início.")
+                else:
+                    dias_total = (data_fim - data_ini).days + 1
+                    tipo_db = "FERIAS" if tipo_registro == "Férias" else "ATESTADO"
+                    
+                    # Férias vão para análise; Atestado tem bypass (NOTIFICADO)
+                    status_inicial = "PENDENTE" if tipo_db == "FERIAS" else "NOTIFICADO"
+
+                    dados_ausencia = {
+                        "matricula": matricula_usuario,
+                        "colaborador_nome": nome_usuario,
+                        "setor": "SEAT",
+                        "tipo": tipo_db,
+                        "data_inicio": data_ini.isoformat(),
+                        "data_fim": data_fim.isoformat(),
+                        "dias_afastado": dias_total,
+                        "observacoes": observacoes.strip(),
+                        "status": status_inicial,
+                    }
+
+                    res = db_manager.inserir("solicitacoes_ausencia", dados_ausencia)
+                    if res:
+                        if tipo_db == "FERIAS":
+                            st.success(f"✅ Solicitação de férias ({dias_total} dias) enviada para análise da chefia.")
+                        else:
+                            st.success(f"✅ Atestado médico ({dias_total} dias) notificado com sucesso e publicado no quadro!")
+                        st.rerun()
+                    else:
+                        st.error("Erro ao registrar no banco de dados.")
+
+    # --- ABA 2: QUADRO PÚBLICO ---
+    with tab_quadro:
+        st.markdown("#### Ausências Programadas e Atestados (SEAT)")
+        st.caption("Consulte este quadro antes de solicitar férias para evitar sobreposição de datas na equipe.")
+
+        try:
+            todas_ausencias = db_manager.buscar_todos(
+                "solicitacoes_ausencia",
+                filtros={"setor": "SEAT"},
+                ordem_coluna="data_inicio",
+                ordem_desc=False,
+            ) or []
+        except Exception:
+            todas_ausencias = []
+
+        # Exibe apenas aprovados e atestados no quadro geral
+        publicas = [a for a in todas_ausencias if a.get("status") in ("APROVADA", "NOTIFICADO")]
+
+        if not publicas:
+            st.info("Nenhuma ausência ou afastamento programado no momento.")
+        else:
+            dados_quadro = []
+            for a in publicas:
+                tipo_lbl = "🌴 Férias" if a.get("tipo") == "FERIAS" else "🏥 Atestado"
+                ini_str = _formatar_data_curta(a.get("data_inicio"))
+                fim_str = _formatar_data_curta(a.get("data_fim"))
+                dados_quadro.append({
+                    "Colaborador": a.get("colaborador_nome", ""),
+                    "Tipo": tipo_lbl,
+                    "Período": f"{ini_str} a {fim_str}",
+                    "Dias": f"{a.get('dias_afastado', '-')} dia(s)",
+                    "Observação": a.get("observacoes", "") or "—",
+                })
+            df_quadro = pd.DataFrame(dados_quadro)
+            st.dataframe(df_quadro, hide_index=True, use_container_width=True)
+
+    # --- ABA 3: GESTÃO E RADAR DE CHOQUES ---
+    with tab_gestao:
+        if not is_gestor:
+            st.warning("Acesso restrito. Apenas gestores setoriais, Gabinete e Criador podem analisar solicitações.")
+            return
+
+        st.markdown("#### 🛡️ Análise de Solicitações — Radar de Choques")
+        st.caption("O sistema monitora sobreposições de datas em tempo real para evitar desfalques operacionais no setor.")
+
+        try:
+            pendentes = [a for a in todas_ausencias if a.get("status") == "PENDENTE"]
+        except Exception:
+            pendentes = []
+
+        if not pendentes:
+            st.info("Não há solicitações de férias pendentes de análise na SEAT.")
+        else:
+            for p in pendentes:
+                id_solic = p.get("id")
+                nome_solic = p.get("colaborador_nome", "")
+                ini_solic = date.fromisoformat(str(p.get("data_inicio"))[:10])
+                fim_solic = date.fromisoformat(str(p.get("data_fim"))[:10])
+                dias_solic = p.get("dias_afastado", 0)
+
+                with st.expander(
+                    f"🟡 PENDENTE: {nome_solic} | Período: {ini_solic.strftime('%d/%m/%Y')} a {fim_solic.strftime('%d/%m/%Y')} ({dias_solic} dias)",
+                    expanded=True
+                ):
+                    st.write(f"**Matrícula:** `{p.get('matricula', '')}` | **Setor:** `{p.get('setor', '')}`")
+                    if p.get("observacoes"):
+                        st.write(f"**Observação do colaborador:** {p.get('observacoes')}")
+
+                    # RADAR DE CHOQUES EM TEMPO REAL
+                    choques = _verificar_radar_choques(ini_solic, fim_solic, id_ignorar=id_solic)
+
+                    st.markdown("---")
+                    if not choques:
+                        st.success("🟢 **Radar de Choques:** Nenhum conflito de datas. Equipe completa no período.")
+                    else:
+                        st.warning(
+                            f"🟡 **Radar de Choques — Atenção:** Há **{len(choques)}** colaborador(es) com ausência prevista no mesmo período!"
+                        )
+                        for ch in choques:
+                            st.write(
+                                f"• **{ch['colaborador']}** ({ch['tipo']}): "
+                                f"ausente de {ch['inicio']} a {ch['fim']}."
+                            )
+                        if len(choques) >= 2:
+                            st.error(
+                                f"🔴 **Alerta Crítico de Desfalque:** A aprovação desta solicitação deixará o setor SEAT "
+                                f"com **{len(choques) + 1} membros a menos** simultaneamente no período."
+                            )
 
                     col_b1, col_b2 = st.columns(2)
                     with col_b1:
-                        if st.form_submit_button("Salvar"):
-                            db_manager.atualizar("duplas_doe", d["id"], {
-                                "nome_dupla": edit_nome.strip(),
-                                "membro1": edit_membro1.strip(),
-                                "membro2": edit_membro2.strip(),
-                                "ordem": int(edit_ordem),
-                            })
-                            st.success("Dupla atualizada!")
+                        if st.button("✅ Aprovar Férias", key=f"aprov_{id_solic}", type="primary", use_container_width=True):
+                            db_manager.atualizar("solicitacoes_ausencia", id_solic, {"status": "APROVADA"})
+                            st.success(f"Férias de {nome_solic} aprovadas!")
                             st.rerun()
                     with col_b2:
-                        if st.form_submit_button("Desativar"):
-                            db_manager.atualizar("duplas_doe", d["id"], {"ativo": False})
-                            st.success("Dupla desativada!")
+                        if st.button("❌ Rejeitar", key=f"rej_{id_solic}", use_container_width=True):
+                            db_manager.atualizar("solicitacoes_ausencia", id_solic, {"status": "REJEITADA"})
+                            st.warning("Solicitação rejeitada.")
                             st.rerun()
-    else:
-        st.info("Nenhuma dupla cadastrada.")
-
-    # Cadastrar nova dupla
-    st.markdown("---")
-    st.markdown("##### Cadastrar Nova Dupla")
-    with st.form("form_nova_dupla_doe"):
-        col1, col2 = st.columns(2)
-        with col1:
-            novo_nome = st.text_input("Nome da Dupla *", placeholder="Ex: Dupla A", key="nova_nome_d")
-            novo_membro1 = st.text_input("Membro 1 *", key="nova_m1_d")
-        with col2:
-            novo_membro2 = st.text_input("Membro 2 *", key="nova_m2_d")
-            nova_ordem = st.number_input("Ordem *", min_value=1, value=len(duplas) + 1, key="nova_ord_d")
-
-        if st.form_submit_button("Cadastrar Dupla", type="primary"):
-            if not novo_nome or not novo_membro1 or not novo_membro2:
-                st.error("Preencha todos os campos obrigatórios.")
-            else:
-                db_manager.inserir("duplas_doe", {
-                    "nome_dupla": novo_nome.strip(),
-                    "membro1": novo_membro1.strip(),
-                    "membro2": novo_membro2.strip(),
-                    "ordem": int(nova_ordem),
-                    "ativo": True,
-                })
-                st.success("Dupla cadastrada!")
-                st.rerun()
-
-def _gerenciar_ferias_doe(usuario):
-    """Gerenciamento de férias e substitutos (apenas gerentes)."""
-    from datetime import date, timedelta
-    st.markdown("##### Férias Cadastradas")
-
-    try:
-        ferias = db_manager.buscar_todos(
-            "ferias_colaboradores",
-            ordem_coluna="data_inicio",
-            ordem_desc=True,
-        ) or []
-    except Exception:
-        ferias = []
-
-    if ferias:
-        for f in ferias:
-            icone = "🟢" if f.get("status") == "aprovada" else "🟡"
-            substituto = f.get("substituto", "")
-            with st.expander(
-                f"{icone} {f.get('colaborador', '')} | "
-                f"{str(f.get('data_inicio', ''))[:10]} a {str(f.get('data_fim', ''))[:10]} | "
-                f"{f.get('status', '').upper()}"
-            ):
-                st.write(f"**Colaborador:** {f.get('colaborador', '')}")
-                st.write(f"**Período:** {f.get('data_inicio', '')} a {f.get('data_fim', '')}")
-                st.write(f"**Status:** {f.get('status', '')}")
-                if substituto:
-                    st.write(f"**Substituto:** {substituto}")
-                if f.get("observacoes"):
-                    st.write(f"**Observações:** {f.get('observacoes')}")
-
-                # Verificar conflito com escala
-                duplas = _obter_duplas_doe()
-                if duplas and f.get("status") == "aprovada":
-                    data_ini = date.fromisoformat(str(f.get("data_inicio"))[:10])
-                    data_fim = date.fromisoformat(str(f.get("data_fim"))[:10])
-                    colaborador = f.get("colaborador", "")
-                    segunda_atual, _ = _obter_semana_atual()
-
-                    for i in range(12):
-                        segunda = segunda_atual + timedelta(weeks=i)
-                        sexta = segunda + timedelta(days=4)
-                        if segunda <= data_fim and sexta >= data_ini:
-                            dupla = _obter_dupla_semana(segunda, duplas)
-                            if dupla and colaborador in [dupla.get("membro1"), dupla.get("membro2")]:
-                                if not substituto:
-                                    st.warning(
-                                        f"⚠️ **Conflito!** {colaborador} está escalado na semana "
-                                        f"{segunda.strftime('%d/%m')} a {sexta.strftime('%d/%m')} "
-                                        f"(Dupla: {dupla.get('nome_dupla', '')})."
-                                    )
-
-                # Designar substituto
-                if f.get("status") == "aprovada" and not substituto:
-                    with st.form(f"form_subst_{f['id']}"):
-                        novo_subst = st.text_input(
-                            "Designar Substituto",
-                            placeholder="Nome do substituto",
-                            key=f"subst_{f['id']}"
-                        )
-                        if st.form_submit_button("Designar"):
-                            if novo_subst:
-                                db_manager.atualizar("ferias_colaboradores", f["id"], {
-                                    "substituto": novo_subst.strip()
-                                })
-                                st.success(f"Substituto designado: {novo_subst.strip()}")
-                                st.rerun()
-
-                # Aprovar/rejeitar
-                if f.get("status") == "pendente":
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button("Aprovar", key=f"ferias_ok_{f['id']}"):
-                            db_manager.atualizar("ferias_colaboradores", f["id"], {"status": "aprovada"})
-                            st.success("Férias aprovadas!")
-                            st.rerun()
-                    with col2:
-                        if st.button("Rejeitar", key=f"ferias_no_{f['id']}"):
-                            db_manager.atualizar("ferias_colaboradores", f["id"], {"status": "rejeitada"})
-                            st.rerun()
-    else:
-        st.info("Nenhuma férias cadastrada.")
-
-    # Cadastrar férias
-    st.markdown("---")
-    st.markdown("##### Cadastrar Férias")
-    with st.form("form_nova_ferias"):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            ferias_colab = st.text_input("Colaborador *", key="ferias_c")
-            ferias_ini = st.date_input("Data Início *", key="ferias_i")
-        with col2:
-            ferias_fim = st.date_input("Data Fim *", key="ferias_f")
-            ferias_obs = st.text_area("Observações", key="ferias_o", height=60)
-        with col3:
-            ferias_status = st.selectbox("Status", options=["pendente", "aprovada"], key="ferias_s")
-
-        if st.form_submit_button("Cadastrar Férias", type="primary"):
-            if not ferias_colab:
-                st.error("Informe o nome do colaborador.")
-            elif ferias_fim < ferias_ini:
-                st.error("A data fim não pode ser anterior à data início.")
-            else:
-                db_manager.inserir("ferias_colaboradores", {
-                    "colaborador": ferias_colab.strip(),
-                    "data_inicio": str(ferias_ini),
-                    "data_fim": str(ferias_fim),
-                    "observacoes": ferias_obs.strip(),
-                    "status": ferias_status,
-                })
-                st.success("Férias cadastradas!")
-                st.rerun()
-
-def _gerenciar_config_doe():
-    """Configuração do DOE (data de início da rotação)."""
-    st.markdown("##### Configuração da Rotação")
-    st.caption(
-        "Define a data de início do rodízio. A primeira segunda-feira a partir desta data será a Semana 1."
-    )
-
-    data_atual = _obter_config_doe()
-
-    with st.form("form_config_doe"):
-        nova_data = st.date_input("Data de Início da Rotação", value=data_atual)
-        if st.form_submit_button("Salvar Configuração"):
-            _salvar_config_doe(nova_data)
-            st.success("Configuração salva!")
-            st.rerun()
 
 # ============================================================
 # FUNCAO PRINCIPAL
@@ -3427,13 +3426,14 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
     # Escala DOE: SEMPRE visivel
     _renderizar_sidebar_doe(usuario)
 
-    tab_pauta, tab_distribuicao, tab_ds, tab_urgentes, tab_motor, tab_doe = st.tabs([
+     tab_pauta, tab_distribuicao, tab_ds, tab_urgentes, tab_motor, tab_doe, tab_ausencias = st.tabs([
         "Pauta Ativa",
         "Distribuicao",
         "Despachos Singulares",
         "Urgentes",
         "Motor NIP",
         "Escala DOE",
+        "Férias e Afastamentos",
     ])
 
     with tab_pauta:
@@ -3453,3 +3453,6 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
 
     with tab_doe:
         _renderizar_escala_doe(modo_edicao, usuario)
+
+    with tab_ausencias:
+        _renderizar_ausencias_seat(modo_edicao, usuario)
