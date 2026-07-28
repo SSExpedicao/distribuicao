@@ -3426,7 +3426,7 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
     # Escala DOE: SEMPRE visivel
     _renderizar_sidebar_doe(usuario)
 
-     tab_pauta, tab_distribuicao, tab_ds, tab_urgentes, tab_motor, tab_doe, tab_ausencias = st.tabs([
+    tab_pauta, tab_distribuicao, tab_ds, tab_urgentes, tab_motor, tab_doe, tab_ausencias = st.tabs([
         "Pauta Ativa",
         "Distribuicao",
         "Despachos Singulares",
