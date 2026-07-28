@@ -501,7 +501,7 @@ def _renderizar_pauta_ativa_sexp(usuario, modo_edicao):
     if not todos_sexp or not tem_algum_exibido:
         st.info("Nenhum processo aguardando distribuição na pauta.")
 
-                st.markdown("---")
+        st.markdown("---")
         
         # Listagem dos Cards de Processos (DENTRO do loop por tipo)
         for p in processos:
