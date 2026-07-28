@@ -1193,7 +1193,7 @@ def _renderizar_urgentes_sexp(usuario, modo_edicao):
                 st.rerun()
         st.markdown("---")
 
-    for p in urgentes:
+     for p in processos_urg:
         _renderizar_card_processo_sexp(p, modo_edicao, usuario)
 
 # ==================== CONTROLE DE FÉRIAS ====================
