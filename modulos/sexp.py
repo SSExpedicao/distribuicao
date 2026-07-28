@@ -396,43 +396,55 @@ def _renderizar_sidebar_sexp(usuario):
 
 # ==================== PAUTA ATIVA ====================
 
+def _auto_atribuir_administrativa_jessyca():
+    """Gatilho silencioso: encontra processos da Sessão Administrativa e atribui direto para a Jéssyca (Gerência)."""
+    try:
+        todos = db_manager.buscar_todos("distribuicao_sexp") or []
+        urgentes_seat = db_manager.buscar_todos("processos_urgentes") or []
+        nums_urgentes = {_normalizar_numero_processo(u.get("processo_numero", "")) for u in urgentes_seat}
+
+        for p in todos:
+            tipo = _determinar_tabela_destino_sexp(p, nums_urgentes)
+            if tipo == "Sessão Administrativa" and not p.get("distribuido", False) and not p.get("sessao_finalizada", False):
+                id_reg = p.get("id") or p.get("id_distribuicao") or p.get("id_processo")
+                if id_reg:
+                    db_manager.atualizar("distribuicao_sexp", id_reg, {
+                        "expedidor": "Jessyca",
+                        "revisor": "Jessyca",
+                        "distribuido": True,
+                        "tipo_sessao": "Sessão Administrativa"
+                    })
+    except Exception as e:
+        print(f"[ERRO BYPASS ADMINISTRATIVA] {e}")
+
 def _renderizar_pauta_ativa_sexp(usuario, modo_edicao):
-    """Renderiza a aba de Pauta Ativa do SEXP com verificação robusta de RBAC e tipos."""
+    """Renderiza a Pauta Ativa apenas com métricas e painel de distribuição em cadeia (Sem listas longas)."""
     is_gerente = _tem_permissao_gestao(usuario)
 
     st.markdown("### 📋 Pauta Ativa — SEXP")
-    st.caption(
-        "Processos revisados na SEAT, aguardando distribuição. "
-        "Selecione os colaboradores que participarão da distribuição de cada sessão."
-    )
+    st.caption("Processos revisados na SEAT aguardando distribuição. Selecione a equipe abaixo para disparar o lote.")
 
-    # Sincronizar com SEAT
     novos, _ = _sincronizar_com_seat()
     if novos > 0:
         st.success(f"✅ {novos} novo(s) processo(s) importado(s) da SEAT!")
         st.markdown("---")
 
-    # Verificar situação da SEAT
+    # Executa o bypass automático da Sessão Administrativa para a Jéssyca
+    if modo_edicao:
+        _auto_atribuir_administrativa_jessyca()
+
     todos_revisados, encaminhados, total_seat = _verificar_todos_revisados_seat()
     if todos_revisados and total_seat > 0:
-        st.success(
-            f"🎉 **Todos os {total_seat} processos da SEAT foram revisados!** "
-            f"Todos os processos estão prontos para distribuição."
-        )
+        st.success(f"🎉 **Todos os {total_seat} processos da SEAT foram revisados!** Prontos para distribuição.")
     elif total_seat > 0:
-        st.info(
-            f"📊 **SEAT:** {encaminhados} de {total_seat} processos revisados. "
-            f"Aguardando revisão de {total_seat - encaminhados} processo(s)."
-        )
+        st.info(f"📊 **SEAT:** {encaminhados} de {total_seat} revisados. Aguardando {total_seat - encaminhados} processo(s).")
 
     st.markdown("---")
 
     try:
         todos_sexp = db_manager.buscar_todos("distribuicao_sexp") or []
         urgentes_seat = db_manager.buscar_todos("processos_urgentes") or []
-        nums_urgentes = {
-            _normalizar_numero_processo(u.get("processo_numero", "")) for u in urgentes_seat
-        }
+        nums_urgentes = {_normalizar_numero_processo(u.get("processo_numero", "")) for u in urgentes_seat}
     except Exception:
         todos_sexp = []
         nums_urgentes = set()
@@ -440,10 +452,11 @@ def _renderizar_pauta_ativa_sexp(usuario, modo_edicao):
     tem_algum_exibido = False
 
     for tipo in TIPOS_SESSAO_SEXP:
-        # Usa o tradutor de tipos para encontrar os 48 processos que já estão no seu banco!
+        # A Sessão Administrativa pula a Pauta Ativa porque vai direto para a esteira de Distribuição com a Jéssyca
+        if tipo == "Sessão Administrativa": continue
+
         processos = [d for d in todos_sexp if _determinar_tabela_destino_sexp(d, nums_urgentes) == tipo]
-        if not processos:
-            continue
+        if not processos: continue
 
         tem_algum_exibido = True
         nao_distribuidos = [d for d in processos if not d.get("distribuido", False)]
@@ -451,15 +464,11 @@ def _renderizar_pauta_ativa_sexp(usuario, modo_edicao):
 
         st.markdown(f"#### {tipo}")
         col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Total", len(processos))
-        with col2:
-            st.metric("Não Distribuídos", len(nao_distribuidos))
-        with col3:
-            st.metric("Distribuídos", len(distribuidos))
+        col1.metric("Total", len(processos))
+        col2.metric("Não Distribuídos", len(nao_distribuidos))
+        col3.metric("Distribuídos", len(distribuidos))
 
-
-        # Quadro de Seleção de Colaboradores (Liberado para toda a equipe operando no setor!)
+        # Quadro de Seleção de Colaboradores (Liberado para toda a equipe operando no setor)
         if modo_edicao and nao_distribuidos:
             elegiveis = _obter_colaboradores_por_cargo(tipo)
             nomes_elegiveis = sorted(list(set([_get_nome_curto(c) for c in elegiveis if _get_nome_curto(c)])))
@@ -480,15 +489,17 @@ def _renderizar_pauta_ativa_sexp(usuario, modo_edicao):
                         else:
                             qtd = _executar_distribuicao(tipo, selecionados)
                             if qtd > 0:
-                                st.success(f"✅ {qtd} processo(s) distribuído(s) em cadeia com sucesso! Acesse a aba 'Distribuição' para operar.")
+                                st.success(f"✅ {qtd} processo(s) distribuído(s) em cadeia! Acesse a aba 'Distribuição' ou 'Urgentes' para operar.")
                                 st.rerun()
                             else:
                                 st.error("Erro ao distribuir processos no banco de dados.")
             else:
                 st.warning("Nenhum colaborador elegível ativo cadastrado para este tipo de sessão.")
 
-        # REMOVIDA A LISTA DE CARDS DAQUI! Os processos vão direto para a aba 'Distribuição'.
         st.markdown("---")
+
+    if not todos_sexp or not tem_algum_exibido:
+        st.info("Nenhum processo aguardando distribuição na pauta.")
 
         # Listagem dos Cards de Processos
         for p in processos:
@@ -670,22 +681,23 @@ def _renderizar_card_processo_sexp(p, modo_edicao, usuario):
                             st.rerun()
 
 def _renderizar_distribuicao_sexp(usuario, modo_edicao):
-    """Renderiza a aba de Distribuição em formato de TABELA INTERATIVA com botão de Finalizar Sessão."""
+    """Renderiza a aba de Distribuição com tabelas interativas SEPARADAS por Sessão/Data e botão restrito a gerentes."""
     import pandas as pd
-    cargo = usuario.get("cargo", "operacional")
-    nome = usuario.get("nome", "")
+    cargo = _normalizar_texto(usuario.get("cargo", "operacional"))
+    is_gerente = _tem_permissao_gestao(usuario)
+
     st.markdown("### 📤 Distribuição — Esteira Operacional")
-    st.caption("Acompanhe e gerencie a expedição e revisão da pauta. Marque as caixas para atualizar o status em tempo real.")
+    st.caption("As tabelas são geradas e isoladas automaticamente pelo Número e Dia da Sessão.")
 
     try:
         todos = db_manager.buscar_todos("distribuicao_sexp", ordem_coluna="id", ordem_desc=False) or []
     except Exception:
         todos = []
 
-    distribuidos = [d for d in todos if d.get("distribuido", False) and not d.get("removido_pauta", False)]
+    distribuidos = [d for d in todos if d.get("distribuido", False) and not d.get("removido_pauta", False) and not d.get("sessao_finalizada", False)]
 
     if not distribuidos:
-        st.info("Nenhum processo distribuído no momento. Acesse a aba 'Pauta Ativa' para distribuir lotes.")
+        st.info("Nenhum processo tramitando na esteira de distribuição no momento.")
         return
 
     try:
@@ -694,11 +706,7 @@ def _renderizar_distribuicao_sexp(usuario, modo_edicao):
     except Exception:
         nums_urgentes = set()
 
-    tipos_com_processos = []
-    for tipo in TIPOS_SESSAO_SEXP:
-        if tipo == "Urgentes": continue
-        if any(_determinar_tabela_destino_sexp(d, nums_urgentes) == tipo for d in distribuidos):
-            tipos_com_processos.append(tipo)
+    tipos_com_processos = [t for t in TIPOS_SESSAO_SEXP if t != "Urgentes" and any(_determinar_tabela_destino_sexp(d, nums_urgentes) == t for d in distribuidos)]
 
     if not tipos_com_processos:
         st.info("Nenhum processo distribuído.")
@@ -706,30 +714,97 @@ def _renderizar_distribuicao_sexp(usuario, modo_edicao):
 
     sub_tabs = st.tabs(tipos_com_processos)
 
-    for idx, tipo in enumerate(tipos_com_processos):
-        with sub_tabs[idx]:
-            st.markdown(f"#### {tipo}")
-            processos = [d for d in distribuidos if _determinar_tabela_destino_sexp(d, nums_urgentes) == tipo]
+    for idx_tab, tipo in enumerate(tipos_com_processos):
+        with sub_tabs[idx_tab]:
+            procs_tipo = [d for d in distribuidos if _determinar_tabela_destino_sexp(d, nums_urgentes) == tipo]
+            if cargo == "operacional" and not is_gerente:
+                procs_tipo = [d for d in procs_tipo if _eh_o_colaborador(usuario, d.get("expedidor")) or _eh_o_colaborador(usuario, d.get("revisor"))]
 
-            if cargo == "operacional":
-                processos = [d for d in processos if _eh_o_colaborador(usuario, d.get("expedidor")) or _eh_o_colaborador(usuario, d.get("revisor"))]
-
-            if not processos:
-                st.info("Nenhum processo atribuído a você nesta sessão.")
+            if not procs_tipo:
+                st.info("Nenhum processo atribuído a você neste tipo de sessão.")
                 continue
 
-            total = len(processos)
-            expedidos = sum(1 for p in processos if p.get("expedido", False))
-            revisados = sum(1 for p in processos if p.get("revisado", False))
-            pendentes = total - expedidos
+            # AGRUPAMENTO ANTI-AGLOMERAÇÃO: Separa rigorosamente por Número da Sessão e Dia
+            sessoes_isoladas = {}
+            for p in procs_tipo:
+                num_s = p.get("numero_sessao") or p.get("sessao_numero") or "S/N"
+                dia_raw = str(p.get("dia_sessao", ""))[:10]
+                dia_fmt = _formatar_data_curta(dia_raw) if ("-" in dia_raw or "/" in dia_raw) else (dia_raw or "Data N/I")
+                chave_sessao = f"Sessão {num_s} — ({dia_fmt})"
+                
+                if chave_sessao not in sessoes_isoladas:
+                    sessoes_isoladas[chave_sessao] = []
+                sessoes_isoladas[chave_sessao].append(p)
 
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Total", total)
-            col2.metric("Pendentes", pendentes)
-            col3.metric("Expedidos", expedidos)
-            col4.metric("Revisados", revisados)
+            # Desenha uma tabela interativa independente para cada sessão/data
+            for idx_ses, (chave, processos) in enumerate(sessoes_isoladas.items()):
+                st.markdown(f"#### 📅 {chave}")
+                total = len(processos)
+                expedidos = sum(1 for p in processos if p.get("expedido", False))
+                revisados = sum(1 for p in processos if p.get("revisado", False))
 
-            st.markdown("---")
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("Total", total)
+                col2.metric("Pendentes", total - expedidos)
+                col3.metric("Expedidos", expedidos)
+                col4.metric("Revisados", revisados)
+
+                dados_df = []
+                for p in processos:
+                    id_reg = p.get("id") or p.get("id_distribuicao") or p.get("id_processo")
+                    dados_df.append({
+                        "ID": id_reg,
+                        "Processo Nº": p.get("processo_numero", ""),
+                        "Relator": p.get("relator", "") or "-",
+                        "Expedidor": p.get("expedidor", "") or "-",
+                        "Expedido ✅": bool(p.get("expedido", False)),
+                        "Revisor": p.get("revisor", "") or "-",
+                        "Revisado ✅": bool(p.get("revisado", False)),
+                        "Comentários": p.get("comentarios", "") or ""
+                    })
+
+                df = pd.DataFrame(dados_df)
+
+                if modo_edicao:
+                    df_editado = st.data_editor(
+                        df,
+                        column_config={
+                            "ID": None,
+                            "Processo Nº": st.column_config.TextColumn("Nº Processo", disabled=True),
+                            "Relator": st.column_config.TextColumn("Relator", disabled=True),
+                            "Expedidor": st.column_config.TextColumn("Expedidor", disabled=True),
+                            "Expedido ✅": st.column_config.CheckboxColumn("Expedido?", default=False),
+                            "Revisor": st.column_config.TextColumn("Revisor", disabled=True),
+                            "Revisado ✅": st.column_config.CheckboxColumn("Revisado?", default=False),
+                            "Comentários": st.column_config.TextColumn("Observações", disabled=True)
+                        },
+                        hide_index=True, use_container_width=True, key=f"tbl_dist_{tipo}_{idx_tab}_{idx_ses}"
+                    )
+
+                    if not df.equals(df_editado):
+                        for index, row in df_editado.iterrows():
+                            if row["Expedido ✅"] != df.loc[index, "Expedido ✅"] or row["Revisado ✅"] != df.loc[index, "Revisado ✅"]:
+                                db_manager.atualizar("distribuicao_sexp", int(row["ID"]), {
+                                    "expedido": bool(row["Expedido ✅"]),
+                                    "revisado": bool(row["Revisado ✅"])
+                                })
+                        st.success("🎉 Tabela atualizada no banco!")
+                        st.rerun()
+                else:
+                    st.dataframe(df.drop(columns=["ID"]), hide_index=True, use_container_width=True)
+
+                # BOTÃO DE FINALIZAR SESSÃO: Exclusivo para o Gerente / Criador!
+                if modo_edicao and is_gerente:
+                    confirmar = st.checkbox(f"Estou ciente e desejo arquivar a {chave}", key=f"chk_{tipo}_{idx_ses}")
+                    if st.button(f"🔒 Finalizar Sessão ({chave})", key=f"btn_fim_{tipo}_{idx_ses}", type="primary", disabled=not confirmar):
+                        with st.spinner(f"Arquivando pauta {chave}..."):
+                            for p in processos:
+                                id_fechar = p.get("id") or p.get("id_distribuicao") or p.get("id_processo")
+                                if id_fechar:
+                                    db_manager.atualizar("distribuicao_sexp", id_fechar, {"sessao_finalizada": True, "status": "arquivado"})
+                        st.success(f"✅ {chave} encerrada e arquivada!")
+                        st.rerun()
+                st.markdown("---")
 
             # Montando a Tabela Interativa
             dados_df = []
@@ -813,40 +888,108 @@ def _renderizar_distribuicao_sexp(usuario, modo_edicao):
 # ==================== URGENTES ====================
 
 def _renderizar_urgentes_sexp(usuario, modo_edicao):
-    """Renderiza a aba de Urgentes."""
-    cargo = usuario.get("cargo", "operacional")
-    nome = usuario.get("nome", "")
+    """Renderiza a aba de Urgentes em Tabela Interativa (igual Ordinária), isolada por Sessão/Data com encerramento de chefia."""
+    import pandas as pd
+    cargo = _normalizar_texto(usuario.get("cargo", "operacional"))
+    is_gerente = _tem_permissao_gestao(usuario)
 
-    st.markdown("### 🚨 Urgentes")
-    st.caption("Processos urgentes (exceto os da Sessão Reservada, que ficam na tabela própria).")
+    st.markdown("### 🚨 Processos Urgentes — Esteira Prioritária")
+    st.caption("Processos com prioridade de tramitação. Tabela interativa com gravação em tempo real.")
 
     try:
-        todos = db_manager.buscar_todos("distribuicao_sexp") or []
+        todos = db_manager.buscar_todos("distribuicao_sexp", ordem_coluna="id", ordem_desc=False) or []
     except Exception:
         todos = []
 
-    urgentes = [d for d in todos if d.get("tipo_sessao") == "Urgentes" and d.get("distribuido", False)]
+    processos_urg = [d for d in todos if d.get("tipo_sessao") == "Urgentes" and d.get("distribuido", False) and not d.get("removido_pauta", False) and not d.get("sessao_finalizada", False)]
 
-    if cargo == "operacional":
-        urgentes = [d for d in urgentes if d.get("expedidor") == nome or d.get("revisor") == nome]
+    if cargo == "operacional" and not is_gerente:
+        processos_urg = [d for d in processos_urg if _eh_o_colaborador(usuario, d.get("expedidor")) or _eh_o_colaborador(usuario, d.get("revisor"))]
 
-    if not urgentes:
-        st.info("Nenhum processo urgente distribuído.")
+    if not processos_urg:
+        st.info("Nenhum processo urgente tramitando no momento.")
         return
 
-    total = len(urgentes)
-    expedidos = len([p for p in urgentes if p.get("expedido")])
-    revisados = len([p for p in urgentes if p.get("revisado")])
+    # AGRUPAMENTO ANTI-AGLOMERAÇÃO: Separa por Número da Sessão e Dia
+    sessoes_isoladas = {}
+    for p in processos_urg:
+        num_s = p.get("numero_sessao") or p.get("sessao_numero") or "S/N"
+        dia_raw = str(p.get("dia_sessao", ""))[:10]
+        dia_fmt = _formatar_data_curta(dia_raw) if ("-" in dia_raw or "/" in dia_raw) else (dia_raw or "Data N/I")
+        chave_sessao = f"Urgentes — Sessão {num_s} ({dia_fmt})"
+        
+        if chave_sessao not in sessoes_isoladas:
+            sessoes_isoladas[chave_sessao] = []
+        sessoes_isoladas[chave_sessao].append(p)
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Total", total)
-    with col2:
-        st.metric("Expedidos", expedidos)
-    with col3:
-        st.metric("Revisados", revisados)
+    for idx_ses, (chave, processos) in enumerate(sessoes_isoladas.items()):
+        st.markdown(f"#### ⚡ {chave}")
+        total = len(processos)
+        expedidos = sum(1 for p in processos if p.get("expedido", False))
+        revisados = sum(1 for p in processos if p.get("revisado", False))
 
-    st.markdown("---")
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Total Urgentes", total)
+        col2.metric("Pendentes", total - expedidos)
+        col3.metric("Expedidos", expedidos)
+        col4.metric("Revisados", revisados)
+
+        dados_df = []
+        for p in processos:
+            id_reg = p.get("id") or p.get("id_distribuicao") or p.get("id_processo")
+            dados_df.append({
+                "ID": id_reg,
+                "Processo Nº": p.get("processo_numero", ""),
+                "Relator": p.get("relator", "") or "-",
+                "Expedidor": p.get("expedidor", "") or "-",
+                "Expedido ✅": bool(p.get("expedido", False)),
+                "Revisor": p.get("revisor", "") or "-",
+                "Revisado ✅": bool(p.get("revisado", False)),
+                "Comentários / Observação": p.get("comentarios", "") or "Tramitação Prioritária"
+            })
+
+        df = pd.DataFrame(dados_df)
+
+        if modo_edicao:
+            df_editado = st.data_editor(
+                df,
+                column_config={
+                    "ID": None,
+                    "Processo Nº": st.column_config.TextColumn("Nº Processo", disabled=True),
+                    "Relator": st.column_config.TextColumn("Relator", disabled=True),
+                    "Expedidor": st.column_config.TextColumn("Expedidor", disabled=True),
+                    "Expedido ✅": st.column_config.CheckboxColumn("Expedido?", default=False),
+                    "Revisor": st.column_config.TextColumn("Revisor", disabled=True),
+                    "Revisado ✅": st.column_config.CheckboxColumn("Revisado?", default=False),
+                    "Comentários / Observação": st.column_config.TextColumn("Observações", disabled=True)
+                },
+                hide_index=True, use_container_width=True, key=f"tbl_urg_{idx_ses}"
+            )
+
+            if not df.equals(df_editado):
+                for index, row in df_editado.iterrows():
+                    if row["Expedido ✅"] != df.loc[index, "Expedido ✅"] or row["Revisado ✅"] != df.loc[index, "Revisado ✅"]:
+                        db_manager.atualizar("distribuicao_sexp", int(row["ID"]), {
+                            "expedido": bool(row["Expedido ✅"]),
+                            "revisado": bool(row["Revisado ✅"])
+                        })
+                st.success("🎉 Urgentes atualizados no banco!")
+                st.rerun()
+        else:
+            st.dataframe(df.drop(columns=["ID"]), hide_index=True, use_container_width=True)
+
+        # BOTÃO DE FINALIZAR SESSÃO DE URGENTES: Exclusivo para o Gerente / Criador!
+        if modo_edicao and is_gerente:
+            confirmar = st.checkbox(f"Estou ciente e desejo arquivar os processos de {chave}", key=f"chk_urg_{idx_ses}")
+            if st.button(f"🔒 Finalizar Sessão de Urgentes ({chave})", key=f"btn_fim_urg_{idx_ses}", type="primary", disabled=not confirmar):
+                with st.spinner(f"Arquivando pauta {chave}..."):
+                    for p in processos:
+                        id_fechar = p.get("id") or p.get("id_distribuicao") or p.get("id_processo")
+                        if id_fechar:
+                            db_manager.atualizar("distribuicao_sexp", id_fechar, {"sessao_finalizada": True, "status": "arquivado"})
+                st.success(f"✅ {chave} encerrada e arquivada com sucesso!")
+                st.rerun()
+        st.markdown("---")
 
     for p in urgentes:
         _renderizar_card_processo_sexp(p, modo_edicao, usuario)
