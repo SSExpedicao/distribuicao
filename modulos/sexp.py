@@ -46,12 +46,15 @@ def _tem_permissao_gestao(usuario):
         cargo in ("gerente", "criador", "raiz")
     )
 
+# ==================== COLABORADORES (FONTE ÚNICA: usuarios_acesso) ====================
+
 def _obter_colaboradores():
+    """Busca os colaboradores da SEXP diretamente na tabela central do sistema."""
     try:
         return db_manager.buscar_todos(
-            "colaboradores_sexp",
-            filtros={"ativo": True},
-            ordem_coluna="nome",
+            "usuarios_acesso",
+            filtros={"ativo": True, "setor": "SEXP"},
+            ordem_coluna="nome_guerra",
             ordem_desc=False,
         ) or []
     except Exception:
