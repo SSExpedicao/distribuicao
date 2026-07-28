@@ -192,9 +192,9 @@ def _formatar_data_curta(data_iso: str) -> str:
 # ============================================================
 
 def _obter_equipe_seat() -> list:
-    """Retorna lista de nomes dos membros ativos da equipe SEAT."""
+    """Retorna lista com os Nomes de Guerra dos membros ativos da equipe SEAT."""
     membros = db_manager.listar_equipe(setor="SEAT", apenas_ativos=True)
-    return [m.get("nome", "") for m in membros if m.get("nome")]
+    return [m.get("nome_guerra") or m.get("nome", "") for m in membros if m.get("nome_guerra") or m.get("nome")]
 
 def _obter_afastados() -> list:
     """Retorna lista de nomes de membros atualmente afastados."""
