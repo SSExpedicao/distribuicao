@@ -343,6 +343,30 @@ def _renderizar_avisos_setor(usuario, setor):
                         "data_criacao": datetime.now().isoformat(),
                         "ativo": True,
                     }
+                    try:def _renderizar_avisos_setor(usuario, setor):
+    """Avisos que vão somente para aquele setor."""
+    st.markdown(f"#### 📢 Avisos — {setor}")
+    st.caption(f"Avisos enviados exclusivamente para o setor {setor}.")
+
+    is_gestor = _tem_permissao_gestao(usuario)
+
+    if is_gestor:
+        with st.form(f"form_aviso_setor_{setor}"):
+            st.markdown("**Enviar Aviso para o Setor:**")
+            mensagem = st.text_area("Mensagem", placeholder="Digite o aviso...", height=80, key=f"txt_aviso_{setor}")
+            duracao = st.number_input("Duração (horas)", min_value=1, value=24, key=f"dur_aviso_{setor}")
+
+            if st.form_submit_button("📢 Publicar", type="primary", use_container_width=True):
+                if mensagem.strip():
+                    dados_aviso = {
+                        "remetente": usuario.get("nome", "—"),
+                        "setor_remetente": usuario.get("setor", "GAB"),
+                        "escopo": setor,
+                        "mensagem": mensagem.strip(),
+                        "duracao_horas": duracao,
+                        "data_criacao": datetime.now().isoformat(),
+                        "ativo": True,
+                    }
                     try:
                         db_manager.inserir("avisos_gab", dados_aviso)
                         st.success("✅ Aviso publicado!")
@@ -354,7 +378,6 @@ def _renderizar_avisos_setor(usuario, setor):
     else:
         st.info("Apenas gestores podem enviar avisos.")
 
-    # Listar avisos ativos do setor
     try:
         avisos = db_manager.buscar_todos("avisos_gab") or []
     except Exception:
