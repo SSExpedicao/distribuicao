@@ -2396,17 +2396,32 @@ def _normalizar_numero_processo(numero):
     return numero.strip()
 
 def _extrair_numero_processo(texto):
-    """Extrai o numero do processo de forma altamente tolerante a quebras e espaços do PDF."""
+    """Extrai o numero do processo de forma altamente tolerante a formatos longos e curtos."""
     import re
     # Remove todos os espaços/quebras extras para formar uma string contínua
     texto_limpo = re.sub(r'\s+', ' ', texto)
     
-    # Procura o bloco de números, permitindo espaços no meio
-    padrao = r'(\d{5}\s*-\s*\d{8}\s*/\s*\d{4}\s*-\s*\d{2})(?:-e|-E)?'
-    match = re.search(padrao, texto_limpo, re.IGNORECASE)
+    # 1. CAMADA: Tenta o padrão moderno/longo (Ex: 00600-00009313/2025-11-e)
+    padrao_longo = r'(\d{4,5}\s*-\s*\d{6,8}\s*/\s*\d{4}\s*-\s*\d{2})(?:-e|-E)?'
+    match_longo = re.search(padrao_longo, texto_limpo, re.IGNORECASE)
+    if match_longo:
+        return _normalizar_numero_processo(match_longo.group(1).replace(" ", ""))
     
-    if match:
-        return _normalizar_numero_processo(match.group(1).replace(" ", ""))
+    # 2. CAMADA: O Padrão Curto Ancorado (A sua sugestão!)
+    # Caça variações: "Processo n.º: 25169/2017", "Proc.: 25169/2017", "Proc 25169/2017"
+    padrao_ancora = r'(?:Processo|Proc\.?)\s*(?:n[º°.o]*\s*)?:?\s*(\d{2,8}\s*/\s*\d{4})(?:-e|-E)?'
+    match_ancora = re.search(padrao_ancora, texto_limpo, re.IGNORECASE)
+    if match_ancora:
+        return _normalizar_numero_processo(match_ancora.group(1).replace(" ", ""))
+        
+    # 3. CAMADA DE SEGURANÇA: Procura qualquer número curto (XXXXX/YYYY) perdido no cabeçalho
+    # Lê apenas os primeiros 1000 caracteres para não pegar leis ou artigos no meio do voto
+    texto_inicio = texto_limpo[:1000]
+    padrao_curto = r'\b(\d{2,8}\s*/\s*\d{4})(?:-e|-E)?\b'
+    match_curto = re.search(padrao_curto, texto_inicio)
+    if match_curto:
+        return _normalizar_numero_processo(match_curto.group(1).replace(" ", ""))
+        
     return None
 
 def _identificar_relator_sigla(texto):
