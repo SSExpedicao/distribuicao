@@ -1154,6 +1154,11 @@ def _renderizar_ausencias_sexp(modo_edicao: bool, usuario: dict):
     from datetime import date
     import pandas as pd
 
+    # Proteção contra usuario None
+    if not usuario or not isinstance(usuario, dict):
+        st.warning("Não foi possível carregar os dados do usuário logado.")
+        return
+
     st.markdown("### 🌴 Férias, Atestados e Abono")
     st.caption(
         "Solicitação de férias, registro de atestados médicos e pedido de abono. "
