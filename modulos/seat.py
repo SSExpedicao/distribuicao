@@ -2046,10 +2046,22 @@ def _extrair_voto(texto):
 
 def _aplicar_substituicoes(texto, regras):
     """
-    Aplica substituições de frases, termos E verbos cadastrados no banco (case-insensitive).
-    Possui tolerância alta para quebras de linha e espaços duplos gerados pelo PDF.
+    Aplica substituições de frases, termos E verbos cadastrados no banco.
+    Possui Curingas Inteligentes para aniquilar variações gramaticais.
     """
     import re
+    
+    # 1. CURINGAS INTELIGENTES (Wildcards Nativos do Motor NIP)
+    # Substitui "da decisão que vier a ser proferida/prolatada/exarada/tomada" 
+    # por "desta decisão", independente do verbo que o relator inventar no final.
+    texto = re.sub(
+        r'\bda\s+decisão\s+que\s+vier\s+a\s+ser\s+\w+\b', 
+        'desta decisão', 
+        texto, 
+        flags=re.IGNORECASE
+    )
+    
+    # 2. REGRAS DO BANCO DE DADOS (Com tolerância a quebras de PDF)
     if not regras:
         return texto
         
@@ -2063,7 +2075,7 @@ def _aplicar_substituicoes(texto, regras):
                 continue
 
             # MÁGICA DE TOLERÂNCIA: Substitui espaços da regra por um padrão \s+ 
-            # Isso faz com que "da decisão que" encontre "da decisão \n que" no PDF.
+            # Isso faz com que a regra encontre a frase mesmo se o PDF quebrar a linha no meio.
             padrao_flexivel = r'\s+'.join([re.escape(p) for p in procurar.split()])
             
             # Se for termo isolado ou verbo, garante que pega a palavra inteira (\b)
