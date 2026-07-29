@@ -154,18 +154,33 @@ def _renderizar_setores(usuario):
             _renderizar_conteudo_setor(usuario, setor)
 
 def _renderizar_conteudo_setor(usuario, setor):
-    tab_dash, tab_ferias, tab_avisos = st.tabs([
-        "📊 Dashboard",
-        "🏖️ Férias dos Colaboradores",
-        "📢 Avisos do Setor",
-    ])
-
-    with tab_dash:
-        _renderizar_dashboard_setor(usuario, setor)
-    with tab_ferias:
-        _renderizar_ferias_setor(usuario, setor)
-    with tab_avisos:
-        _renderizar_avisos_setor(usuario, setor)
+    if setor == "SEAT":
+        tab_dash, tab_ferias, tab_avisos, tab_nip = st.tabs([
+            "📊 Dashboard",
+            "🏖️ Férias dos Colaboradores",
+            "📢 Avisos do Setor",
+            "⚙️ Regras NIP",
+        ])
+        with tab_dash:
+            _renderizar_dashboard_setor(usuario, setor)
+        with tab_ferias:
+            _renderizar_ferias_setor(usuario, setor)
+        with tab_avisos:
+            _renderizar_avisos_setor(usuario, setor)
+        with tab_nip:
+            _renderizar_regras_nip(usuario)
+    else:
+        tab_dash, tab_ferias, tab_avisos = st.tabs([
+            "📊 Dashboard",
+            "🏖️ Férias dos Colaboradores",
+            "📢 Avisos do Setor",
+        ])
+        with tab_dash:
+            _renderizar_dashboard_setor(usuario, setor)
+        with tab_ferias:
+            _renderizar_ferias_setor(usuario, setor)
+        with tab_avisos:
+            _renderizar_avisos_setor(usuario, setor)
 
 # ============================================================
 # DASHBOARD POR SETOR
@@ -369,6 +384,315 @@ def _renderizar_avisos_setor(usuario, setor):
             st.warning(f"📢 **{remetente}** ({data_criacao}): {mensagem}")
     else:
         st.info("Nenhum aviso ativo para este setor.")
+
+# ============================================================
+# REGRAS NIP — Gestão de substituições, verbos, urgência e SERCON
+# ============================================================
+def _renderizar_regras_nip(usuario):
+    """Tab de gestão das regras do Motor NIP."""
+    is_gestor = _tem_permissao_gestao(usuario)
+
+    if not is_gestor:
+        st.warning("⚠️ Acesso restrito a gestores.")
+        return
+
+    st.markdown("#### ⚙️ Regras do Motor NIP")
+    st.caption("Gerencie substituições, verbos, palavras de urgência e SERCON.")
+
+    tab_sub, tab_verb, tab_urg, tab_sercon = st.tabs([
+        "📝 Substituições",
+        "🔀 Verbos",
+        "🚨 Urgência",
+        "💰 SERCON",
+    ])
+
+    with tab_sub:
+        _renderizar_crud_substituicoes()
+    with tab_verb:
+        _renderizar_crud_verbos()
+    with tab_urg:
+        _renderizar_crud_urgencia()
+    with tab_sercon:
+        _renderizar_crud_sercon()
+
+# ============================================================
+# CRUD — SUBSTITUIÇÕES (frases e termos)
+# ============================================================
+def _renderizar_crud_substituicoes():
+    st.markdown("##### 📝 Substituições de Frases e Termos")
+    st.caption("Regras que substituem trechos de texto no voto.")
+
+    try:
+        regras = db_manager.buscar_todos(
+            "regras_substituicao_nip",
+            filtros={"ativo": True},
+            ordem_coluna="ordem",
+            ordem_desc=False,
+        ) or []
+    except Exception:
+        regras = []
+
+    frases = [r for r in regras if r.get("tipo") in ("frase", "termo")]
+
+    if frases:
+        dados = []
+        for r in frases:
+            dados.append({
+                "ID": r.get("id", "—"),
+                "Tipo": r.get("tipo", "—"),
+                "Procurar": r.get("procurar", "—"),
+                "Substituir por": r.get("substituir_por", "—"),
+            })
+        df = pd.DataFrame(dados)
+        st.dataframe(df, hide_index=True, use_container_width=True)
+    else:
+        st.info("Nenhuma substituição cadastrada.")
+
+    st.markdown("---")
+    st.markdown("**➕ Adicionar Substituição**")
+
+    with st.form("form_nova_sub_nip"):
+        col1, col2 = st.columns(2)
+        with col1:
+            tipo_sub = st.selectbox("Tipo", ["frase", "termo"], key="tipo_sub_nip")
+            procurar = st.text_area("Procurar por", placeholder="Texto original...", height=80, key="proc_sub_nip")
+        with col2:
+            ordem_sub = st.number_input("Ordem", min_value=0, value=0, key="ordem_sub_nip")
+            substituir = st.text_area("Substituir por", placeholder="Novo texto...", height=80, key="subst_sub_nip")
+
+        if st.form_submit_button("➕ Adicionar", type="primary", use_container_width=True):
+            if procurar.strip() and substituir.strip():
+                dados = {
+                    "procurar": procurar.strip(),
+                    "substituir_por": substituir.strip(),
+                    "tipo": tipo_sub,
+                    "ativo": True,
+                    "ordem": ordem_sub,
+                }
+                try:
+                    db_manager.inserir("regras_substituicao_nip", dados)
+                    st.success("✅ Substituição adicionada!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro: {e}")
+            else:
+                st.warning("Preencha os dois campos.")
+
+    if frases:
+        st.markdown("---")
+        st.markdown("**🗑️ Remover Substituição**")
+        opcoes_rem = [f"#{r.get('id')} — {r.get('procurar', '')[:40]}" for r in frases]
+        sel = st.selectbox("Selecionar", opcoes_rem, key="sel_rem_sub_nip")
+        if st.button("🗑️ Remover", key="btn_rem_sub_nip"):
+            rid = int(sel.split(" — ")[0].replace("#", ""))
+            try:
+                db_manager.atualizar("regras_substituicao_nip", rid, {"ativo": False})
+                st.success("Removido!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro: {e}")
+
+# ============================================================
+# CRUD — VERBOS (imperativo → infinitivo)
+# ============================================================
+def _renderizar_crud_verbos():
+    st.markdown("##### 🔀 Verbos (Imperativo → Infinitivo)")
+    st.caption("Regras que convertem verbos no imperativo para infinitivo após numerais romanos.")
+
+    try:
+        regras = db_manager.buscar_todos(
+            "regras_substituicao_nip",
+            filtros={"ativo": True},
+            ordem_coluna="ordem",
+            ordem_desc=False,
+        ) or []
+    except Exception:
+        regras = []
+
+    verbos = [r for r in regras if r.get("tipo") == "verbo"]
+
+    if verbos:
+        dados = []
+        for r in verbos:
+            dados.append({
+                "ID": r.get("id", "—"),
+                "Imperativo": r.get("procurar", "—"),
+                "Infinitivo": r.get("substituir_por", "—"),
+            })
+        df = pd.DataFrame(dados)
+        st.dataframe(df, hide_index=True, use_container_width=True)
+    else:
+        st.info("Nenhum verbo cadastrado. Adicione abaixo.")
+
+    st.markdown("---")
+    st.markdown("**➕ Adicionar Verbo**")
+
+    with st.form("form_novo_verbo_nip"):
+        col1, col2 = st.columns(2)
+        with col1:
+            imp = st.text_input("Imperativo (ex: conheça)", placeholder="conheça", key="imp_verbo_nip")
+        with col2:
+            inf = st.text_input("Infinitivo (ex: conhecer)", placeholder="conhecer", key="inf_verbo_nip")
+
+        if st.form_submit_button("➕ Adicionar", type="primary", use_container_width=True):
+            if imp.strip() and inf.strip():
+                dados = {
+                    "procurar": imp.strip().lower(),
+                    "substituir_por": inf.strip().lower(),
+                    "tipo": "verbo",
+                    "ativo": True,
+                    "ordem": 0,
+                }
+                try:
+                    db_manager.inserir("regras_substituicao_nip", dados)
+                    st.success(f"✅ Verbo adicionado: {imp.strip()} → {inf.strip()}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro: {e}")
+            else:
+                st.warning("Preencha os dois campos.")
+
+    if verbos:
+        st.markdown("---")
+        st.markdown("**🗑️ Remover Verbo**")
+        opcoes_rem = [f"#{r.get('id')} — {r.get('procurar', '')} → {r.get('substituir_por', '')}" for r in verbos]
+        sel = st.selectbox("Selecionar", opcoes_rem, key="sel_rem_verbo_nip")
+        if st.button("🗑️ Remover", key="btn_rem_verbo_nip"):
+            rid = int(sel.split(" — ")[0].replace("#", ""))
+            try:
+                db_manager.atualizar("regras_substituicao_nip", rid, {"ativo": False})
+                st.success("Verbo removido!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro: {e}")
+
+# ============================================================
+# CRUD — PALAVRAS DE URGÊNCIA
+# ============================================================
+def _renderizar_crud_urgencia():
+    st.markdown("##### 🚨 Palavras de Urgência")
+    st.caption("Palavras que marcam o processo como urgente automaticamente.")
+
+    try:
+        palavras = db_manager.buscar_todos("palavras_urgencia_nip", filtros={"ativo": True}) or []
+    except Exception:
+        palavras = []
+
+    if palavras:
+        dados = []
+        for p in palavras:
+            dados.append({
+                "ID": p.get("id", "—"),
+                "Palavra": p.get("palavra", "—"),
+            })
+        df = pd.DataFrame(dados)
+        st.dataframe(df, hide_index=True, use_container_width=True)
+    else:
+        st.info("Nenhuma palavra de urgência cadastrada.")
+
+    st.markdown("---")
+    st.markdown("**➕ Adicionar Palavra de Urgência**")
+
+    with st.form("form_nova_urg_nip"):
+        palavra = st.text_input("Palavra", placeholder="Ex: urgente, suspender, licitação...", key="palavra_urg_nip")
+
+        if st.form_submit_button("➕ Adicionar", type="primary", use_container_width=True):
+            if palavra.strip():
+                dados = {
+                    "palavra": palavra.strip().lower(),
+                    "ativo": True,
+                }
+                try:
+                    db_manager.inserir("palavras_urgencia_nip", dados)
+                    st.success(f"✅ Palavra adicionada: {palavra.strip()}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro: {e}")
+            else:
+                st.warning("Digite uma palavra.")
+
+    if palavras:
+        st.markdown("---")
+        st.markdown("**🗑️ Remover Palavra**")
+        opcoes_rem = [f"#{p.get('id')} — {p.get('palavra', '')}" for p in palavras]
+        sel = st.selectbox("Selecionar", opcoes_rem, key="sel_rem_urg_nip")
+        if st.button("🗑️ Remover", key="btn_rem_urg_nip"):
+            rid = int(sel.split(" — ")[0].replace("#", ""))
+            try:
+                db_manager.atualizar("palavras_urgencia_nip", rid, {"ativo": False})
+                st.success("Palavra removida!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro: {e}")
+
+# ============================================================
+# CRUD — PALAVRAS DE SERCON
+# ============================================================
+def _renderizar_crud_sercon():
+    st.markdown("##### 💰 Palavras de SERCON")
+    st.caption("Palavras que direcionam o processo para o SERCON automaticamente.")
+
+    try:
+        palavras = db_manager.buscar_todos("palavras_sercon_nip", filtros={"ativo": True}) or []
+    except Exception:
+        palavras = []
+
+    if palavras:
+        dados = []
+        for p in palavras:
+            dados.append({
+                "ID": p.get("id", "—"),
+                "Palavra": p.get("palavra", "—"),
+                "Situação": p.get("situacao", "—"),
+            })
+        df = pd.DataFrame(dados)
+        st.dataframe(df, hide_index=True, use_container_width=True)
+    else:
+        st.info("Nenhuma palavra de SERCON cadastrada.")
+
+    st.markdown("---")
+    st.markdown("**➕ Adicionar Palavra de SERCON**")
+
+    with st.form("form_nova_sercon_nip"):
+        col1, col2 = st.columns(2)
+        with col1:
+            palavra = st.text_input("Palavra", placeholder="Ex: acórdão, notificação...", key="palavra_sercon_nip")
+        with col2:
+            situacao = st.selectbox(
+                "Situação",
+                ["acórdão", "notificação", "cientificação", "audiência", "cobrança", "multa"],
+                key="sit_sercon_nip"
+            )
+
+        if st.form_submit_button("➕ Adicionar", type="primary", use_container_width=True):
+            if palavra.strip():
+                dados = {
+                    "palavra": palavra.strip().lower(),
+                    "situacao": situacao,
+                    "ativo": True,
+                }
+                try:
+                    db_manager.inserir("palavras_sercon_nip", dados)
+                    st.success(f"✅ Palavra adicionada: {palavra.strip()} ({situacao})")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro: {e}")
+            else:
+                st.warning("Digite uma palavra.")
+
+    if palavras:
+        st.markdown("---")
+        st.markdown("**🗑️ Remover Palavra**")
+        opcoes_rem = [f"#{p.get('id')} — {p.get('palavra', '')} ({p.get('situacao', '')})" for p in palavras]
+        sel = st.selectbox("Selecionar", opcoes_rem, key="sel_rem_sercon_nip")
+        if st.button("🗑️ Remover", key="btn_rem_sercon_nip"):
+            rid = int(sel.split(" — ")[0].replace("#", ""))
+            try:
+                db_manager.atualizar("palavras_sercon_nip", rid, {"ativo": False})
+                st.success("Palavra removida!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro: {e}")
 
 # ============================================================
 # SIDEBAR DO GAB
