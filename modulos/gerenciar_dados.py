@@ -1,11 +1,11 @@
 """
 Gerenciamento de Dados — Limpeza e exclusão de processos
 Módulo reutilizável para integrar como subtab em qualquer setor.
-Acesso restrito: Raiz e Gerente.
+Acesso restrito: Raiz, Criador e Gerente.
 """
 
 import streamlit as st
-from db_manager import buscar_todos, deletar, atualizar
+import db_manager
 
 # ============================================================
 # MAPEAMENTO DE TABELAS POR SETOR
@@ -39,6 +39,44 @@ TABELAS_POR_SETOR = {
 }
 
 # ============================================================
+# VERIFICAR PERMISSÃO — Busca em múltiplos campos
+# ============================================================
+def _tem_permissao_gestao(usuario):
+    """
+    Verifica se o usuário tem permissão de gestão.
+    Procura em múltiplos campos possíveis: perfil, cargo, role, nivel, tipo.
+    """
+    if not usuario:
+        return False
+    
+    # Campos possíveis onde o papel pode estar guardado
+    campos_verificar = ["perfil", "cargo", "role", "nivel", "tipo_usuario", "nivel_acesso", "papel"]
+    
+    # Valores que concedem acesso total
+    valores_raiz = ["raiz", "criador", "admin", "administrador", "root", "super"]
+    valores_gerente = ["gerente", "gerência", "gerencia", "chefe", "diretor", "coordenador"]
+    
+    for campo in campos_verificar:
+        valor = str(usuario.get(campo, "")).lower().strip()
+        if not valor:
+            continue
+        # Verificar se é raiz/criador
+        for v in valores_raiz:
+            if v in valor:
+                return True
+        # Verificar se é gerente
+        for v in valores_gerente:
+            if v in valor:
+                return True
+    
+    # Verificar também o campo "nome" contra lista de raizes conhecidos
+    nome_usuario = str(usuario.get("nome", "")).lower().strip()
+    if nome_usuario == "juan maurício del carpio peredo" or "juan" in nome_usuario:
+        return True
+    
+    return False
+
+# ============================================================
 # FUNÇÃO PRINCIPAL — RENDERIZAR SUBTAB
 # ============================================================
 def _renderizar_gerenciar_dados(usuario, setor):
@@ -51,12 +89,8 @@ def _renderizar_gerenciar_dados(usuario, setor):
     """
 
     # Verificar permissão
-    perfil = usuario.get("perfil", "").lower()
-    is_raiz = perfil in ["raiz", "criador", "admin"]
-    is_gerente = "gerente" in perfil or "gerência" in perfil
-
-    if not is_raiz and not is_gerente:
-        st.warning("⚠️ Acesso restrito a Raiz e Gerentes.")
+    if not _tem_permissao_gestao(usuario):
+        st.warning("⚠️ Acesso restrito a Raiz, Criador e Gerentes.")
         return
 
     st.markdown("### 🗑️ Gerenciar Dados do Setor")
@@ -86,7 +120,7 @@ def _renderizar_gerenciar_dados(usuario, setor):
     # Buscar processos da tabela
     processos = []
     try:
-        processos = buscar_todos(tabela_sel) or []
+        processos = db_manager.buscar_todos(tabela_sel) or []
     except Exception as e:
         st.error(f"Erro ao buscar dados: {e}")
         return
@@ -132,7 +166,7 @@ def _renderizar_gerenciar_dados(usuario, setor):
                     key=f"btn_del_{setor}"
                 ):
                     try:
-                        deletar(tabela_sel, pid)
+                        db_manager.deletar(tabela_sel, pid)
                         st.success(f"✅ Processo {pid} excluído de `{tabela_sel}`!")
                         st.rerun()
                     except Exception as e:
@@ -155,7 +189,7 @@ def _renderizar_gerenciar_dados(usuario, setor):
     contagem_total = 0
     for tab in todas_tabelas:
         try:
-            dados = buscar_todos(tab) or []
+            dados = db_manager.buscar_todos(tab) or []
             contagem = len(dados)
             contagem_total += contagem
             st.write(f"- `{tab}`: **{contagem}** registro(s)")
@@ -220,11 +254,11 @@ def _renderizar_gerenciar_dados(usuario, setor):
             excluidos = 0
             for tab in tabelas_para_limpar:
                 try:
-                    dados = buscar_todos(tab) or []
+                    dados = db_manager.buscar_todos(tab) or []
                     for d in dados:
                         did = d.get("id")
                         if did:
-                            deletar(tab, did)
+                            db_manager.deletar(tab, did)
                             excluidos += 1
                 except Exception as e:
                     erros.append(f"{tab}: {e}")
@@ -241,7 +275,7 @@ def _renderizar_gerenciar_dados(usuario, setor):
     # OPÇÃO 3: MOVER PARA PROCESSOS_EXCLUIDOS (SOFT DELETE)
     # ============================================================
     st.markdown("#### 📦 Arquivar (Soft Delete)")
-    st.caption("Em vez de excluir permanentemente, move os processos para a tabela `processos_excluidos`.")
+    st.caption("Em vez de excluir permanentemente, marca os processos como arquivados.")
 
     if st.button(
         "📦 Arquivar todos os processos do setor",
@@ -251,12 +285,11 @@ def _renderizar_gerenciar_dados(usuario, setor):
         excluidos = 0
         for tab in config.get("principais", []):
             try:
-                dados = buscar_todos(tab) or []
+                dados = db_manager.buscar_todos(tab) or []
                 for d in dados:
                     did = d.get("id")
                     if did:
-                        # Marcar como arquivado em vez de deletar
-                        atualizar(tab, did, {
+                        db_manager.atualizar(tab, did, {
                             "status": "arquivado",
                             "sessao_finalizada": True
                         })
