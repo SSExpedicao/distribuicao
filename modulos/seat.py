@@ -1142,7 +1142,14 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
             else:
                 with st.spinner("Enviando processos para a SEXP..."):
                     salvos = 0
+                    ignorados = 0
                     for p in encaminhados:
+                        # TRAVA OTIMISTA: Verifica se outro usuário já finalizou antes de regravar
+                        proc_atual = db_manager.buscar_por_id("pauta_seat", p["id"])
+                        if proc_atual and proc_atual.get("sessao_finalizada"):
+                            ignorados += 1
+                            continue
+
                         # Marca como finalizada para destravar a leitura no SEXP
                         res = db_manager.atualizar("pauta_seat", p["id"], {
                             "sessao_finalizada": True,
@@ -1151,7 +1158,10 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
                         if res:
                             salvos += 1
 
-                st.success(f"✅ Sessão finalizada com sucesso! {salvos} processo(s) enviado(s) para a SEXP.")
+                if ignorados > 0:
+                    st.warning(f"⚠️ {ignorados} processo(s) ignorado(s) pois já haviam sido enviados por outro gerente. Tela atualizada.")
+                if salvos > 0:
+                    st.success(f"✅ Sessão finalizada com sucesso! {salvos} processo(s) enviado(s) para a SEXP.")
                 st.rerun()
 
         st.caption("Ao finalizar, os processos revisados migram para a esteira da Expedição (SEXP) e não poderão mais ser alterados na SEAT.")
@@ -1286,7 +1296,14 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
 
                     if atribuicoes:
                         salvos = 0
+                        ignorados = 0
                         for proc_id, (editor, revisor) in atribuicoes.items():
+                            # TRAVA OTIMISTA: Verifica se o processo ainda está sem atribuição
+                            proc_atual = db_manager.buscar_por_id("pauta_seat", proc_id)
+                            if proc_atual and (proc_atual.get("editor") or proc_atual.get("revisor")):
+                                ignorados += 1
+                                continue # Pula, pois outro gerente já distribuiu neste meio tempo
+
                             resultado = db_manager.atualizar("pauta_seat", proc_id, {
                                 "editor": editor,
                                 "revisor": revisor,
@@ -1294,7 +1311,10 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
                             if resultado:
                                 salvos += 1
 
-                        st.success(f"{salvos} processo(s) distribuido(s) com sucesso!")
+                        if ignorados > 0:
+                            st.warning(f"⚠️ Operação parcial: {ignorados} processo(s) já haviam sido distribuídos por outro colaborador no mesmo instante.")
+                        if salvos > 0:
+                            st.success(f"{salvos} processo(s) distribuído(s) com sucesso!")
                         st.rerun()
                     else:
                         st.warning("Nenhum processo foi distribuido. Verifique as condicoes.")
@@ -1459,26 +1479,6 @@ def _verificar_despacho_singular_tab(numero_processo):
             if d_num == proc_norm:
                 tipo = d.get("tipo", "")
                 if "sustentacao" in _normalizar_texto(tipo):
-                    return True, "Sustentação Oral"
-                return True, "Despacho Singular"
-        return False, ""
-    except Exception:
-        return False, ""
-
-        for d in despachos:
-            # Tenta múltiplos nomes de campo
-            d_num = _normalizar_numero_processo(
-                d.get("numero_processo") or
-                d.get("processo_numero") or
-                d.get("numero") or
-                d.get("processo") or
-                ""
-            )
-            if d_num == proc_norm:
-                # Verificar se é Sustentação Oral ou Despacho Singular
-                tipo = _normalizar_texto(str(d.get("tipo", "")))
-                obs = _normalizar_texto(str(d.get("observacoes", "")))
-                if "sustentação oral" in tipo or "sustentação oral" in obs:
                     return True, "Sustentação Oral"
                 return True, "Despacho Singular"
         return False, ""
@@ -2359,44 +2359,6 @@ def _aplicar_negrito(texto):
     ]
     for palavra in palavras_chave:
         texto = re.sub(rf'\b{re.escape(palavra)}\b', f'**{palavra}**', texto)
-
-    return texto
-
-def _aplicar_negrito(texto):
-    """Aplica negrito nas palavras-chave conforme as regras do NIP."""
-    import re
-
-    palavras_negrito = [
-        # Urgência
-        "urgente", "urgência", "prioritário", "prioridade", "brevidade",
-        "imediato", "imediatamente", "importância",
-        # Suspensão/Revogação
-        "suspender", "suspensão", "revoga", "abster", "abstenção",
-        "anula", "anular", "negar",
-        # Continuidade
-        "continuidade", "continuação", "prosseguimento", "reabertura", "abertura",
-        # Licitação
-        "licita", "licitação", "licitatório", "certame", "homologar", "adjudicar",
-        # Autoridade
-        "governador", "chefe do poder",
-        # Despacho Singular
-        "despacho singular", "sustentação oral",
-        # SERCON
-        "audiência", "acórdão", "acórdãos", "notificação", "notificar",
-        "cientificação", "cientificar", "convocação",
-        # Outros
-        "Covid", "Corona", "prorrog", "aprovar", "minuta", "pagamento",
-        # Verbos de decisão (após numerais romanos)
-        "tomar conhecimento", "considerar", "determinar", "chamar",
-        "recomendar", "autorizar", "suspender",
-        # Prazos
-        "prazo de",
-    ]
-
-    for palavra in palavras_negrito:
-        # Case-insensitive, preservando o texto original
-        padrao = re.compile(re.escape(palavra), re.IGNORECASE)
-        texto = padrao.sub(lambda m: f"**{m.group(0)}**", texto)
 
     return texto
 
