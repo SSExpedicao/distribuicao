@@ -1114,6 +1114,188 @@ def _renderizar_controle_ferias_sexp(usuario, modo_edicao):
                     st.success("Férias cadastradas!")
                     st.rerun()
 
+# ============================================================
+# SUBMÓDULO: FÉRIAS, ATESTADOS E ABONO (SEXP)
+# ============================================================
+def _verificar_radar_choques_sexp(data_ini, data_fim, id_ignorar=None):
+    """
+    Radar de Choques: verifica se há outros colaboradores da SEXP ausentes no mesmo período.
+    Retorna lista de colisões encontradas.
+    """
+    from datetime import date
+    try:
+        solicitacoes = db_manager.buscar_todos("solicitacoes_ausencia") or []
+    except Exception:
+        return []
+    choques = []
+    for s in solicitacoes:
+        if id_ignorar and str(s.get("id")) == str(id_ignorar):
+            continue
+        # Considera apenas pedidos aprovados ou atestados notificados do setor SEXP
+        if s.get("status") not in ("APROVADA", "NOTIFICADO"):
+            continue
+        if s.get("setor", "").upper() != "SEXP":
+            continue
+        s_ini = date.fromisoformat(str(s.get("data_inicio"))[:10])
+        s_fim = date.fromisoformat(str(s.get("data_fim"))[:10])
+        # Verifica intersecção de datas
+        if data_ini <= s_fim and data_fim >= s_ini:
+            tipo_label = "Férias" if s.get("tipo") == "FERIAS" else ("Atestado" if s.get("tipo") == "ATESTADO" else "Abono")
+            choques.append({
+                "colaborador": s.get("colaborador_nome", "Colaborador"),
+                "tipo": tipo_label,
+                "inicio": s_ini.strftime("%d/%m/%Y"),
+                "fim": s_fim.strftime("%d/%m/%Y"),
+            })
+    return choques
+
+def _renderizar_ausencias_sexp(modo_edicao: bool, usuario: dict):
+    """Renderiza a aba de Férias, Atestados e Abono da SEXP."""
+    from datetime import date
+    import pandas as pd
+
+    st.markdown("### 🌴 Férias, Atestados e Abono")
+    st.caption(
+        "Solicitação de férias, registro de atestados médicos e pedido de abono. "
+        "Férias e abonos são enviados para análise da chefia no Gabinete. "
+        "Atestados médicos são notificados automaticamente."
+    )
+
+    # Identificação automática pelo login
+    nome_usuario = usuario.get("nome", "Colaborador")
+    matricula_usuario = str(usuario.get("matricula", ""))
+
+    tab_solicitar, tab_quadro = st.tabs([
+        "➕ Nova Solicitação",
+        "📅 Quadro Público de Ausências",
+    ])
+
+    # --- ABA 1: NOVA SOLICITAÇÃO ---
+    with tab_solicitar:
+        st.markdown(f"**Colaborador Solicitante:** `{nome_usuario}` (Matrícula: `{matricula_usuario}`)")
+        st.info("O sistema identifica seu perfil automaticamente. Selecione o tipo de registro abaixo.")
+
+        tipo_registro = st.radio(
+            "Tipo de Registro",
+            ["Férias", "Atestado Médico", "Abono"],
+            horizontal=True,
+            key="tipo_registro_sexp"
+        )
+
+        with st.form("form_registro_ausencia_sexp"):
+            col1, col2 = st.columns(2)
+            with col1:
+                data_ini = st.date_input("Data de Início *", value=date.today(), key="dt_ini_sexp")
+            with col2:
+                data_fim = st.date_input("Data de Retorno / Fim *", value=date.today(), key="dt_fim_sexp")
+
+            observacoes = st.text_area(
+                "Observações / Motivo",
+                placeholder="Informações adicionais para a chefia ou equipe...",
+                height=70,
+                key="obs_ausencia_sexp"
+            )
+
+            submit_ausencia = st.form_submit_button("Registrar no Sistema", type="primary", use_container_width=True)
+
+            if submit_ausencia:
+                if data_fim < data_ini:
+                    st.error("A data de término não pode ser anterior à data de início.")
+                else:
+                    dias_total = (data_fim - data_ini).days + 1
+
+                    # Definir tipo e status conforme o registro
+                    if tipo_registro == "Férias":
+                        tipo_db = "FERIAS"
+                        status_inicial = "PENDENTE"
+                    elif tipo_registro == "Atestado Médico":
+                        tipo_db = "ATESTADO"
+                        status_inicial = "NOTIFICADO"
+                    else:  # Abono
+                        tipo_db = "ABONO"
+                        status_inicial = "PENDENTE"
+
+                    # Radar de choques — verifica sobreposição com outros colaboradores
+                    choques = _verificar_radar_choques_sexp(data_ini, data_fim)
+
+                    dados_ausencia = {
+                        "matricula": matricula_usuario,
+                        "colaborador_nome": nome_usuario,
+                        "setor": "SEXP",
+                        "tipo": tipo_db,
+                        "data_inicio": data_ini.isoformat(),
+                        "data_fim": data_fim.isoformat(),
+                        "dias_afastado": dias_total,
+                        "observacoes": observacoes.strip(),
+                        "status": status_inicial,
+                    }
+
+                    res = db_manager.inserir("solicitacoes_ausencia", dados_ausencia)
+
+                    if res:
+                        if tipo_db == "FERIAS":
+                            msg = f"✅ Solicitação de férias ({dias_total} dias) enviada para análise da chefia no Gabinete."
+                        elif tipo_db == "ATESTADO":
+                            msg = f"✅ Atestado médico ({dias_total} dias) notificado com sucesso e publicado no quadro!"
+                        else:
+                            msg = f"✅ Pedido de abono ({dias_total} dias) enviado para análise da chefia no Gabinete."
+                        st.success(msg)
+
+                        # Alertar sobre choques detectados
+                        if choques:
+                            st.warning(f"⚠️ **Atenção:** {len(choques)} colaborador(es) da SEXP já tem ausência programada neste período:")
+                            for c in choques:
+                                st.write(f"- **{c['colaborador']}** — {c['tipo']} de {c['inicio']} a {c['fim']}")
+
+                        st.rerun()
+                    else:
+                        st.error("Erro ao registrar no banco de dados.")
+
+    # --- ABA 2: QUADRO PÚBLICO ---
+    with tab_quadro:
+        st.markdown("#### Ausências Programadas, Atestados e Abonos (SEXP)")
+        st.caption("Consulte este quadro antes de solicitar férias ou abono para evitar sobreposição de datas na equipe.")
+
+        try:
+            todas_ausencias = db_manager.buscar_todos(
+                "solicitacoes_ausencia",
+                filtros={"setor": "SEXP"},
+                ordem_coluna="data_inicio",
+                ordem_desc=False,
+            ) or []
+        except Exception:
+            todas_ausencias = []
+
+        # Exibe apenas aprovados e atestados no quadro geral do setor
+        publicas = [a for a in todas_ausencias if a.get("status") in ("APROVADA", "NOTIFICADO")]
+
+        if not publicas:
+            st.info("Nenhuma ausência ou afastamento programado no momento.")
+        else:
+            dados_quadro = []
+            for a in publicas:
+                tipo_raw = a.get("tipo", "AUSENCIA")
+                if tipo_raw == "FERIAS":
+                    tipo_lbl = "🌴 Férias"
+                elif tipo_raw == "ATESTADO":
+                    tipo_lbl = "🏥 Atestado"
+                elif tipo_raw == "ABONO":
+                    tipo_lbl = "📋 Abono"
+                else:
+                    tipo_lbl = "📝 Ausência"
+
+                ini_str = _formatar_data_curta(a.get("data_inicio"))
+                fim_str = _formatar_data_curta(a.get("data_fim"))
+                dados_quadro.append({
+                    "Colaborador": a.get("colaborador_nome", ""),
+                    "Tipo": tipo_lbl,
+                    "Período": f"{ini_str} a {fim_str}",
+                    "Dias": f"{a.get('dias_afastado', '-')} dia(s)",
+                    "Observação": a.get("observacoes", "") or "—",
+                })
+            df_quadro = pd.DataFrame(dados_quadro)
+            st.dataframe(df_quadro, hide_index=True, use_container_width=True)
+
 # ==================== FUNÇÃO PRINCIPAL ====================
 
 def renderizar(usuario: dict, modo_edicao: bool = False):
@@ -1143,7 +1325,7 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
         "Pauta Ativa",
         "Distribuição",
         "Urgentes",
-        "Controle de Férias",
+        "Férias e Afastamentos",
         "🗑️ Gerenciar Dados",
     ])
 
@@ -1157,7 +1339,7 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
         _renderizar_urgentes_sexp(usuario, modo_edicao)
 
     with tab_ferias:
-        _renderizar_controle_ferias_sexp(usuario, modo_edicao)
+         _renderizar_ausencias_sexp(usuario, modo_edicao)
 
     with tab_gerenciar:
         _renderizar_gerenciar_dados(usuario, "SEXP")
