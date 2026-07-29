@@ -1343,8 +1343,8 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
     with tab_urg:
         _renderizar_urgentes_sexp(usuario, modo_edicao)
 
-    with tab_ferias:
-         _renderizar_ausencias_sexp(usuario, modo_edicao)
+        with tab_ferias:
+         _renderizar_ausencias_sexp(modo_edicao, usuario)
 
     with tab_gerenciar:
         _renderizar_gerenciar_dados(usuario, "SEXP")
