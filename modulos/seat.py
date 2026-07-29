@@ -3394,7 +3394,7 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
     # Escala DOE: SEMPRE visivel
     _renderizar_sidebar_doe(usuario)
 
-    tab_pauta, tab_distribuicao, tab_ds, tab_urgentes, tab_motor, tab_doe, tab_ausencias = st.tabs([
+    tab_pauta, tab_distribuicao, tab_ds, tab_urgentes, tab_motor, tab_doe, tab_ausencias, tab_gerenciar = st.tabs([
         "Pauta Ativa",
         "Distribuicao",
         "Despachos Singulares",
@@ -3402,25 +3402,21 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
         "Motor NIP",
         "Escala DOE",
         "Férias e Afastamentos",
+        "🗑️ Gerenciar Dados",
     ])
-
     with tab_pauta:
         _renderizar_pauta_ativa(modo_edicao, usuario)
-
     with tab_distribuicao:
         _renderizar_distribuicao(modo_edicao, usuario)
-
     with tab_ds:
         _renderizar_despachos_singulares(modo_edicao, usuario)
-
     with tab_urgentes:
         _renderizar_urgentes(modo_edicao, usuario)
-
     with tab_motor:
         _renderizar_motor_nip(modo_edicao, usuario)
-
     with tab_doe:
         _renderizar_escala_doe(modo_edicao, usuario)
-
     with tab_ausencias:
         _renderizar_ausencias_seat(modo_edicao, usuario)
+    with tab_gerenciar:
+        _renderizar_gerenciar_dados(usuario, "SEAT")
