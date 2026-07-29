@@ -12,17 +12,15 @@ from modulos.busca_diarios import _renderizar_busca_diarios
 from modulos.gerenciar_dados import _tem_permissao_gestao
 
 # ============================================================
-# FUNÇÃO DE SIDEBAR — Chamada pelo app.py via placeholder
+# FUNÇÃO DE SIDEBAR
 # ============================================================
 def renderizar_sidebar(usuario, modo_edicao):
-    """Chamada pelo app.py para renderizar o sidebar do GAB no placeholder."""
     _renderizar_sidebar_gab(usuario)
 
 # ============================================================
 # FUNÇÃO PRINCIPAL
 # ============================================================
 def renderizar(usuario: dict, modo_edicao: bool = False):
-    """Função principal do módulo GAB."""
     if not usuario or not isinstance(usuario, dict):
         st.error("Não foi possível carregar os dados do usuário.")
         return
@@ -80,15 +78,21 @@ def _renderizar_dashboard_geral(usuario):
     except Exception:
         sexp_distribuicao = []
 
+    total_seat = len([p for p in seat_processos if not p.get("sessao_finalizada", False) and not p.get("removido_pauta", False)])
+    total_sexp = len([p for p in sexp_distribuicao if not p.get("sessao_finalizada", False) and not p.get("removido_pauta", False) and p.get("distribuido", False)])
+
+    # Urgentes: só conta se houver processos ativos
     try:
         urgentes = db_manager.buscar_todos("processos_urgentes") or []
     except Exception:
         urgentes = []
 
-    total_seat = len([p for p in seat_processos if not p.get("sessao_finalizada", False) and not p.get("removido_pauta", False)])
-    total_sexp = len([p for p in sexp_distribuicao if not p.get("sessao_finalizada", False) and not p.get("removido_pauta", False) and p.get("distribuido", False)])
-    urgentes_ativos = len([u for u in urgentes if not u.get("despachado", False)])
-    urgentes_despachados = len([u for u in urgentes if u.get("despachado", False)])
+    if total_seat == 0 and total_sexp == 0:
+        urgentes_ativos = 0
+        urgentes_despachados = 0
+    else:
+        urgentes_ativos = len([u for u in urgentes if not u.get("despachado", False)])
+        urgentes_despachados = len([u for u in urgentes if u.get("despachado", False)])
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Processos SEAT", total_seat)
@@ -296,7 +300,7 @@ def _renderizar_ferias_setor(usuario, setor):
         st.dataframe(df_aprov, hide_index=True, use_container_width=True)
 
 # ============================================================
-# AVISOS DO SETOR (dentro de cada setor)
+# AVISOS DO SETOR
 # ============================================================
 def _renderizar_avisos_setor(usuario, setor):
     st.markdown(f"#### 📢 Avisos — {setor}")
@@ -446,7 +450,7 @@ def _renderizar_sidebar_gab(usuario):
             st.warning("Erro ao carregar urgentes.")
 
 # ============================================================
-# BANNER DE AVISOS ATIVOS (TOPO)
+# BANNER DE AVISOS ATIVOS
 # ============================================================
 def _renderizar_banner_avisos(usuario):
     try:
@@ -658,19 +662,120 @@ def _processar_pedido_vista(num_processo, usuario):
         st.error("❌ Processo não encontrado em nenhuma tabela. Verifique o número e tente novamente.")
 
 # ============================================================
-# ESCALA DO PLENÁRIO
+# ESCALA DO PLENÁRIO — REESCRITA COMPLETA
 # ============================================================
 def _renderizar_escala_plenario(usuario):
     st.markdown("### 📅 Escala do Plenário")
-    st.caption("Rodízio de acompanhamento do Secretário nas sessões plenárias de quarta-feira.")
+    st.caption("Secretário fixo. Acompanhantes revezam semanalmente. Escala bimestral (8 sessões).")
 
     is_gestor = _tem_permissao_gestao(usuario)
 
+    # Buscar escala existente
     try:
         escala = db_manager.buscar_todos("escala_plenario", ordem_coluna="data_sessao", ordem_desc=False) or []
     except Exception:
         escala = []
 
+    # Buscar afastamentos aprovados
+    try:
+        afastamentos = db_manager.buscar_todos("solicitacoes_ausencia") or []
+    except Exception:
+        afastamentos = []
+    afastamentos_aprovados = [a for a in afastamentos if a.get("status") == "APROVADA"]
+
+    # Botão Gerar Escala
+    if is_gestor:
+        if st.button("🔄 Gerar Escala Bimestral", type="primary", use_container_width=True):
+            _gerar_escala_bimestral(usuario, afastamentos_aprovados)
+            st.rerun()
+
+    if not escala:
+        st.info("Nenhuma escala gerada. Clique em 'Gerar Escala Bimestral' para criar.")
+        return
+
+    # Filtrar ativos
+    escalas_ativas = []
+    for e in escala:
+        if not e.get("ativo", True):
+            continue
+        try:
+            d = datetime.fromisoformat(str(e.get("data_sessao", ""))[:10]).date()
+            escalas_ativas.append((d, e))
+        except Exception:
+            pass
+
+    if not escalas_ativas:
+        st.info("Nenhuma escala ativa.")
+        return
+
+    escalas_ativas.sort(key=lambda x: x[0])
+
+    # Tabela resumo
+    st.markdown("#### Escala Atual")
+    dados_tabela = []
+    for d, e in escalas_ativas:
+        if e.get("secretario_presente", True):
+            sec_status = "✅ Presente"
+        else:
+            motivo = e.get("secretario_motivo_ausencia", "Ausente")
+            sec_status = f"❌ {motivo}"
+        dados_tabela.append({
+            "Data": d.strftime("%d/%m/%Y"),
+            "Dia": _traduz_dia_semana(d.strftime("%A")),
+            "Secretário": sec_status,
+            "Acompanhante": e.get("acompanhante_nome", "—"),
+            "Cargo": e.get("acompanhante_cargo", "—"),
+        })
+
+    df = pd.DataFrame(dados_tabela)
+    st.dataframe(df, hide_index=True, use_container_width=True)
+
+    # Edição manual
+    if is_gestor:
+        st.markdown("---")
+        st.markdown("#### ✏️ Editar Sessões")
+        for d, e in escalas_ativas:
+            eid = e.get("id")
+            with st.expander(f"📅 {d.strftime('%d/%m/%Y')} — {_traduz_dia_semana(d.strftime('%A'))} — {e.get('acompanhante_nome', '—')}"):
+                with st.form(f"form_edit_escala_{eid}"):
+                    sec_pres = st.checkbox("Secretário presente", value=e.get("secretario_presente", True), key=f"sec_pres_edit_{eid}")
+
+                    if not sec_pres:
+                        motivo_val = e.get("secretario_motivo_ausencia", "")
+                        motivo = st.text_input("Motivo da ausência", value=motivo_val, key=f"motivo_edit_{eid}")
+                    else:
+                        motivo = ""
+
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        novo_nome = st.text_input("Acompanhante", value=e.get("acompanhante_nome", ""), key=f"acomp_nome_edit_{eid}")
+                    with col2:
+                        cargos_lista = ["Subsecretário", "Gerente SEAT", "Gerente SEXP", "Gerente SERCON", "Gerente SEMAND", "Assessor Especial"]
+                        cargo_atual = e.get("acompanhante_cargo", "Subsecretário")
+                        idx_cargo = cargos_lista.index(cargo_atual) if cargo_atual in cargos_lista else 0
+                        novo_cargo = st.selectbox("Cargo", cargos_lista, index=idx_cargo, key=f"acomp_cargo_edit_{eid}")
+
+                    obs = st.text_area("Observações", value=e.get("observacoes", ""), key=f"obs_edit_{eid}")
+
+                    col_save, col_del = st.columns(2)
+                    with col_save:
+                        if st.form_submit_button("💾 Salvar", type="primary", use_container_width=True):
+                            db_manager.atualizar("escala_plenario", eid, {
+                                "secretario_presente": sec_pres,
+                                "secretario_motivo_ausencia": motivo,
+                                "acompanhante_nome": novo_nome.strip(),
+                                "acompanhante_cargo": novo_cargo,
+                                "observacoes": obs.strip(),
+                            })
+                            st.success("✅ Escala atualizada!")
+                            st.rerun()
+                    with col_del:
+                        if st.form_submit_button("🗑️ Remover", use_container_width=True):
+                            db_manager.atualizar("escala_plenario", eid, {"ativo": False})
+                            st.rerun()
+
+def _gerar_escala_bimestral(usuario, afastamentos_aprovados):
+    """Gera escala automática para 8 quartas-feiras (bimestre)."""
     hoje = date.today()
     dias_ate_quarta = (2 - hoje.weekday()) % 7
     if dias_ate_quarta == 0:
@@ -678,109 +783,92 @@ def _renderizar_escala_plenario(usuario):
     else:
         proxima_quarta = hoje + timedelta(days=dias_ate_quarta)
 
-    quartas = []
-    for i in range(4):
-        quartas.append(proxima_quarta + timedelta(weeks=i))
+    participantes = [
+        ("Subsecretário", "Subsecretário"),
+        ("Gerente SEAT", "Gerente SEAT"),
+        ("Gerente SEXP", "Gerente SEXP"),
+        ("Gerente SERCON", "Gerente SERCON"),
+        ("Gerente SEMAND", "Gerente SEMAND"),
+        ("Assessor Especial", "Assessor Especial"),
+    ]
+
+    # Buscar escala existente para não duplicar
+    try:
+        escala_existente = db_manager.buscar_todos("escala_plenario") or []
+    except Exception:
+        escala_existente = []
 
     datas_existentes = set()
-    for e in escala:
+    for e in escala_existente:
         try:
-            d = e.get("data_sessao", "")
-            if d:
-                datas_existentes.add(datetime.fromisoformat(str(d)[:10]).date())
+            d = datetime.fromisoformat(str(e.get("data_sessao", ""))[:10]).date()
+            datas_existentes.add(d)
         except Exception:
             pass
 
-    st.markdown("#### Próximas Sessões Plenárias")
+    geradas = 0
+    for i in range(8):
+        quarta = proxima_quarta + timedelta(weeks=i)
 
-    for q in quartas:
-        ja_existe = q in datas_existentes
-        registro = None
-        if ja_existe:
-            for e in escala:
-                try:
-                    d = datetime.fromisoformat(str(e.get("data_sessao", ""))[:10]).date()
-                    if d == q:
-                        registro = e
-                        break
-                except Exception:
-                    pass
+        if quarta in datas_existentes:
+            continue
 
-        data_fmt = q.strftime("%d/%m/%Y (%A)")
+        # Verificar se secretário está afastado nesta data
+        sec_presente = True
+        sec_motivo = ""
+        for a in afastamentos_aprovados:
+            try:
+                a_ini = datetime.fromisoformat(str(a.get("data_inicio", ""))[:10]).date()
+                a_fim = datetime.fromisoformat(str(a.get("data_fim", ""))[:10]).date()
+                if a_ini <= quarta <= a_fim:
+                    sec_presente = False
+                    tipo = a.get("tipo", "")
+                    sec_motivo = {"FERIAS": "Férias", "ATESTADO": "Atestado", "ABONO": "Abono"}.get(tipo, tipo)
+                    break
+            except Exception:
+                pass
 
-        if registro:
-            secretario = "✅ Presente" if registro.get("secretario_presente", True) else "❌ Ausente"
-            acompanhante = registro.get("acompanhante_nome", "—")
-            cargo_acomp = registro.get("acompanhante_cargo", "—")
-            obs = registro.get("observacoes", "") or "—"
+        # Participante do rodízio
+        idx = i % len(participantes)
+        acomp_nome, acomp_cargo = participantes[idx]
 
-            with st.expander(f"📅 {data_fmt} — {acompanhante} ({cargo_acomp})"):
-                st.write(f"**Secretário:** {secretario}")
-                st.write(f"**Acompanhante:** {acompanhante} ({cargo_acomp})")
-                st.write(f"**Observações:** {obs}")
+        dados = {
+            "data_sessao": quarta.isoformat(),
+            "secretario_presente": sec_presente,
+            "secretario_motivo_ausencia": sec_motivo,
+            "acompanhante_nome": acomp_nome,
+            "acompanhante_cargo": acomp_cargo,
+            "observacoes": "",
+            "criado_por": usuario.get("nome", "—"),
+            "ativo": True,
+        }
 
-                if is_gestor:
-                    rid = registro.get("id")
-                    if st.button("🗑️ Remover", key=f"rm_escala_{rid}"):
-                        db_manager.atualizar("escala_plenario", rid, {"ativo": False})
-                        st.rerun()
-        else:
-            with st.expander(f"📅 {data_fmt} — Não definido"):
-                if is_gestor:
-                    st.markdown("**Definir Acompanhante:**")
-                    with st.form(f"form_escala_{q.isoformat()}"):
-                        secretario_presente = st.checkbox("Secretário presente", value=True, key=f"sec_pres_{q.isoformat()}")
-                        acompanhante_nome = st.text_input("Nome do Acompanhante", key=f"acomp_nome_{q.isoformat()}")
-                        acompanhante_cargo = st.selectbox(
-                            "Cargo",
-                            ["Subsecretário", "Gerente SEAT", "Gerente SEXP", "Gerente SERCON", "Gerente SEMAND", "Assessor Especial"],
-                            key=f"acomp_cargo_{q.isoformat()}"
-                        )
-                        obs_escala = st.text_area("Observações", placeholder="Informações adicionais...", height=60, key=f"obs_escala_{q.isoformat()}")
+        try:
+            db_manager.inserir("escala_plenario", dados)
+            geradas += 1
+        except Exception:
+            pass
 
-                        if st.form_submit_button("💾 Salvar Escala", type="primary", use_container_width=True):
-                            if acompanhante_nome.strip():
-                                dados_escala = {
-                                    "data_sessao": q.isoformat(),
-                                    "secretario_presente": secretario_presente,
-                                    "acompanhante_nome": acompanhante_nome.strip(),
-                                    "acompanhante_cargo": acompanhante_cargo,
-                                    "observacoes": obs_escala.strip(),
-                                    "criado_por": usuario.get("nome", "—"),
-                                    "ativo": True,
-                                }
-                                try:
-                                    db_manager.inserir("escala_plenario", dados_escala)
-                                    st.success("✅ Escala salva!")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Erro ao salvar: {e}")
-                            else:
-                                st.warning("Digite o nome do acompanhante.")
-                else:
-                    st.info("Aguardando definição pela gestão.")
+    if geradas > 0:
+        st.success(f"✅ Escala bimestral gerada com {geradas} sessões!")
+    else:
+        st.info("Todas as sessões já possuem escala definida.")
 
-    if escala:
-        st.markdown("---")
-        st.markdown("#### Histórico de Escalas")
-        dados_hist = []
-        for e in escala:
-            if not e.get("ativo", True):
-                continue
-            sec = "Presente" if e.get("secretario_presente", True) else "Ausente"
-            dados_hist.append({
-                "Data": str(e.get("data_sessao", "—"))[:10],
-                "Secretário": sec,
-                "Acompanhante": e.get("acompanhante_nome", "—"),
-                "Cargo": e.get("acompanhante_cargo", "—"),
-                "Observações": e.get("observacoes", "") or "—",
-            })
-        if dados_hist:
-            df_hist = pd.DataFrame(dados_hist)
-            st.dataframe(df_hist, hide_index=True, use_container_width=True)
+def _traduz_dia_semana(dia_ingles):
+    """Traduz o dia da semana do inglês para português."""
+    traducao = {
+        "Monday": "Segunda",
+        "Tuesday": "Terça",
+        "Wednesday": "Quarta",
+        "Thursday": "Quinta",
+        "Friday": "Sexta",
+        "Saturday": "Sábado",
+        "Sunday": "Domingo",
+    }
+    return traducao.get(dia_ingles, dia_ingles)
 
 # ============================================================
-# CADASTRO DE FÉRIAS (Gestão + Secretarias)
+# CADASTRO DE FÉRIAS
 # ============================================================
 def _renderizar_cadastro_ferias(usuario):
     is_gestor = _tem_permissao_gestao(usuario)
