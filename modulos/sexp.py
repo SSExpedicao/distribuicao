@@ -154,7 +154,6 @@ def _sincronizar_com_seat():
             # Converte "Ordinaria" para "Sessão Ordinária" ao salvar no SEXP
             tipo_sexp = _determinar_tabela_destino_sexp(p, nums_urgentes)
             
-            # ATENÇÃO: ÚNICA ALTERAÇÃO FEITA - CÓPIA DA SESSÃO E DATA PARA O SEXP
             novo_registro = {
                 "processo_numero": p.get("processo_numero", ""),
                 "relator": p.get("relator", ""),
@@ -230,7 +229,7 @@ def _gerar_cadeia_duplas(colaboradores):
 def _executar_distribuicao(tipo_sessao, colaboradores_selecionados):
     """
     Executa a distribuição em cadeia com pareamento normalizado de sessões
-    e fallback blindado de gravação no banco de dados.
+    e fallback blindado de gravação no banco de dados com Trava Otimista.
     """
     try:
         todos = db_manager.buscar_todos("distribuicao_sexp") or []
@@ -244,7 +243,6 @@ def _executar_distribuicao(tipo_sessao, colaboradores_selecionados):
         except Exception:
             nums_urgentes = set()
 
-        # CORREÇÃO BINÁRIA: Usa _determinar_tabela_destino_sexp para enxergar os 38 processos!
         processos = [
             d for d in todos 
             if _determinar_tabela_destino_sexp(d, nums_urgentes) == tipo_sessao 
@@ -265,10 +263,20 @@ def _executar_distribuicao(tipo_sessao, colaboradores_selecionados):
             return 0
 
         sucessos = 0
+        ignorados = 0
         erros_detalhados = []
         cliente = db_manager.get_supabase()
 
         for i, p in enumerate(processos):
+            id_reg = p.get("id") or p.get("id_distribuicao") or p.get("id_processo")
+            
+            # TRAVA OTIMISTA: Verifica no banco se outro usuário distribuiu nos últimos milissegundos
+            if id_reg:
+                proc_atual = db_manager.buscar_por_id("distribuicao_sexp", id_reg)
+                if proc_atual and proc_atual.get("distribuido", False):
+                    ignorados += 1
+                    continue
+
             par = duplas[i % len(duplas)]
             dados_update = {
                 "expedidor": par[0],
@@ -278,7 +286,6 @@ def _executar_distribuicao(tipo_sessao, colaboradores_selecionados):
             }
 
             res = None
-            id_reg = p.get("id") or p.get("id_distribuicao") or p.get("id_processo")
 
             # 1ª Tentativa: Via db_manager usando o ID
             if id_reg:
@@ -301,6 +308,9 @@ def _executar_distribuicao(tipo_sessao, colaboradores_selecionados):
 
             if res:
                 sucessos += 1
+
+        if ignorados > 0:
+            st.warning(f"⚠️ Operação parcial: {ignorados} processo(s) já haviam sido distribuídos por outro colaborador simultaneamente.")
 
         if sucessos == 0 and erros_detalhados:
             with st.expander("🛠️ Diagnóstico do Erro no Supabase (Clique para ver detalhes)", expanded=True):
@@ -530,6 +540,9 @@ def _renderizar_pauta_ativa_sexp(usuario, modo_edicao):
                             if qtd > 0:
                                 st.success(f"✅ {qtd} processo(s) distribuído(s) em cadeia! Acesse a aba 'Distribuição' ou 'Urgentes' para operar.")
                                 st.rerun()
+                            elif qtd == 0:
+                                # O aviso de "parcial/já distribuído" já é mostrado dentro do _executar_distribuicao se houver conflito
+                                pass
                             else:
                                 st.error("Erro ao distribuir processos no banco de dados.")
             else:
@@ -652,17 +665,29 @@ def _renderizar_card_processo_sexp(p, modo_edicao, usuario):
                         if not nova_forma:
                             st.error("Selecione a forma de despacho antes de marcar como expedido.")
                         else:
-                            db_manager.atualizar("distribuicao_sexp", p["id"], {
-                                "expedido": True,
-                                "forma_despacho": nova_forma,
-                            })
-                            st.success(f"Marcado como expedido via {nova_forma}!")
-                            st.rerun()
+                            # TRAVA OTIMISTA: Verificar se outro usuário não expediu antes
+                            proc_atual = db_manager.buscar_por_id("distribuicao_sexp", p["id"])
+                            if proc_atual and proc_atual.get("expedido"):
+                                st.warning("⚠️ Este processo já foi marcado como expedido por outro colaborador.")
+                                st.rerun()
+                            else:
+                                db_manager.atualizar("distribuicao_sexp", p["id"], {
+                                    "expedido": True,
+                                    "forma_despacho": nova_forma,
+                                })
+                                st.success(f"Marcado como expedido via {nova_forma}!")
+                                st.rerun()
                 elif pode_expedir and not expedido:
                     if st.button("📤 Marcar Expedido", key=f"exp_{p['id']}"):
-                        db_manager.atualizar("distribuicao_sexp", p["id"], {"expedido": True})
-                        st.success("Marcado como expedido!")
-                        st.rerun()
+                        # TRAVA OTIMISTA: Verificar se outro usuário não expediu antes
+                        proc_atual = db_manager.buscar_por_id("distribuicao_sexp", p["id"])
+                        if proc_atual and proc_atual.get("expedido"):
+                            st.warning("⚠️ Este processo já foi marcado como expedido por outro colaborador.")
+                            st.rerun()
+                        else:
+                            db_manager.atualizar("distribuicao_sexp", p["id"], {"expedido": True})
+                            st.success("Marcado como expedido!")
+                            st.rerun()
                 elif expedido and pode_expedir:
                     if st.button("↩️ Desfazer Expedição", key=f"unexp_{p['id']}"):
                         db_manager.atualizar("distribuicao_sexp", p["id"], {
@@ -676,9 +701,15 @@ def _renderizar_card_processo_sexp(p, modo_edicao, usuario):
                 pode_revisar = (nome == p.get("revisor")) or cargo in ("gerente", "criador", "raiz")
                 if pode_revisar and expedido and not revisado:
                     if st.button("✅ Marcar Revisado", key=f"rev_{p['id']}"):
-                        db_manager.atualizar("distribuicao_sexp", p["id"], {"revisado": True})
-                        st.success("Marcado como revisado!")
-                        st.rerun()
+                        # TRAVA OTIMISTA: Verificar se outro usuário não revisou antes
+                        proc_atual = db_manager.buscar_por_id("distribuicao_sexp", p["id"])
+                        if proc_atual and proc_atual.get("revisado"):
+                            st.warning("⚠️ Este processo já foi marcado como revisado por outro colaborador.")
+                            st.rerun()
+                        else:
+                            db_manager.atualizar("distribuicao_sexp", p["id"], {"revisado": True})
+                            st.success("Marcado como revisado!")
+                            st.rerun()
                 elif revisado and pode_revisar:
                     if st.button("↩️ Desfazer Revisão", key=f"unrev_{p['id']}"):
                         db_manager.atualizar("distribuicao_sexp", p["id"], {"revisado": False})
@@ -864,10 +895,18 @@ def _renderizar_distribuicao_sexp(usuario, modo_edicao):
                     confirmar = st.checkbox(f"Estou ciente e desejo arquivar a {chave}", key=f"chk_{tipo}_{idx_tab}_{idx_ses}")
                     if st.button(f"🔒 Finalizar Sessão ({chave})", key=f"btn_fim_{tipo}_{idx_tab}_{idx_ses}", type="primary", disabled=not confirmar, use_container_width=True):
                         with st.spinner(f"Arquivando pauta {chave}..."):
+                            ignorados = 0
                             for p in processos:
                                 id_fechar = p.get("id") or p.get("id_distribuicao") or p.get("id_processo")
                                 if id_fechar:
+                                    # TRAVA OTIMISTA: Verificar se outro gerente não arquivou antes
+                                    proc_atual = db_manager.buscar_por_id("distribuicao_sexp", id_fechar)
+                                    if proc_atual and proc_atual.get("sessao_finalizada"):
+                                        ignorados += 1
+                                        continue
                                     db_manager.atualizar("distribuicao_sexp", id_fechar, {"sessao_finalizada": True, "status": "arquivado"})
+                        if ignorados > 0:
+                            st.warning(f"⚠️ {ignorados} processo(s) ignorados pois já haviam sido arquivados por outro gerente.")
                         st.success(f"✅ {chave} encerrada e arquivada!")
                         st.rerun()
                 st.markdown("---")
@@ -968,10 +1007,18 @@ def _renderizar_urgentes_sexp(usuario, modo_edicao):
             confirmar = st.checkbox(f"Estou ciente e desejo arquivar os processos de {chave}", key=f"chk_urg_{idx_ses}")
             if st.button(f"🔒 Finalizar Sessão de Urgentes ({chave})", key=f"btn_fim_urg_{idx_ses}", type="primary", disabled=not confirmar):
                 with st.spinner(f"Arquivando pauta {chave}..."):
+                    ignorados = 0
                     for p in processos:
                         id_fechar = p.get("id") or p.get("id_distribuicao") or p.get("id_processo")
                         if id_fechar:
+                            # TRAVA OTIMISTA: Verificar se outro gerente não arquivou antes
+                            proc_atual = db_manager.buscar_por_id("distribuicao_sexp", id_fechar)
+                            if proc_atual and proc_atual.get("sessao_finalizada"):
+                                ignorados += 1
+                                continue
                             db_manager.atualizar("distribuicao_sexp", id_fechar, {"sessao_finalizada": True, "status": "arquivado"})
+                if ignorados > 0:
+                    st.warning(f"⚠️ {ignorados} processo(s) ignorados pois já haviam sido arquivados por outro gerente.")
                 st.success(f"✅ {chave} encerrada e arquivada com sucesso!")
                 st.rerun()
         st.markdown("---")
