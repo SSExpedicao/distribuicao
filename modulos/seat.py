@@ -3482,3 +3482,41 @@ def _normalizar_texto(texto):
     texto = str(texto).lower().strip()
     nfkd = unicodedata.normalize('NFKD', texto)
     return ''.join([c for c in nfkd if not unicodedata.combining(c)])
+
+def _renderizar_despachos_singulares(modo_edicao, usuario):
+    """Renderiza a tab de Despachos Singulares."""
+    st.markdown("### Despachos Singulares")
+    st.caption("Processos com despacho singular da sessão atual.")
+
+    try:
+        todos_processos = db_manager.buscar_todos("pauta_seat") or []
+    except Exception:
+        todos_processos = []
+
+    despachos = [
+        p for p in todos_processos
+        if not p.get("sessao_finalizada", False)
+        and not p.get("removido_pauta", False)
+        and (
+            "despacho singular" in _normalizar_texto(p.get("tipo_sessao", ""))
+            or p.get("despacho_singular", False)
+        )
+    ]
+
+    if not despachos:
+        st.info("Nenhum despacho singular na pauta atual.")
+        return
+
+    dados = []
+    for p in despachos:
+        dados.append({
+            "Processo": p.get("processo_numero", "—"),
+            "Relator": p.get("relator", "—"),
+            "Sessão": p.get("numero_sessao", "—"),
+            "Dia": str(p.get("dia_sessao", "—"))[:10],
+            "Editor": p.get("editor", "—"),
+            "Status": "Editado" if p.get("editado") else "Pendente",
+        })
+
+    df = pd.DataFrame(dados)
+    st.dataframe(df, hide_index=True, use_container_width=True)
