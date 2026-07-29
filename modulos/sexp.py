@@ -12,6 +12,33 @@ TIPOS_SESSAO_SEXP = [
     "Urgentes",
 ]
 
+def _eh_o_colaborador(usuario, nome_colaborador):
+    """Verifica se o nome do colaborador corresponde ao usuário logado."""
+    if not usuario or not nome_colaborador:
+        return False
+    nome_usuario = usuario.get("nome", "") or ""
+    nome_guerra = usuario.get("nome_guerra", "") or ""
+    # Compara ignorando maiúsculas/minúsculas
+    return (
+        nome_colaborador.strip().lower() == nome_usuario.strip().lower()
+        or nome_colaborador.strip().lower() == nome_guerra.strip().lower()
+    )
+
+def _formatar_data_curta(data):
+    """Formata uma data ISO (YYYY-MM-DD) para DD/MM/AAAA."""
+    if not data:
+        return "—"
+    try:
+        from datetime import datetime
+        # Tenta formato ISO completo (com timestamp)
+        if "T" in str(data):
+            dt = datetime.fromisoformat(str(data))
+        else:
+            dt = datetime.strptime(str(data)[:10], "%Y-%m-%d")
+        return dt.strftime("%d/%m/%Y")
+    except (ValueError, TypeError):
+        return str(data)[:10] if data else "—"
+
 # ==================== FUNÇÕES AUXILIARES ====================
 
 def _normalizar_texto(texto):
