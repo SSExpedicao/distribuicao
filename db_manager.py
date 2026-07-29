@@ -18,6 +18,7 @@ from datetime import date
 import os
 import random
 import string
+import streamlit as st # ADICIONADO: Necessario para usar o motor de cache do Streamlit
 
 # ============================================================
 # IMPORTS CONDICIONAIS (Extracao de texto de arquivos)
@@ -156,6 +157,10 @@ def verificar_tabelas() -> Dict[str, bool]:
 # OPERACOES CRUD GENERICAS
 # ============================================================
 
+def _invalidar_cache():
+    """Limpa a memoria do Streamlit garantindo dados frescos apos modificacoes."""
+    st.cache_data.clear()
+
 def inserir(tabela: str, dados: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Insere um registro na tabela especificada."""
     cliente = get_supabase()
@@ -165,12 +170,15 @@ def inserir(tabela: str, dados: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     try:
         resp = cliente.table(tabela).insert(dados).execute()
         if resp.data:
+            _invalidar_cache() # ATUALIZACAO: Limpa cache ao inserir
             return resp.data[0]
         return None
     except Exception as e:
         print(f"[DB ERROR] inserir({tabela}): {e}")
         return None
 
+# ATUALIZACAO: Aplicado o escudo de cache para otimizar milhoes de requisicoes
+@st.cache_data(ttl=30, show_spinner=False)
 def buscar_todos(
     tabela: str,
     filtros: Optional[Dict[str, Any]] = None,
@@ -224,6 +232,7 @@ def atualizar(tabela: str, id_registro: int, dados: Dict[str, Any]) -> Optional[
     try:
         resp = cliente.table(tabela).update(dados).eq("id", id_registro).execute()
         if resp.data:
+            _invalidar_cache() # ATUALIZACAO: Limpa cache ao modificar
             return resp.data[0]
         return None
     except Exception as e:
@@ -237,11 +246,14 @@ def deletar(tabela: str, id_registro: int) -> bool:
         return False
     try:
         cliente.table(tabela).delete().eq("id", id_registro).execute()
+        _invalidar_cache() # ATUALIZACAO: Limpa cache ao deletar
         return True
     except Exception as e:
         print(f"[ERRO] Falha ao deletar de {tabela}: {e}")
         return False
 
+# ATUALIZACAO: Aplicado o escudo de cache tambem na paginacao
+@st.cache_data(ttl=30, show_spinner=False)
 def buscar_todos_paginado(
     tabela: str,
     pagina: int = 1,
