@@ -424,25 +424,33 @@ def _renderizar_sidebar_sexp(usuario):
 # ==================== PAUTA ATIVA ====================
 
 def _auto_atribuir_administrativa_jessyca():
-    """Gatilho silencioso: encontra processos da Sessão Administrativa e atribui direto para a Jéssyca (Gerência)."""
+    """Atribui automaticamente processos da Sessão Administrativa 
+    ao responsável configurado no banco (tabela configuracoes).
+    Antes era hardcoded para 'Jessyca' — agora é dinâmico."""
     try:
-        todos = db_manager.buscar_todos("distribuicao_sexp") or []
-        urgentes_seat = db_manager.buscar_todos("processos_urgentes") or []
-        nums_urgentes = {_normalizar_numero_processo(u.get("processo_numero", "")) for u in urgentes_seat}
-
-        for p in todos:
-            tipo = _determinar_tabela_destino_sexp(p, nums_urgentes)
-            if tipo == "Sessão Administrativa" and not p.get("distribuido", False) and not p.get("sessao_finalizada", False):
-                id_reg = p.get("id") or p.get("id_distribuicao") or p.get("id_processo")
-                if id_reg:
-                    db_manager.atualizar("distribuicao_sexp", id_reg, {
-                        "expedidor": "Jessyca",
-                        "revisor": "Jessyca",
-                        "distribuido": True,
-                        "tipo_sessao": "Sessão Administrativa"
-                    })
-    except Exception as e:
-        print(f"[ERRO BYPASS ADMINISTRATIVA] {e}")
+        config = db_manager.buscar_todos("configuracoes") or []
+        responsavel = None
+        for c in config:
+            if c.get("chave") == "responsavel_sessao_administrativa":
+                responsavel = c.get("valor")
+                break
+        if not responsavel:
+            return  # Sem configuração no banco, não faz nada
+        todos_sexp = db_manager.buscar_todos("distribuicao_sexp") or []
+        admin_nao_atribuidos = [
+            d for d in todos_sexp 
+            if _determinar_tabela_destino_sexp(d, set()) == "Sessão Administrativa"
+            and not d.get("distribuido", False)
+        ]
+        for p in admin_nao_atribuidos:
+            id_linha = p.get("id")
+            if id_linha:
+                db_manager.atualizar("distribuicao_sexp", id_linha, {
+                    "distribuido": True,
+                    "expedidor": responsavel
+                })
+    except Exception:
+        pass  # Falha silenciosa — não bloqueia o carregamento do módulo
 
 def _renderizar_pauta_ativa_sexp(usuario, modo_edicao):
     """Renderiza a Pauta Ativa apenas com métricas e painel de distribuição em cadeia (Sem listas longas)."""
