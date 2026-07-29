@@ -1392,11 +1392,12 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
     _renderizar_sidebar_sexp(usuario)
 
     # Tabs
-    tab_pauta, tab_dist, tab_urg, tab_ferias = st.tabs([
+    tab_pauta, tab_dist, tab_urg, tab_ferias, tab_gerenciar = st.tabs([
         "Pauta Ativa",
         "Distribuição",
         "Urgentes",
         "Controle de Férias",
+        "🗑️ Gerenciar Dados",
     ])
 
     with tab_pauta:
@@ -1410,3 +1411,6 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
 
     with tab_ferias:
         _renderizar_controle_ferias_sexp(usuario, modo_edicao)
+
+    with tab_gerenciar:
+        _renderizar_gerenciar_dados(usuario, "SEXP")
