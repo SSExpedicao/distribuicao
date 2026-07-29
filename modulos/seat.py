@@ -3473,3 +3473,12 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
         _renderizar_ausencias_seat(modo_edicao, usuario)
     with tab_gerenciar:
         _renderizar_gerenciar_dados(usuario, "SEAT")
+
+def _normalizar_texto(texto):
+    """Normaliza texto para comparação (lowercase, sem acentos)."""
+    import unicodedata
+    if not texto:
+        return ""
+    texto = str(texto).lower().strip()
+    nfkd = unicodedata.normalize('NFKD', texto)
+    return ''.join([c for c in nfkd if not unicodedata.combining(c)])
