@@ -1,0 +1,40 @@
+name: Monitor DODF + DOE-TCDF Diário
+
+on:
+  schedule:
+    # 08:00 BRT (11:00 UTC) — DODF
+    - cron: '0 11 * * 1-5'
+    # 09:00 BRT (12:00 UTC) — DOE-TCDF
+    - cron: '0 12 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  monitor-dodf:
+    name: Monitor DODF
+    runs-on: ubuntu-latest
+    if: github.event.schedule == '0 11 * * 1-5' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r scripts/requirements.txt
+      - run: python scripts/dodf_monitor.py
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+
+  monitor-doe-tcdf:
+    name: Monitor DOE-TCDF
+    runs-on: ubuntu-latest
+    if: github.event.schedule == '0 12 * * 1-5' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r scripts/requirements.txt
+      - run: python scripts/doe_tcdf_monitor.py
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
