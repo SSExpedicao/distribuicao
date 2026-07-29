@@ -18,7 +18,6 @@ from datetime import date
 import os
 import random
 import string
-from modulos.gerenciar_dados import _renderizar_gerenciar_dados
 
 # ============================================================
 # IMPORTS CONDICIONAIS (Extracao de texto de arquivos)
