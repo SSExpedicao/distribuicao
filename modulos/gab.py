@@ -34,10 +34,8 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
     st.markdown(f"**Colaborador:** {nome} | **Cargo:** {cargo} | **Setor:** {setor}")
     st.markdown("---")
 
-    # Banner de avisos ativos no topo
     _renderizar_banner_avisos(usuario)
 
-    # Tabs principais do GAB
     tab_dashboard, tab_setores, tab_escala, tab_ferias, tab_agenda, tab_diarios, tab_auditoria = st.tabs([
         "📊 Dashboard Geral",
         "📂 Setores",
@@ -67,11 +65,11 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
 # DASHBOARD GERAL
 # ============================================================
 def _renderizar_dashboard_geral(usuario):
-    """Dashboard principal com métricas consolidadas de todos os setores."""
     st.markdown("### 📊 Dashboard Geral do Gabinete")
     st.caption("Visão consolidada de todos os setores — dados em tempo real.")
 
-    # Buscar dados de todos os setores
+    st.markdown("#### 📈 Métricas de Volume")
+
     try:
         seat_processos = db_manager.buscar_todos("pauta_seat") or []
     except Exception:
@@ -87,9 +85,6 @@ def _renderizar_dashboard_geral(usuario):
     except Exception:
         urgentes = []
 
-    # Métricas de Volume
-    st.markdown("#### 📈 Métricas de Volume")
-
     total_seat = len([p for p in seat_processos if not p.get("sessao_finalizada", False) and not p.get("removido_pauta", False)])
     total_sexp = len([p for p in sexp_distribuicao if not p.get("sessao_finalizada", False) and not p.get("removido_pauta", False) and p.get("distribuido", False)])
     urgentes_ativos = len([u for u in urgentes if not u.get("despachado", False)])
@@ -101,7 +96,6 @@ def _renderizar_dashboard_geral(usuario):
     col3.metric("Urgentes Ativos", urgentes_ativos)
     col4.metric("Urgentes Despachados", urgentes_despachados)
 
-    # Processos por Sessão
     st.markdown("#### 🥧 Processos por Sessão")
 
     sessoes = {}
@@ -123,25 +117,21 @@ def _renderizar_dashboard_geral(usuario):
     else:
         st.info("Nenhum processo ativo no momento.")
 
-    # Quadro de Colaboradores
     st.markdown("#### 👥 Desempenho de Colaboradores")
     _renderizar_quadro_colaboradores(seat_processos, sexp_distribuicao)
 
-    # Linha do Tempo — Despachos da Semana
     st.markdown("#### 📅 Linha do Tempo — Despachos da Semana")
     _renderizar_linha_tempo_despachos(seat_processos, sexp_distribuicao)
 
 # ============================================================
-# TAB SETORES — Subtabs por setor (cada gerente só vê o seu)
+# TAB SETORES
 # ============================================================
 def _renderizar_setores(usuario):
-    """Tab de Setores com subtabs. Gerente só vê seu próprio setor."""
     st.markdown("### 📂 Setores Operacionais")
 
     cargo = usuario.get("nivel_acesso", usuario.get("cargo", "")).lower()
     setor_usuario = usuario.get("setor", "")
 
-    # Raiz/Criador/Secretaria veem todos os setores
     if cargo in ("criador", "raiz", "secretaria", "super_admin_criador", "admin_gabinete", "espectadora_global"):
         setores_visiveis = ["SEAT", "SEXP", "SERCON", "SEMAND"]
     elif cargo in ("gerente", "gestor_setorial"):
@@ -153,7 +143,6 @@ def _renderizar_setores(usuario):
         st.warning("Nenhum setor disponível para seu perfil.")
         return
 
-    # Subtabs dentro da tab Setores
     subtabs = st.tabs([f"📂 {s}" for s in setores_visiveis])
 
     for i, setor in enumerate(setores_visiveis):
@@ -161,8 +150,6 @@ def _renderizar_setores(usuario):
             _renderizar_conteudo_setor(usuario, setor)
 
 def _renderizar_conteudo_setor(usuario, setor):
-    """Conteúdo de cada setor: dashboard + férias dos colaboradores + avisos do setor."""
-    # Sub-subtabs dentro de cada setor
     tab_dash, tab_ferias, tab_avisos = st.tabs([
         "📊 Dashboard",
         "🏖️ Férias dos Colaboradores",
@@ -171,10 +158,8 @@ def _renderizar_conteudo_setor(usuario, setor):
 
     with tab_dash:
         _renderizar_dashboard_setor(usuario, setor)
-
     with tab_ferias:
         _renderizar_ferias_setor(usuario, setor)
-
     with tab_avisos:
         _renderizar_avisos_setor(usuario, setor)
 
@@ -182,7 +167,6 @@ def _renderizar_conteudo_setor(usuario, setor):
 # DASHBOARD POR SETOR
 # ============================================================
 def _renderizar_dashboard_setor(usuario, setor):
-    """Dashboard operacional de cada setor."""
     st.markdown(f"#### 📊 Dashboard — {setor}")
 
     if setor == "SEAT":
@@ -233,7 +217,6 @@ def _renderizar_dashboard_setor(usuario, setor):
 # FÉRIAS DOS COLABORADORES (dentro de cada setor)
 # ============================================================
 def _renderizar_ferias_setor(usuario, setor):
-    """Mostra as solicitações de férias/atestado/abono dos colaboradores do setor."""
     st.markdown(f"#### 🏖️ Férias e Afastamentos — {setor}")
     st.caption("Solicitações de férias, atestados e abonos dos colaboradores deste setor.")
 
@@ -251,7 +234,6 @@ def _renderizar_ferias_setor(usuario, setor):
         st.info("Nenhuma solicitação de afastamento registrada para este setor.")
         return
 
-    # Separar por status
     pendentes = [s for s in solicitacoes if s.get("status") == "PENDENTE"]
     aprovadas = [s for s in solicitacoes if s.get("status") == "APROVADA"]
     rejeitadas = [s for s in solicitacoes if s.get("status") == "REJEITADA"]
@@ -261,7 +243,6 @@ def _renderizar_ferias_setor(usuario, setor):
     col2.metric("Aprovadas", len(aprovadas))
     col3.metric("Rejeitadas", len(rejeitadas))
 
-    # Mostrar pendentes com botões de aprovação
     if pendentes:
         st.markdown("##### ⏳ Aguardando Aprovação")
         for s in pendentes:
@@ -298,7 +279,6 @@ def _renderizar_ferias_setor(usuario, setor):
                 else:
                     st.info("Apenas gestores podem aprovar/rejeitar.")
 
-    # Mostrar aprovadas
     if aprovadas:
         st.markdown("##### ✅ Aprovadas")
         dados_aprov = []
@@ -319,32 +299,6 @@ def _renderizar_ferias_setor(usuario, setor):
 # AVISOS DO SETOR (dentro de cada setor)
 # ============================================================
 def _renderizar_avisos_setor(usuario, setor):
-    """Avisos que vão somente para aquele setor."""
-    st.markdown(f"#### 📢 Avisos — {setor}")
-    st.caption(f"Avisos enviados exclusivamente para o setor {setor}.")
-
-    is_gestor = _tem_permissao_gestao(usuario)
-
-    # Formulário de envio (apenas gestores)
-    if is_gestor:
-        with st.form("form_aviso_setor"):
-            st.markdown("**Enviar Aviso para o Setor:**")
-            mensagem = st.text_area("Mensagem", placeholder="Digite o aviso...", height=80, key=f"txt_aviso_{setor}")
-            duracao = st.number_input("Duração (horas)", min_value=1, value=24, key=f"dur_aviso_{setor}")
-
-            if st.form_submit_button("📢 Publicar", type="primary", use_container_width=True):
-                if mensagem.strip():
-                    dados_aviso = {
-                        "remetente": usuario.get("nome", "—"),
-                        "setor_remetente": usuario.get("setor", "GAB"),
-                        "escopo": setor,
-                        "mensagem": mensagem.strip(),
-                        "duracao_horas": duracao,
-                        "data_criacao": datetime.now().isoformat(),
-                        "ativo": True,
-                    }
-                    try:def _renderizar_avisos_setor(usuario, setor):
-    """Avisos que vão somente para aquele setor."""
     st.markdown(f"#### 📢 Avisos — {setor}")
     st.caption(f"Avisos enviados exclusivamente para o setor {setor}.")
 
@@ -416,7 +370,6 @@ def _renderizar_avisos_setor(usuario, setor):
 # SIDEBAR DO GAB
 # ============================================================
 def _renderizar_sidebar_gab(usuario):
-    """Renderiza os elementos do sidebar: Avisos, Pedido de Vista, Urgentes."""
     is_gestor = _tem_permissao_gestao(usuario)
     cargo = usuario.get("nivel_acesso", usuario.get("cargo", "")).lower()
     is_raiz = cargo in ("criador", "raiz", "admin", "super_admin_criador") or "juan" in usuario.get("nome", "").lower()
@@ -464,7 +417,6 @@ def _renderizar_sidebar_gab(usuario):
         else:
             st.info("Apenas gestores podem enviar avisos.")
 
-        # Pedido de Vista
         st.markdown("---")
         st.markdown("### 👁️ Pedido de Vista")
 
@@ -479,7 +431,6 @@ def _renderizar_sidebar_gab(usuario):
         else:
             st.info("Acesso restrito a Raiz.")
 
-        # Contador de Urgentes
         st.markdown("---")
         st.markdown("### 🚨 Urgentes")
 
@@ -498,7 +449,6 @@ def _renderizar_sidebar_gab(usuario):
 # BANNER DE AVISOS ATIVOS (TOPO)
 # ============================================================
 def _renderizar_banner_avisos(usuario):
-    """Renderiza banner de avisos ativos no topo da página."""
     try:
         avisos = db_manager.buscar_todos("avisos_gab") or []
     except Exception:
@@ -534,10 +484,9 @@ def _renderizar_banner_avisos(usuario):
             st.warning(f"📢 **{remetente}** ({escopo}): {mensagem}")
 
 # ============================================================
-# FUNÇÕES AUXILIARES — DASHBOARD
+# QUADRO DE COLABORADORES
 # ============================================================
 def _renderizar_quadro_colaboradores(seat_processos, sexp_processos):
-    """Quadro com nomes de colaboradores, total trabalhado e ativos."""
     colaboradores = {}
 
     for p in seat_processos:
@@ -590,8 +539,10 @@ def _renderizar_quadro_colaboradores(seat_processos, sexp_processos):
     df = pd.DataFrame(dados)
     st.dataframe(df, hide_index=True, use_container_width=True)
 
+# ============================================================
+# DESEMPENHO POR COLABORADOR
+# ============================================================
 def _renderizar_desempenho_colaborador(processos, setor):
-    """Desempenho individual por colaborador dentro de um setor."""
     colaboradores = {}
 
     for p in processos:
@@ -629,8 +580,10 @@ def _renderizar_desempenho_colaborador(processos, setor):
     df = pd.DataFrame(dados)
     st.dataframe(df, hide_index=True, use_container_width=True)
 
+# ============================================================
+# LINHA DO TEMPO — DESPACHOS DA SEMANA
+# ============================================================
 def _renderizar_linha_tempo_despachos(seat_processos, sexp_processos):
-    """Linha do tempo de despachos singulares e sustentações orais da semana."""
     hoje = datetime.now().date()
     inicio_semana = hoje - timedelta(days=hoje.weekday())
 
@@ -674,8 +627,10 @@ def _renderizar_linha_tempo_despachos(seat_processos, sexp_processos):
     df = pd.DataFrame(dados_tabela)
     st.dataframe(df, hide_index=True, use_container_width=True)
 
+# ============================================================
+# PEDIDO DE VISTA
+# ============================================================
 def _processar_pedido_vista(num_processo, usuario):
-    """Localiza o processo em todas as tabelas e marca como pedido de vista."""
     tabelas_busca = ["pauta_seat", "distribuicao_sexp", "processos_urgentes"]
     encontrados = 0
 
@@ -706,19 +661,16 @@ def _processar_pedido_vista(num_processo, usuario):
 # ESCALA DO PLENÁRIO
 # ============================================================
 def _renderizar_escala_plenario(usuario):
-    """Escala do Plenário — rodízio toda quarta-feira."""
     st.markdown("### 📅 Escala do Plenário")
     st.caption("Rodízio de acompanhamento do Secretário nas sessões plenárias de quarta-feira.")
 
     is_gestor = _tem_permissao_gestao(usuario)
 
-    # Buscar escala existente
     try:
         escala = db_manager.buscar_todos("escala_plenario", ordem_coluna="data_sessao", ordem_desc=False) or []
     except Exception:
         escala = []
 
-    # Gerar próximas 4 quartas-feiras se não existirem
     hoje = date.today()
     dias_ate_quarta = (2 - hoje.weekday()) % 7
     if dias_ate_quarta == 0:
@@ -730,7 +682,6 @@ def _renderizar_escala_plenario(usuario):
     for i in range(4):
         quartas.append(proxima_quarta + timedelta(weeks=i))
 
-    # Verificar quais quartas já têm registro
     datas_existentes = set()
     for e in escala:
         try:
@@ -740,7 +691,6 @@ def _renderizar_escala_plenario(usuario):
         except Exception:
             pass
 
-    # Mostrar próximas sessões
     st.markdown("#### Próximas Sessões Plenárias")
 
     for q in quartas:
@@ -810,7 +760,6 @@ def _renderizar_escala_plenario(usuario):
                 else:
                     st.info("Aguardando definição pela gestão.")
 
-    # Histórico de escalas
     if escala:
         st.markdown("---")
         st.markdown("#### Histórico de Escalas")
@@ -834,7 +783,6 @@ def _renderizar_escala_plenario(usuario):
 # CADASTRO DE FÉRIAS (Gestão + Secretarias)
 # ============================================================
 def _renderizar_cadastro_ferias(usuario):
-    """Cadastro de férias/abono para o topo da pirâmide: gestão e secretarias."""
     is_gestor = _tem_permissao_gestao(usuario)
 
     if not is_gestor:
@@ -855,7 +803,6 @@ def _renderizar_cadastro_ferias(usuario):
         "✅ Aprovações Pendentes",
     ])
 
-    # --- ABA 1: NOVA MARCAÇÃO ---
     with tab_solicitar:
         st.markdown(f"**Solicitante:** {nome_usuario}")
 
@@ -888,7 +835,6 @@ def _renderizar_cadastro_ferias(usuario):
                     else:
                         tipo_db = "ABONO"
 
-                    # Secretaria precisa de confirmação do Secretário/Subsecretário
                     if is_secretaria and not is_raiz:
                         status_inicial = "PENDENTE"
                         msg_sucesso = f"Solicitação de {tipo_registro.lower()} ({dias_total} dias) enviada para confirmação do Secretário/Subsecretário."
@@ -896,7 +842,6 @@ def _renderizar_cadastro_ferias(usuario):
                         status_inicial = "APROVADA"
                         msg_sucesso = f"✅ {tipo_registro} ({dias_total} dias) registrado e confirmado!"
 
-                    # Verificar choque de datas
                     try:
                         todas = db_manager.buscar_todos("solicitacoes_ausencia") or []
                     except Exception:
@@ -949,7 +894,6 @@ def _renderizar_cadastro_ferias(usuario):
                     except Exception as e:
                         st.error(f"Erro: {e}")
 
-    # --- ABA 2: QUADRO DE AFASTAMENTOS ---
     with tab_quadro:
         st.markdown("#### 📅 Quadro de Afastamentos da Gestão")
 
@@ -979,7 +923,6 @@ def _renderizar_cadastro_ferias(usuario):
             df_quadro = pd.DataFrame(dados_quadro)
             st.dataframe(df_quadro, hide_index=True, use_container_width=True)
 
-    # --- ABA 3: APROVAÇÕES PENDENTES ---
     with tab_aprovacao:
         st.markdown("#### ✅ Aprovações Pendentes")
 
@@ -1013,7 +956,6 @@ def _renderizar_cadastro_ferias(usuario):
                     st.write(f"**Dias:** {dias}")
                     st.write(f"**Observações:** {obs}")
 
-                    # Apenas Raiz/Secretário/Subsecretário podem aprovar
                     if is_raiz:
                         col_apr, col_rej = st.columns(2)
                         with col_apr:
@@ -1033,7 +975,6 @@ def _renderizar_cadastro_ferias(usuario):
 # AGENDA DO SECRETÁRIO
 # ============================================================
 def _renderizar_agenda_secretario(usuario):
-    """Agenda do Secretário — secretaria marca compromissos."""
     is_gestor = _tem_permissao_gestao(usuario)
 
     if not is_gestor:
@@ -1045,7 +986,6 @@ def _renderizar_agenda_secretario(usuario):
 
     tab_novo, tab_lista = st.tabs(["➕ Novo Compromisso", "📅 Compromissos Agendados"])
 
-    # --- NOVO COMPROMISSO ---
     with tab_novo:
         with st.form("form_agenda"):
             col1, col2 = st.columns(2)
@@ -1087,7 +1027,6 @@ def _renderizar_agenda_secretario(usuario):
                     except Exception as e:
                         st.error(f"Erro: {e}")
 
-    # --- LISTA DE COMPROMISSOS ---
     with tab_lista:
         try:
             compromissos = db_manager.buscar_todos("agenda_secretario", ordem_coluna="data_compromisso", ordem_desc=False) or []
@@ -1098,7 +1037,6 @@ def _renderizar_agenda_secretario(usuario):
             st.info("Nenhum compromisso agendado.")
             return
 
-        # Filtrar apenas futuros e hoje
         hoje = date.today()
         futuros = []
         for c in compromissos:
@@ -1130,7 +1068,6 @@ def _renderizar_agenda_secretario(usuario):
         df_lista = pd.DataFrame(dados_lista)
         st.dataframe(df_lista, hide_index=True, use_container_width=True)
 
-        # Detalhes em expanders
         st.markdown("##### Detalhes")
         for d, c in futuros:
             cid = c.get("id")
@@ -1153,7 +1090,6 @@ def _renderizar_agenda_secretario(usuario):
 # AUDITORIA
 # ============================================================
 def _renderizar_auditoria(usuario):
-    """Tab de auditoria — tabela corrida de todos os processos."""
     st.markdown("### 📝 Auditoria de Processos")
     st.caption("Tabela corrida de todos os processos que entraram no sistema. Processos podem aparecer duplicados.")
 
