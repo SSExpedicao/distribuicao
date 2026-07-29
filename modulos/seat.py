@@ -3245,15 +3245,51 @@ def _verificar_radar_choques(data_ini, data_fim, id_ignorar=None):
             })
     return choques
 
+def _verificar_radar_choques_seat(data_ini, data_fim, id_ignorar=None):
+    """
+    Radar de Choques: verifica se há outros colaboradores da SEAT ausentes no mesmo período.
+    Retorna lista de colisões encontradas.
+    """
+    from datetime import date
+    try:
+        solicitacoes = db_manager.buscar_todos("solicitacoes_ausencia") or []
+    except Exception:
+        return []
+    choques = []
+    for s in solicitacoes:
+        if id_ignorar and str(s.get("id")) == str(id_ignorar):
+            continue
+        if s.get("status") not in ("APROVADA", "NOTIFICADO"):
+            continue
+        if s.get("setor", "").upper() != "SEAT":
+            continue
+        s_ini = date.fromisoformat(str(s.get("data_inicio"))[:10])
+        s_fim = date.fromisoformat(str(s.get("data_fim"))[:10])
+        if data_ini <= s_fim and data_fim >= s_ini:
+            tipo_label = "Férias" if s.get("tipo") == "FERIAS" else ("Atestado" if s.get("tipo") == "ATESTADO" else "Abono")
+            choques.append({
+                "colaborador": s.get("colaborador_nome", "Colaborador"),
+                "tipo": tipo_label,
+                "inicio": s_ini.strftime("%d/%m/%Y"),
+                "fim": s_fim.strftime("%d/%m/%Y"),
+            })
+    return choques
+
 def _renderizar_ausencias_seat(modo_edicao: bool, usuario: dict):
-    """Renderiza a aba de Férias e Afastamentos da SEAT (Apenas Operacional)."""
+    """Renderiza a aba de Férias, Atestados e Abono da SEAT."""
     from datetime import date
     import pandas as pd
 
-    st.markdown("### 🌴 Férias e Afastamentos Médicos")
+    # Proteção contra usuario None
+    if not usuario or not isinstance(usuario, dict):
+        st.warning("Não foi possível carregar os dados do usuário logado.")
+        return
+
+    st.markdown("### 🌴 Férias, Atestados e Abono")
     st.caption(
-        "Solicitação de férias e registro imediato de atestados médicos. "
-        "A análise e aprovação dos pedidos são realizadas pela chefia no Módulo Gabinete."
+        "Solicitação de férias, registro de atestados médicos e pedido de abono. "
+        "Férias e abonos são enviados para análise da chefia no Gabinete. "
+        "Atestados médicos são notificados automaticamente."
     )
 
     # Identificação automática pelo login
@@ -3270,19 +3306,25 @@ def _renderizar_ausencias_seat(modo_edicao: bool, usuario: dict):
         st.markdown(f"**Colaborador Solicitante:** `{nome_usuario}` (Matrícula: `{matricula_usuario}`)")
         st.info("O sistema identifica seu perfil automaticamente. Selecione o tipo de registro abaixo.")
 
-        tipo_registro = st.radio("Tipo de Registro", ["Férias", "Atestado Médico"], horizontal=True)
+        tipo_registro = st.radio(
+            "Tipo de Registro",
+            ["Férias", "Atestado Médico", "Abono"],
+            horizontal=True,
+            key="tipo_registro_seat"
+        )
 
-        with st.form("form_registro_ausencia"):
+        with st.form("form_registro_ausencia_seat"):
             col1, col2 = st.columns(2)
             with col1:
-                data_ini = st.date_input("Data de Início *", value=date.today())
+                data_ini = st.date_input("Data de Início *", value=date.today(), key="dt_ini_seat")
             with col2:
-                data_fim = st.date_input("Data de Retorno / Fim *", value=date.today())
+                data_fim = st.date_input("Data de Retorno / Fim *", value=date.today(), key="dt_fim_seat")
 
             observacoes = st.text_area(
                 "Observações / Motivo",
                 placeholder="Informações adicionais para a chefia ou equipe...",
                 height=70,
+                key="obs_ausencia_seat"
             )
 
             submit_ausencia = st.form_submit_button("Registrar no Sistema", type="primary", use_container_width=True)
@@ -3292,10 +3334,20 @@ def _renderizar_ausencias_seat(modo_edicao: bool, usuario: dict):
                     st.error("A data de término não pode ser anterior à data de início.")
                 else:
                     dias_total = (data_fim - data_ini).days + 1
-                    tipo_db = "FERIAS" if tipo_registro == "Férias" else "ATESTADO"
-                    
-                    # Férias vão para análise do Gabinete; Atestado tem bypass (NOTIFICADO)
-                    status_inicial = "PENDENTE" if tipo_db == "FERIAS" else "NOTIFICADO"
+
+                    # Definir tipo e status conforme o registro
+                    if tipo_registro == "Férias":
+                        tipo_db = "FERIAS"
+                        status_inicial = "PENDENTE"
+                    elif tipo_registro == "Atestado Médico":
+                        tipo_db = "ATESTADO"
+                        status_inicial = "NOTIFICADO"
+                    else:  # Abono
+                        tipo_db = "ABONO"
+                        status_inicial = "PENDENTE"
+
+                    # Radar de choques — verifica sobreposição com outros colaboradores
+                    choques = _verificar_radar_choques_seat(data_ini, data_fim)
 
                     dados_ausencia = {
                         "matricula": matricula_usuario,
@@ -3310,19 +3362,30 @@ def _renderizar_ausencias_seat(modo_edicao: bool, usuario: dict):
                     }
 
                     res = db_manager.inserir("solicitacoes_ausencia", dados_ausencia)
+
                     if res:
                         if tipo_db == "FERIAS":
-                            st.success(f"✅ Solicitação de férias ({dias_total} dias) enviada para análise da chefia no Gabinete.")
+                            msg = f"✅ Solicitação de férias ({dias_total} dias) enviada para análise da chefia no Gabinete."
+                        elif tipo_db == "ATESTADO":
+                            msg = f"✅ Atestado médico ({dias_total} dias) notificado com sucesso e publicado no quadro!"
                         else:
-                            st.success(f"✅ Atestado médico ({dias_total} dias) notificado com sucesso e publicado no quadro!")
+                            msg = f"✅ Pedido de abono ({dias_total} dias) enviado para análise da chefia no Gabinete."
+                        st.success(msg)
+
+                        # Alertar sobre choques detectados
+                        if choques:
+                            st.warning(f"⚠️ **Atenção:** {len(choques)} colaborador(es) da SEAT já tem ausência programada neste período:")
+                            for c in choques:
+                                st.write(f"- **{c['colaborador']}** — {c['tipo']} de {c['inicio']} a {c['fim']}")
+
                         st.rerun()
                     else:
                         st.error("Erro ao registrar no banco de dados.")
 
     # --- ABA 2: QUADRO PÚBLICO ---
     with tab_quadro:
-        st.markdown("#### Ausências Programadas e Atestados (SEAT)")
-        st.caption("Consulte este quadro antes de solicitar férias para evitar sobreposição de datas na equipe.")
+        st.markdown("#### Ausências Programadas, Atestados e Abonos (SEAT)")
+        st.caption("Consulte este quadro antes de solicitar férias ou abono para evitar sobreposição de datas na equipe.")
 
         try:
             todas_ausencias = db_manager.buscar_todos(
@@ -3342,7 +3405,16 @@ def _renderizar_ausencias_seat(modo_edicao: bool, usuario: dict):
         else:
             dados_quadro = []
             for a in publicas:
-                tipo_lbl = "🌴 Férias" if a.get("tipo") == "FERIAS" else "🏥 Atestado"
+                tipo_raw = a.get("tipo", "AUSENCIA")
+                if tipo_raw == "FERIAS":
+                    tipo_lbl = "🌴 Férias"
+                elif tipo_raw == "ATESTADO":
+                    tipo_lbl = "🏥 Atestado"
+                elif tipo_raw == "ABONO":
+                    tipo_lbl = "📋 Abono"
+                else:
+                    tipo_lbl = "📝 Ausência"
+
                 ini_str = _formatar_data_curta(a.get("data_inicio"))
                 fim_str = _formatar_data_curta(a.get("data_fim"))
                 dados_quadro.append({
