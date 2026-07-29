@@ -2204,14 +2204,29 @@ def _ofuscar_cpf(texto):
     return re.sub(r'\d{3}\.\d{3}\.\d{3}-\d{2}', ofuscar, texto)
 
 def _formatar_numerais(texto):
-    """Padroniza formatação de numerais romanos, letras de itens e abreviações."""
+    """
+    Padroniza formatação de numerais romanos, letras de itens e abreviações.
+    Garante que tudo fique no formato perfeito ANTES do teleprompt espremer o texto.
+    """
     import re
-    texto = re.sub(r'\b([IVXLCDM]+)[\.\)]\s*', r'\1 – ', texto)
-    texto = re.sub(r'\b([IVXLCDM]+)\s*-\s*', r'\1 – ', texto)
-    texto = re.sub(r'\b([a-z])\.\s*', r'\1) ', texto)
+    
+    # 1. Numerais Romanos: Converte I., I), I - para o padrão oficial "I – "
+    # Usa (^|\s) para garantir que pegue numerais soltos e não partes de palavras.
+    texto = re.sub(r'(^|\s)([IVXLCDM]+)[\.\)]\s*', r'\1\2 – ', texto)
+    texto = re.sub(r'(^|\s)([IVXLCDM]+)\s*-\s*', r'\1\2 – ', texto)
+
+    # 2. Letras de Subitens: Converte a. para a) e padroniza o espaço.
+    texto = re.sub(r'(^|\s)([a-z])\.\s*', r'\1\2) ', texto)
+
+    # 3. Correções de digitação comuns
     texto = texto.replace("n.º", "nº").replace("n°", "nº")
+    
+    # 4. Garante espaço após nº: nº1.561 → nº 1.561
     texto = re.sub(r'nº(\d)', r'nº \1', texto)
+
+    # 5. Corrige LTDA - ME
     texto = re.sub(r'LTDA(?!\.)\s*[-–]\s*ME', 'LTDA. – ME', texto)
+
     return texto
 
 def _remover_e_antes_itens(texto):
@@ -2281,13 +2296,21 @@ def _formatar_teleprompt(texto):
     return texto.strip()
 
 def _aplicar_negrito(texto):
-    """Aplica negrito nas palavras-chave conforme as regras do NIP."""
+    """
+    Aplica negrito nas palavras-chave e em TODOS os inícios de comando/subitem.
+    Esta função agora sobrevive ao formato Teleprompt (texto em uma única linha).
+    """
     import re
     
-    # 1. Numerais e itens
-    texto = re.sub(r'\b([IVXLCDM]+)\s*–', r'**\1** –', texto)
-    texto = re.sub(r'\b([a-z])\)', r'**\1)**', texto)
+    # 1. Negrito nos Numerais Romanos (I -, II -, III -)
+    # Procura um espaço (ou o início absoluto do texto), seguido do Romano e do traço.
+    texto = re.sub(r'(^|\s)([IVXLCDM]+)(\s*[–\-—])', r'\1**\2**\3', texto)
+
+    # 2. Negrito nas Letras de Subitens (a), b), c))
+    # Procura um espaço, seguido de UMA ÚNICA letra minúscula e um parêntese de fechamento.
+    texto = re.sub(r'(^|\s)([a-z])(\))', r'\1**\2\3**', texto)
     
+    # 3. Negrito nos Prazos (0 a 20 dias)
     for i in range(21):
         texto = re.sub(
             rf'\b{i}\s*(?:\([^)]+\)\s*)?dias?\b',
@@ -2296,6 +2319,7 @@ def _aplicar_negrito(texto):
             flags=re.IGNORECASE
         )
 
+    # 4. Negrito nas Palavras-Chave Oficiais
     palavras_negrito = [
         "urgente", "urgência", "prioritário", "prioridade", "brevidade",
         "imediato", "imediatamente", "importância",
@@ -2313,8 +2337,9 @@ def _aplicar_negrito(texto):
     ]
 
     for palavra in palavras_negrito:
-        padrao = re.compile(re.escape(palavra), re.IGNORECASE)
-        texto = padrao.sub(lambda m: f"**{m.group(0)}**", texto)
+        # (?<!\*\*) garante que ele não tente colocar negrito numa palavra que JÁ ESTÁ em negrito
+        padrao = re.compile(rf'(?<!\*\*)({re.escape(palavra)})(?!\*\*)', re.IGNORECASE)
+        texto = padrao.sub(r'**\1**', texto)
 
     return texto
 
