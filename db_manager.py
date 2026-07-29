@@ -18,6 +18,7 @@ from datetime import date
 import os
 import random
 import string
+from modulos.gerenciar_dados import _renderizar_gerenciar_dados
 
 # ============================================================
 # IMPORTS CONDICIONAIS (Extracao de texto de arquivos)
@@ -231,16 +232,15 @@ def atualizar(tabela: str, id_registro: int, dados: Dict[str, Any]) -> Optional[
         return None
 
 def deletar(tabela: str, id_registro: int) -> bool:
-    """Deleta um registro pelo ID (remocao fisica)."""
+    """Deleta um registro pelo ID."""
     cliente = get_supabase()
     if not cliente:
         return False
-
     try:
-        resp = cliente.table(tabela).delete().eq("id", id_registro).execute()
-        return bool(resp.data)
+        cliente.table(tabela).delete().eq("id", id_registro).execute()
+        return True
     except Exception as e:
-        print(f"[DB ERROR] deletar({tabela}, {id_registro}): {e}")
+        print(f"[ERRO] Falha ao deletar de {tabela}: {e}")
         return False
 
 def buscar_todos_paginado(
