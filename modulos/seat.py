@@ -23,6 +23,7 @@ import io
 import unicodedata
 from datetime import datetime, date
 import db_manager
+from modulos.gerenciar_dados import _renderizar_gerenciar_dados
 
 try:
     import pandas as pd
