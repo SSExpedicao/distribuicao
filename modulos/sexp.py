@@ -154,10 +154,13 @@ def _sincronizar_com_seat():
             # Converte "Ordinaria" para "Sessão Ordinária" ao salvar no SEXP
             tipo_sexp = _determinar_tabela_destino_sexp(p, nums_urgentes)
             
+            # ATENÇÃO: ÚNICA ALTERAÇÃO FEITA - CÓPIA DA SESSÃO E DATA PARA O SEXP
             novo_registro = {
                 "processo_numero": p.get("processo_numero", ""),
                 "relator": p.get("relator", ""),
                 "tipo_sessao": tipo_sexp,
+                "numero_sessao": p.get("numero_sessao", ""), # <-- COPIADO DA SEAT
+                "dia_sessao": p.get("dia_sessao", ""),       # <-- COPIADO DA SEAT
                 "distribuido": False,
                 "expedido": False,
                 "revisado": False,
@@ -582,8 +585,6 @@ def _renderizar_pauta_ativa_sexp(usuario, modo_edicao):
     if not todos_sexp or not tem_algum_exibido:
         st.info("Nenhum processo importado da SEAT ainda. Aguarde a finalização da sessão na SEAT.")
         
-# ==================== DISTRIBUIÇÃO ====================
-
 def _renderizar_card_processo_sexp(p, modo_edicao, usuario):
     cargo = usuario.get("cargo", "operacional")
     nome = usuario.get("nome", "")
@@ -871,8 +872,6 @@ def _renderizar_distribuicao_sexp(usuario, modo_edicao):
                         st.rerun()
                 st.markdown("---")
                 
-# ==================== URGENTES ====================
-
 def _renderizar_urgentes_sexp(usuario, modo_edicao):
     """Renderiza a aba de Urgentes em Tabela Interativa (igual Ordinária), isolada por Sessão/Data com encerramento de chefia."""
     import pandas as pd
@@ -979,8 +978,6 @@ def _renderizar_urgentes_sexp(usuario, modo_edicao):
 
         for p in processos_urg:
             _renderizar_card_processo_sexp(p, modo_edicao, usuario)
-
-# ==================== CONTROLE DE FÉRIAS ====================
 
 def _renderizar_controle_ferias_sexp(usuario, modo_edicao):
     """Renderiza a aba de Controle de Férias."""
@@ -1114,9 +1111,6 @@ def _renderizar_controle_ferias_sexp(usuario, modo_edicao):
                     st.success("Férias cadastradas!")
                     st.rerun()
 
-# ============================================================
-# SUBMÓDULO: FÉRIAS, ATESTADOS E ABONO (SEXP)
-# ============================================================
 def _verificar_radar_choques_sexp(data_ini, data_fim, id_ignorar=None):
     """
     Radar de Choques: verifica se há outros colaboradores da SEXP ausentes no mesmo período.
@@ -1343,7 +1337,7 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
     with tab_urg:
         _renderizar_urgentes_sexp(usuario, modo_edicao)
 
-        with tab_ferias:
+    with tab_ferias:
          _renderizar_ausencias_sexp(modo_edicao, usuario)
 
     with tab_gerenciar:
