@@ -751,7 +751,6 @@ def _renderizar_distribuicao_sexp(usuario, modo_edicao):
             if not procs_tipo:
                 st.info("Nenhum processo atribuído a você neste tipo de sessão.")
                 continue
-            # AGRUPAMENTO ANTI-AGLOMERAÇÃO: Separa rigorosamente por Número da Sessão e Dia
             sessoes_isoladas = {}
             for p in procs_tipo:
                 num_s = p.get("numero_sessao") or p.get("sessao_numero") or "S/N"
@@ -761,7 +760,6 @@ def _renderizar_distribuicao_sexp(usuario, modo_edicao):
                 if chave_sessao not in sessoes_isoladas:
                     sessoes_isoladas[chave_sessao] = []
                 sessoes_isoladas[chave_sessao].append(p)
-            # Desenha uma tabela interativa independente para cada sessão/data
             for idx_ses, (chave, processos) in enumerate(sessoes_isoladas.items()):
                 st.markdown(f"#### 📅 {chave}")
                 total = len(processos)
@@ -812,6 +810,49 @@ def _renderizar_distribuicao_sexp(usuario, modo_edicao):
                         st.rerun()
                 else:
                     st.dataframe(df.drop(columns=["ID"]), hide_index=True, use_container_width=True)
+
+                # ============================================================
+                # BOTÃO FORA DE PAUTA — Remove processo da distribuição
+                # Marca como removido_pauta, vai para auditoria
+                # ============================================================
+                if modo_edicao:
+                    st.markdown("##### 🚫 Retirar Processo da Pauta")
+                    st.caption("O processo sai da distribuição mas fica registrado na auditoria como 'Retirado de Pauta'.")
+                    with st.expander("Retirar processo desta sessão", expanded=False):
+                        proc_remover = st.selectbox(
+                            "Selecionar processo para retirar",
+                            range(len(processos)),
+                            format_func=lambda i: f"{processos[i].get('processo_numero', '—')} | {processos[i].get('relator', '—')}",
+                            key=f"sel_remover_{tipo}_{idx_tab}_{idx_ses}"
+                        )
+                        if proc_remover is not None:
+                            proc_sel = processos[proc_remover]
+                            motivo = st.text_input(
+                                "Motivo da retirada (opcional)",
+                                placeholder="Ex: Retirado a pedido do relator, processo cancelado...",
+                                key=f"motivo_remover_{tipo}_{idx_tab}_{idx_ses}"
+                            )
+                            confirmar_remocao = st.checkbox(
+                                "Confirmo que desejo retirar este processo da pauta",
+                                key=f"chk_remover_{tipo}_{idx_tab}_{idx_ses}"
+                            )
+                            if st.button(
+                                "🚫 Retirar de Pauta",
+                                type="primary",
+                                disabled=not confirmar_remocao,
+                                use_container_width=True,
+                                key=f"btn_remover_{tipo}_{idx_tab}_{idx_ses}"
+                            ):
+                                id_remover = proc_sel.get("id") or proc_sel.get("id_distribuicao") or proc_sel.get("id_processo")
+                                if id_remover:
+                                    db_manager.atualizar("distribuicao_sexp", id_remover, {
+                                        "removido_pauta": True,
+                                        "status": "retirado_pauta",
+                                        "comentarios": f"RETIRADO DE PAUTA: {motivo}" if motivo else "RETIRADO DE PAUTA"
+                                    })
+                                    st.success(f"✅ Processo {proc_sel.get('processo_numero', '—')} retirado da pauta!")
+                                    st.rerun()
+
                 # BOTÃO DE FINALIZAR SESSÃO: Exclusivo para o Gerente / Criador!
                 if modo_edicao and is_gerente:
                     faltam_fechar = total - revisados
