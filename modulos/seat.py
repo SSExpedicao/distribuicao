@@ -2067,6 +2067,17 @@ def _aplicar_substituicoes(texto, regras):
             texto = re.sub(padrao_flexivel, substituir, texto, flags=re.IGNORECASE)
     return texto
 
+def _formatar_numerais(texto):
+    """Padroniza numerais romanos e letras antes de espremer o texto."""
+    import re
+    texto = re.sub(r'(^|\s)([IVXLCDM]+)[\.\)]\s*', r'\1\2 – ', texto)
+    texto = re.sub(r'(^|\s)([IVXLCDM]+)\s*-\s*', r'\1\2 – ', texto)
+    texto = re.sub(r'(^|\s)([a-z])\.\s*', r'\1\2) ', texto)
+    texto = texto.replace("n.º", "nº").replace("n°", "nº")
+    texto = re.sub(r'nº(\d)', r'nº \1', texto)
+    texto = re.sub(r'LTDA(?!\.)\s*[-–]\s*ME', 'LTDA. – ME', texto)
+    return texto
+      
 def _converter_imperativo_para_infinitivo_algoritmico(palavra, excecoes_banco=None):
     """Converte verbo preservando regras estritas. Sem o 'de' -> 'dar'."""
     p_lower = palavra.lower().strip()
@@ -2263,27 +2274,15 @@ def _corrigir_hifenizacao(texto):
     import re
     return re.sub(r'(\w)-\s*\n\s*(\w)', r'\1\2', texto)
   
-def _formatar_teleprompt(texto):
-    """Muda texto para linha única, mantendo os espaços limpos."""
-    import re
-    return re.sub(r'\s+', ' ', texto).strip()
 
 def _aplicar_negrito(texto):
-    """
-    Aplica negrito nas palavras-chave e em TODOS os inícios de comando/subitem.
-    Esta função agora sobrevive ao formato Teleprompt (texto em uma única linha).
-    """
+    """Aplica negrito sobrevivendo ao formato Teleprompt."""
     import re
-    
-    # 1. Negrito nos Numerais Romanos (I -, II -, III -)
-    # Procura um espaço (ou o início absoluto do texto), seguido do Romano e do traço.
+    # Romanos
     texto = re.sub(r'(^|\s)([IVXLCDM]+)(\s*[–\-—])', r'\1**\2**\3', texto)
-
-    # 2. Negrito nas Letras de Subitens (a), b), c))
-    # Procura um espaço, seguido de UMA ÚNICA letra minúscula e um parêntese de fechamento.
+    # Letras (a), b), c))
     texto = re.sub(r'(^|\s)([a-z])(\))', r'\1**\2\3**', texto)
-    
-    # 3. Negrito nos Prazos (0 a 20 dias)
+    # Prazos
     for i in range(21):
         texto = re.sub(
             rf'\b{i}\s*(?:\([^)]+\)\s*)?dias?\b',
@@ -2291,49 +2290,43 @@ def _aplicar_negrito(texto):
             texto,
             flags=re.IGNORECASE
         )
-
-    # 4. Negrito nas Palavras-Chave Oficiais
     palavras_negrito = [
         "urgente", "urgência", "prioritário", "prioridade", "brevidade",
-        "imediato", "imediatamente", "importância",
-        "suspender", "suspensão", "revoga", "abster", "abstenção",
-        "anula", "anular", "negar",
+        "imediato", "imediatamente", "importância", "suspender", "suspensão", 
+        "revoga", "abster", "abstenção", "anula", "anular", "negar",
         "continuidade", "continuação", "prosseguimento", "reabertura", "abertura",
         "licita", "licitação", "licitatório", "certame", "homologar", "adjudicar",
-        "governador", "chefe do poder",
-        "despacho singular", "sustentação oral",
+        "governador", "chefe do poder", "despacho singular", "sustentação oral",
         "audiência", "acórdão", "acórdãos", "notificação", "notificar",
-        "cientificação", "cientificar", "convocação",
-        "Covid", "Corona", "prorrog", "aprovar", "minuta", "pagamento",
-        "tomar conhecimento", "considerar", "determinar", "chamar",
-        "recomendar", "autorizar", "prazo de",
+        "cientificação", "cientificar", "convocação", "Covid", "Corona", 
+        "prorrog", "aprovar", "minuta", "pagamento", "tomar conhecimento", 
+        "considerar", "determinar", "chamar", "recomendar", "autorizar", "prazo de"
     ]
-
     for palavra in palavras_negrito:
-        # (?<!\*\*) garante que ele não tente colocar negrito numa palavra que JÁ ESTÁ em negrito
         padrao = re.compile(rf'(?<!\*\*)({re.escape(palavra)})(?!\*\*)', re.IGNORECASE)
         texto = padrao.sub(r'**\1**', texto)
-
     return texto
 
-def _processar_voto(voto_texto, relator, regras):
-    """Pipeline completo de processamento do voto."""
-    texto = _limpar_cabecalho_rodape(voto_texto)
-    texto = _corrigir_hifenizacao(texto)
+def _formatar_teleprompt(texto):
+    """Muda texto para linha única, mantendo os espaços limpos."""
+    import re
+    return re.sub(r'\s+', ' ', texto).strip()
+
+def _processar_voto(texto, relator, regras):
+    """
+    Função principal que orquestra a edição do voto.
+    A ordem aqui é vital para o funcionamento do Motor NIP.
+    """
+    if not texto: return ""
     
-    # Aplica todas as regras do banco globalmente (incluindo verbos registrados manualmente)
-    texto = _aplicar_substituicoes(texto, regras)
-    
-    # Executa o algoritmo inteligente para converter o resto dos verbos no início da linha
-    texto = _transformar_verbos(texto, regras) 
-    
-    texto = _ofuscar_cpf(texto)
+    texto = _limpar_cabecalho_rodape(texto)
     texto = _formatar_numerais(texto)
-    texto = _remover_e_antes_itens(texto)
+    texto = _transformar_verbos(texto, regras)
+    texto = _aplicar_substituicoes(texto, regras)
     texto = _adicionar_preambulo(texto, relator)
     texto = _formatar_teleprompt(texto)
     texto = _aplicar_negrito(texto)
-
+    
     return texto
 
 def _gerar_docx(texto_markdown):
