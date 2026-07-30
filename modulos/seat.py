@@ -70,19 +70,6 @@ TIPOS_SESSAO = [
 # FUNCOES AUXILIARES: NORMALIZACAO E HIGIENIZACAO
 # ============================================================
 
-def _normalizar_texto(texto: str) -> str:
-    """
-    Normaliza texto para comparacao:
-    minusculas, sem acentos, sem espacos extras.
-    """
-    if not texto:
-        return ""
-    texto = str(texto).lower().strip()
-    texto = unicodedata.normalize('NFKD', texto)
-    texto = ''.join(c for c in texto if not unicodedata.combining(c))
-    texto = ' '.join(texto.split())
-    return texto
-
 def _normalizar_tipo_sessao(tipo: str) -> str:
     """
     Normaliza o tipo de sessao do CSV para corresponder aos valores padrao.
@@ -2081,11 +2068,12 @@ def _limpar_cabecalho_rodape(texto):
         if re.match(r'^e-?doc\s*\w+$', linha_strip, re.IGNORECASE):
             continue
 
-        # NOVO — Remover data: "Brasília (DF), 15 de julho de 2026."
+        # Remover data: "Brasília (DF), 15 de julho de 2026."
         if re.match(r'^bras[íi]lia\s*\(?df\)?[,\s]*\d', linha_lower):
             continue
 
-        # NOVO — Remover assinatura: linha toda em MAIÚSCULAS (nome do relator)
+        # Remover assinatura: linha toda em MAIÚSCULAS (nome do relator)
+        # Condições: tudo maiúscula, tem letra, 5-50 chars, até 5 palavras, tem espaço
         if (linha_strip and
                 linha_strip == linha_strip.upper() and
                 any(c.isalpha() for c in linha_strip) and
@@ -2103,7 +2091,6 @@ def _limpar_cabecalho_rodape(texto):
 def _adicionar_preambulo(texto, relator):
     """Adiciona o preâmbulo correto baseado no relator e remove o texto original do voto."""
     import re
-
     if relator == "GCAM":
         preambulo = "O Tribunal, por unanimidade, de acordo com o voto da Relatora, decidiu:"
     elif relator == "VINICIUS_FRAGOSO":
@@ -2112,24 +2099,27 @@ def _adicionar_preambulo(texto, relator):
         preambulo = "O Tribunal, por unanimidade, de acordo com o voto do Relator, decidiu:"
 
     padroes_remocao = [
+        # NOVO — cobre "Pelo exposto, VOTO por que o Plenário:"
+        r'^\s*(?:Diante do exposto|Pelo exposto|Ante o exposto)[,\s]*(?:em harmonia com o órgão instrutivo,?\s*)?VOTO\s*por\s*que\s*(?:o\s+)?(?:egrégio\s+)?(?:Tribunal|Plenário)[:\s]*',
+        # Padrões existentes
         r'^\s*(?:Diante do exposto|Pelo exposto|Ante o exposto)[,\s]*(?:em harmonia com o órgão instrutivo,?\s*)?VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio\s+(?:Tribunal|Plenário)[:\s]*',
         r'^\s*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio\s+(?:Tribunal|Plenário)[:\s]*',
+        # NOVO — cobre "Pelo exposto, VOTO por que o Plenário:" sem "egrégio"
+        r'^\s*(?:Diante do exposto|Pelo exposto|Ante o exposto)[,\s]*VOTO\s*por\s*que\s*(?:o\s+)?(?:Tribunal|Plenário)[:\s]*',
         r'^\s*(?:Diante do exposto|Pelo exposto|Ante o exposto)[,\s]*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?',
         r'^\s*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?',
+        # NOVO — cobre "VOTO por que o Plenário:" sem prefixo
+        r'^\s*VOTO\s*por\s*que\s*(?:o\s+)?(?:Tribunal|Plenário)[:\s]*',
     ]
-
     for padrao in padroes_remocao:
         texto = re.sub(padrao, '', texto, flags=re.IGNORECASE)
-
     return f"{preambulo} {texto.strip()}"
 
 def _normalizar_texto(texto: str) -> str:
     """
     Camada de Normalização — padroniza o texto antes do pipeline do Motor NIP.
-    
-    NÃO converte para minúsculo.
-    NÃO remove acentos.
-    Preserva o case original do texto do PDF.
+    NÃO converte para minúsculo. NÃO remove acentos.
+    Preserva o case e os acentos originais do texto do PDF.
     """
     if not texto:
         return texto
@@ -2157,7 +2147,7 @@ def _normalizar_texto(texto: str) -> str:
         texto
     )
 
-    # 2. Garantir espaço antes e depois do travessão após numerais romanos
+    # 2. Garantir espaço antes e depois do travessão após numerais romanos maiúsculos
     texto = re.sub(r'\b([IVXLCDM]{1,5})\s*[–\-]\s*', r'\1 – ', texto)
 
     # 3. Tabs → espaço
@@ -2174,7 +2164,7 @@ def _normalizar_texto(texto: str) -> str:
     # 6. Remove espaço antes de pontuação
     texto = re.sub(r'\s+([,.;:!?])', r'\1', texto)
 
-    # 7. Garante espaço após pontuação
+    # 7. Garante espaço após pontuação (se não tiver espaço e não for número)
     texto = re.sub(r'([,.;:!?])(?=[^\s\d])', r'\1 ', texto)
 
     return texto.strip()
@@ -2510,12 +2500,12 @@ def _formatar_numerais(texto):
     # Standardize n.º, n° → nº
     texto = texto.replace("n.º", "nº")
     texto = texto.replace("n°", "nº")
-    # Add space after nº if missing
+    # Add space after nº if missing: nº1.561 → nº 1.561
     texto = re.sub(r'nº(\d)', r'nº \1', texto)
     # LTDA – ME → LTDA. – ME
     texto = re.sub(r'LTDA(?!\.)\s*[-–]\s*ME', 'LTDA. – ME', texto)
-    # REMOVIDO: \b([a-z])\.\s* → \1) 
-    # Este regex era genérico demais, corrompia "art." → "art)" e "9º." → "9o)"
+    # REMOVIDO: \b([a-z])\.\s* → \1)
+    # Este regex era genérico demais, corrompia "art." → "art)" e outras palavras
     # A normalização de a. → a) agora é feita em _normalizar_texto (passo 1.6)
     return texto
 
@@ -2533,12 +2523,13 @@ def _remover_e_antes_itens(texto):
 def _corrigir_hifenizacao(texto):
     """Remove hifens que quebram palavras no final de linhas (comum em extração de PDF)."""
     import re
-    # Padrão: palavra + hífen + espaços + quebra de linha + palavra
-    # Ex: "inscri-\nção" → "inscrição"
-    # Ex: "in-\ngresso" → "ingresso"
-    # Ex: "com-\nprovação" → "comprovação"
-    # NÃO afeta: "e-DOC", "CBMDF-DF" (sem quebra de linha após o hífen)
-    texto = re.sub(r'(\w)-\s*\n\s*(\w)', r'\1\2', texto)
+    # Caso 1: Palavra quebrada por hífen entre LETRAS
+    # "inscri-\nção" → "inscrição" (remove hífen E quebra de linha)
+    # Só entre letras (não entre dígitos)
+    texto = re.sub(r'([a-zA-ZÀ-ÿ])-\s*\n\s*([a-zA-ZÀ-ÿ])', r'\1\2', texto)
+    # Caso 2: Número quebrado por hífen entre DÍGITOS
+    # "2026-\n86" → "2026-86" (mantém hífen, remove apenas quebra de linha)
+    texto = re.sub(r'(\d)-\s*\n\s*(\d)', r'\1-\2', texto)
     return texto
   
 def _obter_regras_padrao():
@@ -2556,6 +2547,8 @@ def _obter_regras_padrao():
         {"procurar": "n.º", "substituir_por": "nº", "tipo": "termo", "ativo": True},
         {"procurar": "n°", "substituir_por": "nº", "tipo": "termo", "ativo": True},
         {"procurar": "tome", "substituir_por": "tomar", "tipo": "verbo", "ativo": True},
+        {"procurar": "deste presente Relatório/Voto", "substituir_por": "do Relatório/Voto", "tipo": "frase", "ativo": True},
+        {"procurar": "peça ", "substituir_por": "Peça nº ", "tipo": "termo", "ativo": True},
         {"procurar": "conheça", "substituir_por": "conhecer", "tipo": "verbo", "ativo": True},
         {"procurar": "condutor", "substituir_por": "do Relator", "tipo": "frase", "ativo": True},
         {"procurar": "dê", "substituir_por": "dar", "tipo": "verbo", "ativo": True},
@@ -2665,7 +2658,7 @@ def _aplicar_negrito(texto: str, db_manager=None) -> str:
     texto = re.sub(r'\b([IVXLCDM]{1,5})\s*–', r'**\1** –', texto)
 
     # 2. Negrito em letras de itens: a), b), c)
-    # (?<!\d) impede que bold letras precedidas por dígitos (ex: "9o)" não vira "9**o)**")
+    # (?<!\d) impede bold em letras precedidas por dígitos (ex: "9o)" não vira "9**o)**")
     texto = re.sub(r'(?<!\d)\b([a-z])\)', r'**\1)**', texto, flags=re.IGNORECASE)
 
     # 3. Negrito em prazos de 0 a 20 dias
