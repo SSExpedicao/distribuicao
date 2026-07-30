@@ -2973,7 +2973,7 @@ def _renderizar_motor_nip(modo_edicao, usuario):
                 motivo_urg = ds_motivo
                 st.warning(f"⚠️ Processo identificado como **URGENTE** — Motivo: {ds_motivo}")
             else:
-                is_urgent, motivo_urg = _verificar_urgencia(voto_extraido, palavras_urg,  db_manager)
+                is_urgent, motivo_urg = _verificar_urgencia(voto_extraido, palavras_urg)
                 if is_urgent:
                     st.warning(f"⚠️ Processo identificado como **URGENTE** — Motivo: {motivo_urg}")
 
