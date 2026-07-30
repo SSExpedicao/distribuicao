@@ -2208,6 +2208,16 @@ def _ofuscar_cpf(texto):
     return re.sub(r'\d{3}\.\d{3}\.\d{3}-\d{2}', ofuscar, texto)
 
 def _formatar_numerais(texto):
+    import re
+    texto = re.sub(r'(^|\s)([IVXLCDM]+)[\.\)]\s*', r'\1\2 – ', texto)
+    texto = re.sub(r'(^|\s)([IVXLCDM]+)\s*-\s*', r'\1\2 – ', texto)
+    texto = re.sub(r'(^|\s)([a-z])\.\s*', r'\1\2) ', texto)
+    texto = texto.replace("n.º", "nº").replace("n°", "nº")
+    texto = re.sub(r'nº(\d)', r'nº \1', texto)
+    texto = re.sub(r'LTDA(?!\.)\s*[-–]\s*ME', 'LTDA. – ME', texto)
+    return texto
+
+def _formatar_numerais(texto):
     """Padroniza formatação de numerais romanos, letras de itens e abreviações."""
     import re
 
@@ -2332,6 +2342,35 @@ def _formatar_teleprompt(texto):
 
     return texto.strip()
 
+
+def _aplicar_negrito(texto):
+    import re
+    texto = re.sub(r'(^|\s)([IVXLCDM]+)(\s*[–\-—])', r'\1**\2**\3', texto)
+    texto = re.sub(r'(^|\s)([a-z])(\))', r'\1**\2\3**', texto)
+    for i in range(21):
+        texto = re.sub(
+            rf'\b{i}\s*(?:\([^)]+\)\s*)?dias?\b',
+            lambda m: f'**{m.group(0)}**',
+            texto,
+            flags=re.IGNORECASE
+        )
+    palavras_negrito = [
+        "urgente", "urgência", "prioritário", "prioridade", "brevidade",
+        "imediato", "imediatamente", "importância", "suspender", "suspensão", 
+        "revoga", "abster", "abstenção", "anula", "anular", "negar",
+        "continuidade", "continuação", "prosseguimento", "reabertura", "abertura",
+        "licita", "licitação", "licitatório", "certame", "homologar", "adjudicar",
+        "governador", "chefe do poder", "despacho singular", "sustentação oral",
+        "audiência", "acórdão", "acórdãos", "notificação", "notificar",
+        "cientificação", "cientificar", "convocação", "Covid", "Corona", 
+        "prorrog", "aprovar", "minuta", "pagamento", "tomar conhecimento", 
+        "considerar", "determinar", "chamar", "recomendar", "autorizar", "prazo de"
+    ]
+    for palavra in palavras_negrito:
+        padrao = re.compile(rf'(?<!\*\*)({re.escape(palavra)})(?!\*\*)', re.IGNORECASE)
+        texto = padrao.sub(r'**\1**', texto)
+    return texto
+
 def _aplicar_negrito(texto):
     """Aplica negrito em numerais romanos, letras de itens, prazos e palavras-chave."""
     import re
@@ -2398,6 +2437,19 @@ def _aplicar_negrito(texto):
         padrao = re.compile(re.escape(palavra), re.IGNORECASE)
         texto = padrao.sub(lambda m: f"**{m.group(0)}**", texto)
 
+    return texto
+
+def _processar_voto(voto_texto, relator, regras):
+    if not voto_texto: return ""
+    texto = _limpar_cabecalho_rodape(voto_texto)
+    texto = _corrigir_hifenizacao(texto)
+    texto = _formatar_numerais(texto)
+    texto = _transformar_verbos(texto, regras)
+    texto = _aplicar_substituicoes(texto, regras)
+    texto = _ofuscar_cpf(texto)
+    texto = _adicionar_preambulo(texto, relator)
+    texto = _formatar_teleprompt(texto)
+    texto = _aplicar_negrito(texto)
     return texto
 
 def _processar_voto(voto_texto, relator, regras):
@@ -2819,6 +2871,10 @@ def _verificar_sercon(texto, palavras_sercon):
         if palavra and palavra in texto_lower:
             return True, situacao
     return False, ""
+
+def _formatar_teleprompt(texto):
+    import re
+    return re.sub(r'\s+', ' ', texto).strip()
 
 def _renderizar_urgentes(modo_edicao, usuario):
     """Renderiza a tab de Urgentes com 4 tabelas por tipo de sessao."""
