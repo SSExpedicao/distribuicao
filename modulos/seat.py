@@ -1964,7 +1964,7 @@ def _listar_despachos(usuario, modo_edicao):
                             })
                             st.rerun()
 
-# ==================== MOTOR NIP INTELIGENTE ====================
+# ==================== MOTOR NIP ====================
 
 def _extrair_texto_pdf(arquivo):
     """Extrai texto de um arquivo PDF usando pdfplumber."""
@@ -2045,211 +2045,239 @@ def _extrair_voto(texto):
     return voto.strip()
 
 def _aplicar_substituicoes(texto, regras):
-    """Aplica o Curinga Inteligente para verbos soltos no fim de frase."""
+    """Aplica substituições de frases e termos cadastradas no banco (case-insensitive)."""
     import re
-    texto = re.sub(
-        r'\bda\s+decisão\s+que\s+vier\s+a\s+ser\s+\w+\b', 
-        'desta decisão', 
-        texto, 
-        flags=re.IGNORECASE
-    )
-    if not regras:
-        return texto
     for regra in regras:
-        if regra.get("ativo", True):
-            procurar = str(regra.get("procurar", "")).strip()
-            substituir = str(regra.get("substituir_por", "")).strip()
-            tipo = regra.get("tipo", "frase")
-            if not procurar: continue
-            padrao_flexivel = r'\s+'.join([re.escape(p) for p in procurar.split()])
-            if tipo in ("termo", "verbo"):
-                padrao_flexivel = rf'\b{padrao_flexivel}\b'
-            texto = re.sub(padrao_flexivel, substituir, texto, flags=re.IGNORECASE)
+        if regra.get("tipo") in ("frase", "termo") and regra.get("ativo", True):
+            procurar = regra["procurar"]
+            substituir = regra["substituir_por"]
+            texto = re.sub(re.escape(procurar), substituir, texto, flags=re.IGNORECASE)
     return texto
-
-def _formatar_numerais(texto):
-    """Padroniza numerais romanos e letras antes de espremer o texto."""
-    import re
-    texto = re.sub(r'(^|\s)([IVXLCDM]+)[\.\)]\s*', r'\1\2 – ', texto)
-    texto = re.sub(r'(^|\s)([IVXLCDM]+)\s*-\s*', r'\1\2 – ', texto)
-    texto = re.sub(r'(^|\s)([a-z])\.\s*', r'\1\2) ', texto)
-    texto = texto.replace("n.º", "nº").replace("n°", "nº")
-    texto = re.sub(r'nº(\d)', r'nº \1', texto)
-    texto = re.sub(r'LTDA(?!\.)\s*[-–]\s*ME', 'LTDA. – ME', texto)
-    return texto
-      
-def _converter_imperativo_para_infinitivo_algoritmico(palavra, excecoes_banco=None):
-    """Converte verbo preservando regras estritas. Sem o 'de' -> 'dar'."""
-    p_lower = palavra.lower().strip()
-
-    irregulares = {
-        "faça": "fazer", "faca": "fazer",
-        "dê": "dar", 
-        "seja": "ser",
-        "veja": "ver",
-        "vênia": "vênia",
-        "abstenha": "abster",
-        "mantenha": "manter",
-        "requer": "requerer",
-    }
-    
-    if excecoes_banco and p_lower in excecoes_banco:
-        return excecoes_banco[p_lower]
-    if p_lower in irregulares:
-        return irregulares[p_lower]
-
-    if p_lower.endswith('r'):
-        return p_lower
-
-    pronomes = ["-se", "-nos", "-lhe", "-lhes", "-o", "-a", "-os", "-as"]
-    for pronome in pronomes:
-        if p_lower.endswith(pronome):
-            p_lower = p_lower[:-len(pronome)]
-            break
-            
-    if p_lower.endswith("fira"): return p_lower[:-4] + "ferir"
-    if p_lower.endswith("xija"): return p_lower[:-4] + "xigir"
-    if p_lower.endswith("clua"): return p_lower[:-3] + "cluir"
-    if p_lower.endswith("atenda"): return p_lower[:-4] + "tender"
-    if p_lower.endswith("que"): return p_lower[:-3] + "car"
-    if p_lower.endswith("gue"): return p_lower[:-3] + "gar"
-    if p_lower.endswith("ce"): return p_lower[:-2] + "çar"
-    if p_lower.endswith("e"): return p_lower[:-1] + "ar"
-    if p_lower.endswith("em"): return p_lower[:-2] + "ar"
-    if p_lower.endswith("ceda"): return p_lower[:-4] + "ceder"
-    if p_lower.endswith("mova"): return p_lower[:-4] + "mover"
-    if p_lower.endswith("a"): return p_lower[:-1] + "er"
-
-    return palavra
 
 def _transformar_verbos(texto, regras):
-    """
-    Transforma APENAS o primeiro verbo da linha de comando principal (Numerais Romanos).
-    Ignora letras de sub-itens e numerais romanos intrusos com parênteses.
-    O Fim do bug "Peçer".
-    """
+    """Transforma verbos do Modo Imperativo Afirmativo para Infinitivo após numerais romanos."""
     import re
-    excecoes_banco = {}
-    if regras:
-        for r in regras:
-            if r.get("tipo") == "verbo" and r.get("ativo", True):
-                excecoes_banco[r["procurar"].lower().strip()] = r["substituir_por"].lower().strip()
 
-    # Regex Anti-Assessor Doido: Exige Romanos sem parênteses fechando imediatamente
+    # Dicionário: Imperativo → Infinitivo
+    imperativo_infinitivo = {
+        # Verbos regulares (-ar)
+        "chame": "chamar",
+        "recomende": "recomendar",
+        "autorize": "autorizar",
+        "determine": "determinar",
+        "autorize:": "autorizar:",
+        "tome": "tomar",
+        "considere": "considerar",
+        "suspended": "suspender",
+        "suspenda": "suspender",
+        "revogue": "revogar",
+        "anule": "anular",
+        "negue": "negar",
+        "prorrogue": "prorrogar",
+        "aprove": "aprovar",
+        "homologue": "homologar",
+        "adjudique": "adjudicar",
+        "ratifique": "ratificar",
+        "referende": "referendar",
+        "encaminhe": "encaminhar",
+        "notifique": "notificar",
+        "cientifique": "cientificar",
+        "convoque": "convocar",
+        "aplique": "aplicar",
+        "conceda": "conceder",
+        "denegue": "denegar",
+        "defira": "deferir",
+        "indefira": "indeferir",
+        "arquive": "arquivar",
+        "remeta": "remeter",
+        "devolva": "devolver",
+        "reabra": "reabrir",
+        "instaure": "instaurar",
+        "recomende": "recomendar",
+        "solicite": "solicitar",
+        "requerira": "requerer",
+        "requeria": "requerer",
+        "requer": "requerer",
+        "adopte": "adotar",
+        "adote": "adotar",
+        "intime": "intimar",
+        "comunique": "comunicar",
+        "informe": "informar",
+        "requisite": "requisitar",
+        "impeça": "impedir",
+        "impeca": "impedir",
+        "observe": "observar",
+        "abstenha": "abster",
+        "proceda": "proceder",
+        "promova": "promover",
+        "realize": "realizar",
+        "efetue": "efetuar",
+        "providencie": "providenciar",
+        "determine": "determinar",
+        "autorize": "autorizar",
+        "dê": "dar",
+        "conheça": "conhecer",
+        "não conheça": "nao conhecer", 
+        "faça": "fazer",
+        "faca": "fazer",
+        "inclua": "incluir",
+        "inclua": "incluir",
+        "exclua": "excluir",
+        "exija": "exigir",
+        "fixe": "fixar",
+        "estabeleça": "estabelecer",
+        "estabeleca": "estabelecer",
+        "reconheça": "reconhecer",
+        "reconheca": "reconhecer",
+        "declare": "declarar",
+        "designe": "designar",
+        "nomeie": "nomear",
+        "contrate": "contratar",
+        "rescinda": "rescindir",
+        "rescinda": "rescindir",
+        "revise": "revisar",
+        "reavalie": "reavaliar",
+        "avalie": "avaliar",
+        "analise": "analisar",
+        "verifique": "verificar",
+        "fiscalize": "fiscalizar",
+        "monitore": "monitorar",
+        "acompanhe": "acompanhar",
+        "supervisione": "supervisionar",
+        "oriente": "orientar",
+        "determine": "determinar",
+        "reitere": "reiterar",
+        "reformule": "reformular",
+        "atualize": "atualizar",
+        "regularize": "regularizar",
+        "normalize": "normalizar",
+        "padronize": "padronizar",
+        "implante": "implantar",
+        "implemente": "implementar",
+        "execute": "executar",
+        "cumpra": "cumprir",
+        "descumpra": "descumprir",
+        "obrigue": "obrigar",
+        "compulse": "compulsar",
+        "requisite": "requisitar",
+    }
+
+    # Padrão: numeral romano + traço + verbo no imperativo
+    # Ex: "IV – chame em audiência" → "IV – chamar em audiência"
+    # Funciona com: I, II, III, IV, V, VI, VII, VIII, IX, X, XI, XII, etc.
+    # Também com letras: a), b), c), etc. quando seguem o padrão de sub-itens
     padrao_romano = re.compile(
-        r'((?:^|\n)\s*)([IVXLCDMivxlcdm]+)(?![\s\.\-]*\))([\.\s]*[–\-—\.\•]*\s*(?:[Nn][ãa]o\s+)?)(\w+(?:-\w+)?)'
+        r'((?:^|\n)\s*(?:[IVXLCDM]+|\d+)[\.\)\s]*[\–\-\—]\s*)(\w+)',
+        re.IGNORECASE
     )
 
     def _substituir_verbo(match):
         prefixo = match.group(1)
-        romano = match.group(2)
-        separador = match.group(3)
-        palavra = match.group(4)
-        
-        verbo_convertido = _converter_imperativo_para_infinitivo_algoritmico(palavra, excecoes_banco)
-        if palavra[0].isupper():
-            verbo_convertido = verbo_convertido.capitalize()
-            
-        return prefixo + romano + separador + verbo_convertido
+        verbo = match.group(2).lower()
+        # Se o verbo está no imperativo, converter para infinitivo
+        if verbo in imperativo_infinitivo:
+            return prefixo + imperativo_infinitivo[verbo]
+        # Se já está no infinitivo, manter
+        return match.group(0)
 
-    return padrao_romano.sub(_substituir_verbo, texto)
+    texto = padrao_romano.sub(_substituir_verbo, texto)
 
-    def _substituir_romano(match):
-        prefixo = match.group(1)
-        palavra = match.group(2)
-        verbo_convertido = _converter_imperativo_para_infinitivo_algoritmico(palavra, excecoes_banco)
-        
-        if palavra[0].isupper():
-            verbo_convertido = verbo_convertido.capitalize()
-            
-        return prefixo + verbo_convertido
-
-    texto = padrao_romano.sub(_substituir_romano, texto)
-
-    # Aplica o mesmo para letras de itens (a), b), etc)
-    padrao_letra = re.compile(
-        r'((?:^|\n)\s*[a-z]\)[\s]*(?:não\s+)?)(\w+(?:-\w+)?)',
-        re.IGNORECASE
-    )
-    texto = padrao_letra.sub(_substituir_romano, texto)
-
-    return texto
+      return texto
 
 def _ofuscar_cpf(texto):
     """Ofusca CPFs no texto (3 primeiros e 2 últimos dígitos)."""
     import re
+
     def ofuscar(match):
         cpf = match.group(0)
         return f"***.{cpf[4:11]}-**"
+
     return re.sub(r'\d{3}\.\d{3}\.\d{3}-\d{2}', ofuscar, texto)
 
-def _aplicar_negrito(texto):
-    """Aplica negrito sobrevivendo ao Teleprompt."""
+def _formatar_numerais(texto):
+    """Padroniza formatação de numerais romanos, letras de itens e abreviações."""
     import re
-    # Romanos
-    texto = re.sub(r'(^|\s)([IVXLCDM]+)(\s*[–\-—])', r'\1**\2**\3', texto)
-    # Letras (a), b), c))
-    texto = re.sub(r'(^|\s)([a-z])(\))', r'\1**\2\3**', texto)
-    # Prazos
-    for i in range(21):
-        texto = re.sub(
-            rf'\b{i}\s*(?:\([^)]+\)\s*)?dias?\b',
-            lambda m: f'**{m.group(0)}**',
-            texto,
-            flags=re.IGNORECASE
-        )
-    palavras_negrito = [
-        "urgente", "urgência", "prioritário", "prioridade", "brevidade",
-        "imediato", "imediatamente", "importância", "suspender", "suspensão", 
-        "revoga", "abster", "abstenção", "anula", "anular", "negar",
-        "continuidade", "continuação", "prosseguimento", "reabertura", "abertura",
-        "licita", "licitação", "licitatório", "certame", "homologar", "adjudicar",
-        "governador", "chefe do poder", "despacho singular", "sustentação oral",
-        "audiência", "acórdão", "acórdãos", "notificação", "notificar",
-        "cientificação", "cientificar", "convocação", "Covid", "Corona", 
-        "prorrog", "aprovar", "minuta", "pagamento", "tomar conhecimento", 
-        "considerar", "determinar", "chamar", "recomendar", "autorizar", "prazo de"
-    ]
-    for palavra in palavras_negrito:
-        padrao = re.compile(rf'(?<!\*\*)({re.escape(palavra)})(?!\*\*)', re.IGNORECASE)
-        texto = padrao.sub(r'**\1**', texto)
+
+    # Roman numerals: I. → I –, I - → I –, I) → I –
+    texto = re.sub(r'\b([IVXLCDM]+)[\.\)]\s*', r'\1 – ', texto)
+    texto = re.sub(r'\b([IVXLCDM]+)\s*-\s*', r'\1 – ', texto)
+
+    # Letter items: a. → a), a) stays a)
+    texto = re.sub(r'\b([a-z])\.\s*', r'\1) ', texto)
+
+    # Standardize n.º, n° → nº
+    texto = texto.replace("n.º", "nº")
+    texto = texto.replace("n°", "nº")
+
+    # Add space after nº if missing: nº1.561 → nº 1.561
+    texto = re.sub(r'nº(\d)', r'nº \1', texto)
+
+    # LTDA – ME → LTDA. – ME (add period if missing)
+    texto = re.sub(r'LTDA(?!\.)\s*[-–]\s*ME', 'LTDA. – ME', texto)
+
     return texto
-  
+
 def _remover_e_antes_itens(texto):
     """Remove 'e' antes de itens (I, II, a), b))."""
     import re
+
+    # ; e V. → ; V.
     texto = re.sub(r';\s+e\s+([IVXLCDM]+)', r'; \1', texto)
+    # ; e c. → ; c)
     texto = re.sub(r';\s+e\s+([a-z])\)', r'; \1)', texto)
+
     return texto
 
 def _limpar_cabecalho_rodape(texto):
-    """Extremamente agressivo contra lixo de PDF do TCDF."""
+    """Remove cabeçalhos e rodapés de PDFs de múltiplas páginas."""
     import re
+
     linhas = texto.split('\n')
     linhas_limpas = []
-    
+
     for linha in linhas:
         linha_strip = linha.strip()
         linha_lower = linha_strip.lower()
 
-        if re.match(r'^\d+\s*peça\s*\d+', linha_lower): continue
-        if 'documento assinado digitalmente' in linha_lower: continue
-        if 'para verificar as assinaturas' in linha_lower: continue
-        if 'acesse www.tc.df.gov.br' in linha_lower: continue
-        if linha_lower.startswith('e-doc'): continue
-        if re.match(r'^proc\.?\s*:?\s*\d+', linha_lower): continue
-        if re.match(r'^processo\s*n', linha_lower): continue
-        if linha_lower.startswith('tribunal de contas do distrito federal'): continue
-        if linha_lower.startswith('gabinete'): continue
+        # Pular linhas de rodapé digital
+        if 'documento assinado digitalmente' in linha_lower:
+            continue
+        if 'para verificar as assinaturas' in linha_lower:
+            continue
+        if 'acesse www.tc.df.gov.br' in linha_lower:
+            continue
+        if 'acesse www.tc.df.gov' in linha_lower:
+            continue
+        if linha_lower.startswith('e-doc'):
+            continue
+        # Proc no cabeçalho/rodapé (linha que começa com "Proc" e tem número)
+        if linha_lower.startswith('proc ') and '-' in linha_lower:
+            continue
+        if linha_lower == 'tribunal de contas do distrito federal':
+            continue
+        if linha_lower.startswith('gabinete da conselheir'):
+            continue
+        if linha_lower.startswith('gabinete do conselheir'):
+            continue
+        if linha_lower.startswith('gabinete do auditor'):
+            continue
+        # Linha com apenas "e-DOC XXXXXXXX"
+        if re.match(r'^e-?doc\s*\w+$', linha_strip, re.IGNORECASE):
+            continue
 
         linhas_limpas.append(linha)
 
     texto = '\n'.join(linhas_limpas)
-    return re.sub(r'\n{3,}', '\n\n', texto).strip()
+
+    # Remover linhas vazias excessivas (3+ viram 2)
+    texto = re.sub(r'\n{3,}', '\n\n', texto)
+
+    return texto.strip()
 
 def _adicionar_preambulo(texto, relator):
-    """Extermina o preâmbulo original inteiro antes de colar o novo."""
+    """Adiciona o preâmbulo correto baseado no relator e remove o texto original do voto."""
     import re
+
     if relator == "GCAM":
         preambulo = "O Tribunal, por unanimidade, de acordo com o voto da Relatora, decidiu:"
     elif relator == "VINICIUS_FRAGOSO":
@@ -2257,32 +2285,51 @@ def _adicionar_preambulo(texto, relator):
     else:
         preambulo = "O Tribunal, por unanimidade, de acordo com o voto do Relator, decidiu:"
 
-    # Remove qualquer coisa desde o VOTO até o Tribunal:
-    texto = re.sub(
-        r'^(?:[\s\S]*?)(?:VOTO\s+.*?)(?:Tribunal|Plenário)[:\s]*', 
-        '', 
-        texto, 
-        flags=re.IGNORECASE
-    )
-    # Remove rebarbas tipo "o Tribunal: " que possam sobrar
-    texto = re.sub(r'^[oO]\s*Tribunal\s*:\s*', '', texto.strip())
+    padroes_remocao = [
+        r'^\s*(?:Diante do exposto|Pelo exposto|Ante o exposto)[,\s]*(?:em harmonia com o órgão instrutivo,?\s*)?VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio\s+(?:Tribunal|Plenário)[:\s]*',
+        r'^\s*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio\s+(?:Tribunal|Plenário)[:\s]*',
+        r'^\s*(?:Diante do exposto|Pelo exposto|Ante o exposto)[,\s]*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?',
+        r'^\s*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?',
+    ]
+
+    for padrao in padroes_remocao:
+        texto = re.sub(padrao, '', texto, flags=re.IGNORECASE)
 
     return f"{preambulo} {texto.strip()}"
 
 def _corrigir_hifenizacao(texto):
     """Remove hifens que quebram palavras no final de linhas (comum em extração de PDF)."""
     import re
-    return re.sub(r'(\w)-\s*\n\s*(\w)', r'\1\2', texto)
+    # Padrão: palavra + hífen + espaços + quebra de linha + palavra
+    # Ex: "inscri-\nção" → "inscrição"
+    # Ex: "in-\ngresso" → "ingresso"
+    # Ex: "com-\nprovação" → "comprovação"
+    # NÃO afeta: "e-DOC", "CBMDF-DF" (sem quebra de linha após o hífen)
+    texto = re.sub(r'(\w)-\s*\n\s*(\w)', r'\1\2', texto)
+    return texto
   
+def _formatar_teleprompt(texto):
+    """Formata o texto como teleprompt (texto corrido sem quebras)."""
+    import re
+
+    texto = re.sub(r'\n+', ' ', texto)
+    texto = re.sub(r'\t+', ' ', texto)
+    texto = re.sub(r'\r+', ' ', texto)
+    texto = re.sub(r' +', ' ', texto)
+
+    return texto.strip()
 
 def _aplicar_negrito(texto):
-    """Aplica negrito sobrevivendo ao formato Teleprompt."""
+    """Aplica negrito em numerais romanos, letras de itens, prazos e palavras-chave."""
     import re
-    # Romanos
-    texto = re.sub(r'(^|\s)([IVXLCDM]+)(\s*[–\-—])', r'\1**\2**\3', texto)
-    # Letras (a), b), c))
-    texto = re.sub(r'(^|\s)([a-z])(\))', r'\1**\2\3**', texto)
-    # Prazos
+
+    # Negito em numerais romanos seguidos de travessão
+    texto = re.sub(r'\b([IVXLCDM]+)\s*–', r'**\1** –', texto)
+
+    # Negrito em letras de itens: a), b), c)
+    texto = re.sub(r'\b([a-z])\)', r'**\1)**', texto)
+
+    # Negrito em prazos de 0 a 20 dias (incluindo "X (extenso) dias")
     for i in range(21):
         texto = re.sub(
             rf'\b{i}\s*(?:\([^)]+\)\s*)?dias?\b',
@@ -2290,43 +2337,88 @@ def _aplicar_negrito(texto):
             texto,
             flags=re.IGNORECASE
         )
-    palavras_negrito = [
-        "urgente", "urgência", "prioritário", "prioridade", "brevidade",
-        "imediato", "imediatamente", "importância", "suspender", "suspensão", 
-        "revoga", "abster", "abstenção", "anula", "anular", "negar",
-        "continuidade", "continuação", "prosseguimento", "reabertura", "abertura",
-        "licita", "licitação", "licitatório", "certame", "homologar", "adjudicar",
-        "governador", "chefe do poder", "despacho singular", "sustentação oral",
-        "audiência", "acórdão", "acórdãos", "notificação", "notificar",
-        "cientificação", "cientificar", "convocação", "Covid", "Corona", 
-        "prorrog", "aprovar", "minuta", "pagamento", "tomar conhecimento", 
-        "considerar", "determinar", "chamar", "recomendar", "autorizar", "prazo de"
+
+    # Negrito em palavras-chave
+    palavras_chave = [
+        "acórdãos", "Acórdão", "Urgente", "urgência",
+        "prioridade", "Governador", "Suspender licitação",
+        "suspender licitação"
     ]
-    for palavra in palavras_negrito:
-        padrao = re.compile(rf'(?<!\*\*)({re.escape(palavra)})(?!\*\*)', re.IGNORECASE)
-        texto = padrao.sub(r'**\1**', texto)
+    for palavra in palavras_chave:
+        texto = re.sub(rf'\b{re.escape(palavra)}\b', f'**{palavra}**', texto)
+
     return texto
 
-def _formatar_teleprompt(texto):
-    """Muda texto para linha única, mantendo os espaços limpos."""
+def _aplicar_negrito(texto):
+    """Aplica negrito nas palavras-chave conforme as regras do NIP."""
     import re
-    return re.sub(r'\s+', ' ', texto).strip()
 
-def _processar_voto(texto, relator, regras):
-    """
-    Função principal que orquestra a edição do voto.
-    A ordem aqui é vital para o funcionamento do Motor NIP.
-    """
-    if not texto: return ""
-    
-    texto = _limpar_cabecalho_rodape(texto)
-    texto = _formatar_numerais(texto)
-    texto = _transformar_verbos(texto, regras)
+    palavras_negrito = [
+        # Urgência
+        "urgente", "urgência", "prioritário", "prioridade", "brevidade",
+        "imediato", "imediatamente", "importância",
+        # Suspensão/Revogação
+        "suspender", "suspensão", "revoga", "abster", "abstenção",
+        "anula", "anular", "negar",
+        # Continuidade
+        "continuidade", "continuação", "prosseguimento", "reabertura", "abertura",
+        # Licitação
+        "licita", "licitação", "licitatório", "certame", "homologar", "adjudicar",
+        # Autoridade
+        "governador", "chefe do poder",
+        # Despacho Singular
+        "despacho singular", "sustentação oral",
+        # SERCON
+        "audiência", "acórdão", "acórdãos", "notificação", "notificar",
+        "cientificação", "cientificar", "convocação",
+        # Outros
+        "Covid", "Corona", "prorrog", "aprovar", "minuta", "pagamento",
+        # Verbos de decisão (após numerais romanos)
+        "tomar conhecimento", "considerar", "determinar", "chamar",
+        "recomendar", "autorizar", "suspender",
+        # Prazos
+        "prazo de",
+    ]
+
+    for palavra in palavras_negrito:
+        # Case-insensitive, preservando o texto original
+        padrao = re.compile(re.escape(palavra), re.IGNORECASE)
+        texto = padrao.sub(lambda m: f"**{m.group(0)}**", texto)
+
+    return texto
+
+def _processar_voto(voto_texto, relator, regras):
+    """Pipeline completo de processamento do voto."""
+    # 0. Limpar cabeçalhos e rodapés de páginas intermediárias (NOVO)
+    texto = _limpar_cabecalho_rodape(voto_texto)
+
+    # 0.5. Corrigir hifenização de palavras quebradas
+    texto = _corrigir_hifenizacao(texto)
+
+    # 1. Substituições de frases e termos
     texto = _aplicar_substituicoes(texto, regras)
+
+    # 2. Transformação de verbos (imperativo → infinitivo)
+    texto = _transformar_verbos(texto, regras)
+
+    # 3. Ofuscar CPF
+    texto = _ofuscar_cpf(texto)
+
+    # 4. Formatar numerais
+    texto = _formatar_numerais(texto)
+
+    # 5. Remover "e" antes de itens
+    texto = _remover_e_antes_itens(texto)
+
+    # 6. Adicionar preâmbulo
     texto = _adicionar_preambulo(texto, relator)
+
+    # 7. Formatar como teleprompt
     texto = _formatar_teleprompt(texto)
+
+    # 8. Aplicar negrito
     texto = _aplicar_negrito(texto)
-    
+
     return texto
 
 def _gerar_docx(texto_markdown):
@@ -2369,152 +2461,32 @@ def _obter_regras_padrao():
         {"procurar": "Ministério Público de Contas", "substituir_por": "Ministério Público junto ao Tribunal - MPjTCDF", "tipo": "frase", "ativo": True},
         {"procurar": "n.º", "substituir_por": "nº", "tipo": "termo", "ativo": True},
         {"procurar": "n°", "substituir_por": "nº", "tipo": "termo", "ativo": True},
+        {"procurar": "tome", "substituir_por": "tomar", "tipo": "verbo", "ativo": True},
+        {"procurar": "conheça", "substituir_por": "conhecer", "tipo": "verbo", "ativo": True},
         {"procurar": "condutor", "substituir_por": "do Relator", "tipo": "frase", "ativo": True},
+        {"procurar": "dê", "substituir_por": "dar", "tipo": "verbo", "ativo": True},
+        {"procurar": "declare", "substituir_por": "declarar", "tipo": "verbo", "ativo": True},
+        {"procurar": "aprove", "substituir_por": "aprovar", "tipo": "verbo", "ativo": True},
+        {"procurar": "expeça", "substituir_por": "expedir", "tipo": "verbo", "ativo": True},
+        {"procurar": "autorize", "substituir_por": "autorizar", "tipo": "verbo", "ativo": True},
+        {"procurar": "faculte", "substituir_por": "facultar", "tipo": "verbo", "ativo": True},
+        {"procurar": "determine", "substituir_por": "determinar", "tipo": "verbo", "ativo": True},
+        {"procurar": "considere", "substituir_por": "considerar", "tipo": "verbo", "ativo": True},
+        {"procurar": "oficie", "substituir_por": "oficiar", "tipo": "verbo", "ativo": True},
+        {"procurar": "postergue", "substituir_por": "postergar", "tipo": "verbo", "ativo": True},
+        {"procurar": "notifique", "substituir_por": "notificar", "tipo": "verbo", "ativo": True},
+        {"procurar": "julgue", "substituir_por": "julgar", "tipo": "verbo", "ativo": True},
+        {"procurar": "responda", "substituir_por": "responder", "tipo": "verbo", "ativo": True},
         {"procurar": "ciência da decisão que vier a ser proferida", "substituir_por": "ciência desta decisão", "tipo": "frase", "ativo": True},
         {"procurar": "ciência da decisão que vier a ser prolatada", "substituir_por": "ciência desta decisão", "tipo": "frase", "ativo": True},
     ]
 
-# ==================== URGENTES E SERCON ====================
-
-_RELATOR_SIGLA_MAP = {
-    "MÁRCIO MICHEL": "GCMM",
-    "MANOEL DE ANDRADE": "GCMA",
-    "RENATO RAINHA": "GCRR",
-    "ANILCÉIA MACHADO": "GCAM",
-    "INÁCIO MAGALHÃES FILHO": "GCIM",
-    "PAULO TADEU": "GCPT",
-    "ANDRÉ CLEMENTE": "GCAC",
-    "VINÍCIUS FRAGOSO": "GAVF",
-}
-
-def _normalizar_numero_processo(numero):
-    """Normaliza o número do processo removendo sufixos, espaços e caracteres invisíveis."""
-    if not numero:
-        return ""
-    numero = str(numero).strip()
-    numero = numero.replace(" ", "").replace("\n", "").replace("\r", "").replace("\t", "")
-    if numero.endswith("-e"): numero = numero[:-2]
-    if numero.endswith("-E"): numero = numero[:-2]
-    numero = numero.replace("\u200b", "").replace("\u00a0", "").replace("\ufeff", "")
-    return numero.strip()
-
-def _extrair_numero_processo(texto):
-    """Extração brutal do número do processo."""
-    import re
-    texto_super_limpo = re.sub(r'[\s\n\r\t]+', '', texto)
-    padrao_absoluto = r'(\d{2,5}[-\.]?\d{0,8}/\d{4}(?:-\d{2})?(?:-e|-E)?)'
-    matches = re.findall(padrao_absoluto, texto_super_limpo)
-    if matches:
-        return _normalizar_numero_processo(matches[0])
-    return None
-
-def _identificar_relator_sigla(texto):
-    """Identifica o relator pelo texto e retorna a sigla."""
-    texto_upper = texto.upper()
-    for nome, sigla in _RELATOR_SIGLA_MAP.items():
-        if nome in texto_upper:
-            return sigla
-    return "N/I"
-
-def _verificar_prazo(texto):
-    """Verifica se ha prazos de 0 a 20 dias no texto."""
-    import re
-    padrao = r'\b(\d{1,2})\s*(?:\([^)]+\)\s*)?(?:dias?|dia)\b'
-    matches = re.findall(padrao, texto, re.IGNORECASE)
-    prazos = []
-    for match in matches:
-        try:
-            num = int(match)
-            if 0 <= num <= 20:
-                prazos.append(f"{num} dias")
-        except ValueError:
-            pass
-    return prazos
-
-def _obter_palavras_urgencia():
-    """Retorna a lista de palavras de urgencia do banco ou padrao."""
-    try:
-        palavras = db_manager.buscar_todos("palavras_urgencia_nip", filtros={"ativo": True})
-        if palavras:
-            return list(set([p["palavra"] for p in palavras]))
-    except Exception:
-        pass
-    return [
-        "urgente", "urgência", "prioritário", "prioridade", "brevidade",
-        "importância", "imediato", "imediatamente", "suspender", "suspensão",
-        "revoga", "abster", "abstenção", "anula", "anular", "negar",
-        "continuidade", "continuação", "prosseguimento", "reabertura", "abertura",
-        "licita", "licitação", "licitatório", "certame", "homologar", "adjudicar",
-        "governador", "chefe do poder", "referendar", "ratificar",
-        "despacho singular", "sustentação oral", "Covid", "Corona",
-        "prorrog", "aprovar", "minuta", "pagamento", "prazo de",
-    ]
-
-def _obter_palavras_sercon():
-    """Retorna a lista de palavras de SERCON do banco ou padrao."""
-    try:
-        palavras = db_manager.buscar_todos("palavras_sercon_nip", filtros={"ativo": True})
-        if palavras:
-            return palavras
-    except Exception:
-        pass
-    return [
-        {"palavra": "acórdão", "situacao": "acórdão"},
-        {"palavra": "acórdãos", "situacao": "acórdão"},
-        {"palavra": "notificação", "situacao": "notificação"},
-        {"palavra": "notificar", "situacao": "notificação"},
-        {"palavra": "cientificação", "situacao": "cientificação"},
-        {"palavra": "cientificar", "situacao": "cientificação"},
-        {"palavra": "audiência", "situacao": "audiência"},
-        {"palavra": "convocação para audiência", "situacao": "audiência"},
-    ]
-
-def _verificar_urgencia(texto, palavras):
-    """Verifica se o texto contem palavras de urgencia. Retorna (is_urgent, motivos)."""
-    texto_lower = texto.lower()
-    motivos = []
-
-    for palavra in palavras:
-        if palavra.lower() in texto_lower:
-            motivos.append(palavra)
-
-    # Verificar prazos de 0 a 20 dias
-    prazos = _verificar_prazo(texto)
-    motivos.extend(prazos)
-
-    # Verificar Despacho Singular e Sustentação Oral no texto
-    if "despacho singular" in texto_lower:
-        if "Despacho Singular" not in motivos:
-            motivos.append("Despacho Singular")
-    if "sustentação oral" in texto_lower or "sustentacao oral" in texto_lower:
-        if "Sustentação Oral" not in motivos:
-            motivos.append("Sustentação Oral")
-
-    # Deduplicar mantendo ordem
-    motivos_unicos = []
-    for m in motivos:
-        if m not in motivos_unicos:
-            motivos_unicos.append(m)
-
-    return len(motivos_unicos) > 0, ", ".join(motivos_unicos) if motivos_unicos else ""
-
-def _verificar_sercon(texto, palavras_sercon):
-    """Verifica se o texto contem palavras de SERCON. Retorna (is_sercon, situacao)."""
-    texto_lower = texto.lower()
-    for item in palavras_sercon:
-        palavra = item.get("palavra", "").lower()
-        situacao = item.get("situacao", "")
-        if palavra and palavra in texto_lower:
-            return True, situacao
-    return False, ""
-
 def _renderizar_motor_nip(modo_edicao, usuario):
     """Funcao principal do Motor NIP - Edicao Automatica de Votos."""
-    import streamlit as st
-    st.markdown("### 🧠 Motor NIP Inteligente - Edição Automática de Votos")
+    st.markdown("### Motor NIP - Edição Automática de Votos")
     st.caption(
         "Faça upload do PDF do relatório/voto. O sistema extrai o voto, "
-        "identifica os verbos gramaticalmente, aplica as regras de edição e entrega o texto pronto no formato teleprompt."
+        "aplica as regras de edição e entrega o texto pronto no formato teleprompt."
     )
 
     st.markdown("---")
@@ -2526,7 +2498,7 @@ def _renderizar_motor_nip(modo_edicao, usuario):
     )
 
     if uploaded_file is not None:
-        with st.spinner("Processando PDF e analisando estrutura gramatical..."):
+        with st.spinner("Processando PDF..."):
             texto_completo = _extrair_texto_pdf(uploaded_file)
             if not texto_completo:
                 st.error("Não foi possível extrair texto do PDF.")
@@ -2567,14 +2539,13 @@ def _renderizar_motor_nip(modo_edicao, usuario):
 
             texto_editado = _processar_voto(voto_extraido, relator_tipo, regras)
                        
-            # Verificar urgencia e SERCON
+                        # 7. Verificar urgencia e SERCON
             palavras_urg = _obter_palavras_urgencia()
             palavras_sercon = _obter_palavras_sercon()
 
             is_sercon, situacao_sercon = _verificar_sercon(voto_extraido, palavras_sercon)
-            
-            # Necessário invocar a checagem da aba de Despachos na SEAT
-            from modulos.seat import _verificar_despacho_singular_tab
+
+            # Verificar se está na tab de Despachos Singulares
             is_ds, ds_motivo = _verificar_despacho_singular_tab(numero_processo or "")
 
             if is_sercon:
