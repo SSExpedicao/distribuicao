@@ -2493,20 +2493,16 @@ def _ofuscar_cpf(texto):
 def _formatar_numerais(texto):
     """Padroniza formatação de numerais romanos e abreviações."""
     import re
-    # Roman numerals maiúsculos com . ou ) → I – (caso ainda reste algum)
-    texto = re.sub(r'\b([IVXLCDM]+)[\.)]\s*', r'\1 – ', texto)
-    # Roman numerais com - → I –
-    texto = re.sub(r'\b([IVXLCDM]+)\s*-\s*', r'\1 – ', texto)
+    # Só I, V, X (igual à macro) — NÃO usa [IVXLCDM] que pega C, D, M, L
+    # Converte: I. → I – | I) → I – | I- → I –
+    texto = re.sub(r'\b([IVX]+)[\.)]\s*', r'\1 – ', texto)
+    texto = re.sub(r'\b([IVX]+)\s*-\s*', r'\1 – ', texto)
     # Standardize n.º, n° → nº
     texto = texto.replace("n.º", "nº")
     texto = texto.replace("n°", "nº")
-    # Add space after nº if missing: nº1.561 → nº 1.561
     texto = re.sub(r'nº(\d)', r'nº \1', texto)
     # LTDA – ME → LTDA. – ME
     texto = re.sub(r'LTDA(?!\.)\s*[-–]\s*ME', 'LTDA. – ME', texto)
-    # REMOVIDO: \b([a-z])\.\s* → \1)
-    # Este regex era genérico demais, corrompia "art." → "art)" e outras palavras
-    # A normalização de a. → a) agora é feita em _normalizar_texto (passo 1.6)
     return texto
 
 def _remover_e_antes_itens(texto):
@@ -2555,6 +2551,12 @@ def _obter_regras_padrao():
         {"procurar": "declare", "substituir_por": "declarar", "tipo": "verbo", "ativo": True},
         {"procurar": "aprove", "substituir_por": "aprovar", "tipo": "verbo", "ativo": True},
         {"procurar": "expeça", "substituir_por": "expedir", "tipo": "verbo", "ativo": True},
+        {"procurar": "presente Relatório/Voto", "substituir_por": "Relatório/Voto", "tipo": "frase", "ativo": True},
+        {"procurar": "RITCDF", "substituir_por": "RI/TCDF", "tipo": "termo", "ativo": True},
+        {"procurar": "deste Relatório/Voto", "substituir_por": "do relatório/voto do Relator", "tipo": "frase", "ativo": True},
+        {"procurar": "do Relatório/Voto", "substituir_por": "do relatório/voto do Relator", "tipo": "frase", "ativo": True},
+        {"procurar": "presente feito", "substituir_por": "feito em exame", "tipo": "frase", "ativo": True},
+        {"procurar": "presente processo", "substituir_por": "processo em apreço", "tipo": "frase", "ativo": True},
         {"procurar": "autorize", "substituir_por": "autorizar", "tipo": "verbo", "ativo": True},
         {"procurar": "faculte", "substituir_por": "facultar", "tipo": "verbo", "ativo": True},
         {"procurar": "determine", "substituir_por": "determinar", "tipo": "verbo", "ativo": True},
@@ -2651,11 +2653,10 @@ def _aplicar_negrito(texto: str, db_manager=None) -> str:
     if not texto:
         return texto
 
-    # 1. Negrito em numerais romanos seguidos de travessão
-    # "I –" → "**I** –" | "II –" → "**II** –"
-    # \b garante que não pega "BR-02" ou "TV-III"
-    # [IVXLCDM]{1,5} pega de I até MMMMM
-    texto = re.sub(r'\b([IVXLCDM]{1,5})\s*–', r'**\1** –', texto)
+    # Negrito em numerais romanos seguidos de travessão
+    # SÓ I, V, X (igual à macro) — não pega D de "Denúncia" ou C de "Cidadão"
+    # (?<![a-zA-ZÀ-ÿ]) impede pegar letra dentro de palavra (ex: não pega "D" de "Denúncia")
+    texto = re.sub(r'(?<![a-zA-ZÀ-ÿ])([IVX]+)\s*[–\-]', r'**\1** –', texto)
 
     # 2. Negrito em letras de itens: a), b), c)
     # (?<!\d) impede bold em letras precedidas por dígitos (ex: "9o)" não vira "9**o)**")
