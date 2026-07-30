@@ -2728,37 +2728,67 @@ def _aplicar_negrito(texto: str, db_manager=None) -> str:
 
     return texto
 
-def _processar_voto(voto_texto, relator, regras):
-    """Pipeline completo de processamento do voto."""
-    # 0. Limpar cabeçalhos e rodapés de páginas intermediárias (NOVO)
+def _processar_voto(voto_texto, relator, regras, db_manager=None):
+    """
+    Pipeline completo de processamento do voto.
+    
+    Ordem CORRETA do pipeline:
+    0. Limpar cabeçalhos e rodapés
+    0.5. Corrigir hifenização de palavras quebradas
+    1. NORMALIZAR TEXTO (NOVO — deve rodar antes de tudo)
+    2. Substituições de frases e termos
+    3. Transformação de verbos (com marcador ^=)
+    4. Ofuscar CPF
+    5. Formatar numerais
+    6. Remover "e" antes de itens
+    7. Adicionar preâmbulo
+    8. Formatar como teleprompt
+    9. Aplicar negrito
+    
+    Parâmetros:
+    - voto_texto: o voto extraído do PDF (após _extrair_voto)
+    - relator: tipo do relator (GCAM, VINICIUS_FRAGOSO, OUTRO)
+    - regras: lista de regras de substituição (de regras_substituicao_nip)
+    - db_manager: instância do gerenciador de banco (opcional)
+                  Necessário para integração com tabelas:
+                  - regras_palavras_chave (verbos)
+                  - palavras_urgencia_nip (palavras de negrito)
+    """
+    # 0. Limpar cabeçalhos e rodapés de páginas intermediárias
     texto = _limpar_cabecalho_rodape(voto_texto)
 
     # 0.5. Corrigir hifenização de palavras quebradas
     texto = _corrigir_hifenizacao(texto)
 
-    # 1. Substituições de frases e termos
+    # 1. NORMALIZAR TEXTO (NOVO — primeira função do pipeline de edição)
+    # Padroniza travessões, espaços, tabs, quebras de linha e pontuação
+    # DEVE rodar antes de _transformar_verbos para que o marcador ^= funcione
+    texto = _normalizar_texto(texto)
+
+    # 2. Substituições de frases e termos
     texto = _aplicar_substituicoes(texto, regras)
 
-    # 2. Transformação de verbos (imperativo → infinitivo)
-    texto = _transformar_verbos(texto, regras)
+    # 3. Transformação de verbos (imperativo → infinitivo com marcador ^=)
+    # Passa db_manager (NÃO regras) para que a integração com o banco funcione
+    texto = _transformar_verbos(texto, db_manager)
 
-    # 3. Ofuscar CPF
+    # 4. Ofuscar CPF
     texto = _ofuscar_cpf(texto)
 
-    # 4. Formatar numerais
+    # 5. Formatar numerais
     texto = _formatar_numerais(texto)
 
-    # 5. Remover "e" antes de itens
+    # 6. Remover "e" antes de itens
     texto = _remover_e_antes_itens(texto)
 
-    # 6. Adicionar preâmbulo
+    # 7. Adicionar preâmbulo
     texto = _adicionar_preambulo(texto, relator)
 
-    # 7. Formatar como teleprompt
+    # 8. Formatar como teleprompt
     texto = _formatar_teleprompt(texto)
 
-    # 8. Aplicar negrito
-    texto = _aplicar_negrito(texto)
+    # 9. Aplicar negrito (com integração ao banco)
+    texto = _aplicar_negrito(texto, db_manager)
 
     return texto
 
@@ -2924,7 +2954,7 @@ def _renderizar_motor_nip(modo_edicao, usuario):
             if not regras:
                 regras = _obter_regras_padrao()
 
-            texto_editado = _processar_voto(voto_extraido, relator_tipo, regras)
+            texto_editado = _processar_voto(voto_extraido, relator_tipo, regras, db_manager)
                        
                         # 7. Verificar urgencia e SERCON
             palavras_urg = _obter_palavras_urgencia()
@@ -2944,7 +2974,7 @@ def _renderizar_motor_nip(modo_edicao, usuario):
                 motivo_urg = ds_motivo
                 st.warning(f"⚠️ Processo identificado como **URGENTE** — Motivo: {ds_motivo}")
             else:
-                is_urgent, motivo_urg = _verificar_urgencia(voto_extraido, palavras_urg)
+                is_urgent, motivo_urg = _verificar_urgencia(voto_extraido, palavras_urg,  db_manager)
                 if is_urgent:
                     st.warning(f"⚠️ Processo identificado como **URGENTE** — Motivo: {motivo_urg}")
 
