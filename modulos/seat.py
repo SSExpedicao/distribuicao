@@ -2045,12 +2045,9 @@ def _extrair_voto(texto):
     return voto.strip()
 
 def _limpar_cabecalho_rodape(texto):
-    """Remove cabeçalhos e rodapés de PDFs de múltiplas páginas."""
-    import re
-
+    """Remove cabeçalhos, rodapés, data e assinatura de PDFs de múltiplas páginas."""
     linhas = texto.split('\n')
     linhas_limpas = []
-
     for linha in linhas:
         linha_strip = linha.strip()
         linha_lower = linha_strip.lower()
@@ -2066,7 +2063,8 @@ def _limpar_cabecalho_rodape(texto):
             continue
         if linha_lower.startswith('e-doc'):
             continue
-        # Proc no cabeçalho/rodapé (linha que começa com "Proc" e tem número)
+
+        # Cabeçalho/rodapé do TCDF
         if linha_lower.startswith('proc ') and '-' in linha_lower:
             continue
         if linha_lower == 'tribunal de contas do distrito federal':
@@ -2077,17 +2075,31 @@ def _limpar_cabecalho_rodape(texto):
             continue
         if linha_lower.startswith('gabinete do auditor'):
             continue
-        # Linha com apenas "e-DOC XXXXXXXX"
+
+        # e-DOC isolado
         if re.match(r'^e-?doc\s*\w+$', linha_strip, re.IGNORECASE):
+            continue
+
+        # NOVO — Remover data: "Brasília (DF), 15 de julho de 2026."
+        if re.match(r'^bras[íi]lia\s*\(?df\)?[,\s]*\d', linha_lower):
+            continue
+
+        # NOVO — Remover assinatura: linha toda em MAIÚSCULAS, curta (provável nome)
+        # Ex: "PAULO TADEU" | "ANILCÉIA MACHADO"
+        # Condições: tudo maiúscula, 5-50 chars, até 5 palavras, tem pelo menos 1 espaço
+        if (linha_strip and
+                linha_strip == linha_strip.upper() and
+                any(c.isalpha() for c in linha_strip) and
+                5 <= len(linha_strip) <= 50 and
+                len(linha_strip.split()) <= 5 and
+                ' ' in linha_strip):
             continue
 
         linhas_limpas.append(linha)
 
     texto = '\n'.join(linhas_limpas)
-
     # Remover linhas vazias excessivas (3+ viram 2)
     texto = re.sub(r'\n{3,}', '\n\n', texto)
-
     return texto.strip()
 
 def _adicionar_preambulo(texto, relator):
@@ -2117,51 +2129,74 @@ def _normalizar_texto(texto: str) -> str:
     """
     Camada de Normalização — padroniza o texto antes do pipeline do Motor NIP.
     
-    Roda ANTES de qualquer outra função (_aplicar_substituicoes, _transformar_verbos, etc.)
-    para garantir que todas as regras seguintes funcionem independentemente da 
-    formatação original enviada pelo gabinete do conselheiro.
+    Roda ANTES de qualquer outra função para garantir que todas as regras
+    seguintes funcionem independentemente da formatação original do PDF.
     
-    Padroniza:
-    1. Travessões exóticos (—, ‒, ―) para – (en-dash)
-    2. Espaço antes e depois do travessão após numerais romanos
-    3. Tabs para espaço
-    4. Quebras de linha para espaço (preparação para teleprompt)
-    5. Múltiplos espaços para espaço único
-    6. Remove espaço antes de pontuação
-    7. Garante espaço após pontuação
+    NÃO converte para minúsculo (preserva maiúsculas do texto original).
     """
     if not texto:
         return texto
 
-    # 1. Converter travessões exóticos para en-dash (–)
-    # Unicode:
-    #   \u2012 = ‒ (figure dash)
-    #   \u2014 = — (em-dash)
-    #   \u2015 = ― (horizontal bar)
-    #   \u2013 = – (en-dash) ← padrão do Motor NIP
-    texto = texto.replace('\u2012', '\u2013')
-    texto = texto.replace('\u2014', '\u2013')
-    texto = texto.replace('\u2015', '\u2013')
+    # 1. Travessões exóticos → en-dash (–)
+    texto = texto.replace('\u2012', '\u2013')   # ‒ → –
+    texto = texto.replace('\u2014', '\u2013')   # — → –
+    texto = texto.replace('\u2015', '\u2013')   # ― → –
+
+    # 1.5. Padronizar numerais romanos com separadores ) e .
+    # i) → I – | ii. → II – | iii. → III – | iv. → IV –
+    # Usa (?:^|\n) para só pegar no início de linha (não pega "art. IV")
+    texto = re.sub(
+        r'(?:^|\n)\s*([IVXLCDMivxlcdm]{1,5})\s*[).]\s+',
+        lambda m: ('\n' if m.group(0).startswith('\n') else '') + m.group(1).upper() + ' – ',
+        texto
+    )
+
+    # 1.6. Padronizar sub-itens: a. → a) | b. → b) | c. → c)
+    # Só no início de linha para não pegar "art. 9" ou "n. 106"
+    texto = re.sub(
+        r'(?:^|\n)\s*([a-z])\.\s+',
+        lambda m: ('\n' if m.group(0).startswith('\n') else '') + m.group(1) + ') ',
+        texto
+    )
 
     # 2. Garantir espaço antes e depois do travessão após numerais romanos
-    # Resolve: II-autorize → II – autorize | II–autorize → II – autorize | II- autorize → II – autorize
-    # \b garante que não pegamos parte de palavras maiores (ex: "BR-02" não é afetado)
-    # [IVXLCDM]{1,5} pega numerais romanos de I a MMMMM
-    # \s*[–\-]\s* pega travessão ou hífen com ou sem espaços ao redor
     texto = re.sub(r'\b([IVXLCDM]{1,5})\s*[–\-]\s*', r'\1 – ', texto)
 
     # 3. Tabs → espaço
     texto = texto.replace('\t', ' ')
 
-    # 4. Quebras de linha → espaço (preparação para formato teleprompt)
-    # \r\n = Windows | \r = Mac antigo | \n = Unix
+    # 4. Quebras de linha → espaço (preparação para teleprompt)
     texto = texto.replace('\r\n', ' ')
     texto = texto.replace('\r', ' ')
     texto = texto.replace('\n', ' ')
 
-    # 5. Reduzir múltiplos espaços para espaço único
-    # {2,} significa "2 ou mais"
+    # 5. Múltiplos espaços → espaço único
     texto = re.sub(r' {2,}', ' ', texto)
+
+    # 6. Remove espaço antes de pontuação
+    texto = re.sub(r'\s+([,.;:!?])', r'\1', texto)
+
+    # 7. Garante espaço após pontuação (se não tiver espaço e não for número)
+    texto = re.sub(r'([,.;:!?])(?=[^\s\d])', r'\1 ', texto)
+
+    return texto.strip()
+  
+    # 1. Converter travessões exóticos para en-dash (–)
+    texto = texto.replace('\u2012', '\u2013')
+    texto = texto.replace('\u2014', '\u2013')
+    texto = texto.replace('\u2015', '\u2013')
+
+    # 1.5. Padronizar numerais romanos com separadores ) e .
+    # Converte: i) → I – | ii. → II – | iii. → III – | iv. → IV –
+    # Também trata maiúsculos: I) → I – | II. → II –
+    texto = re.sub(
+        r'\b([IVXLCDMivxlcdm]{1,5})\s*[).]\s+',
+        lambda m: m.group(1).upper() + ' – ',
+        texto
+    )
+
+    # 2. Garantir espaço antes e depois do travessão após numerais romanos
+    texto = re.sub(r'\b([IVXLCDM]{1,5})\s*[–\-]\s*', r'\1 – ', texto)
 
     # 6. Remover espaço antes de pontuação
     # "autorize :" → "autorize:" | "processo ," → "processo,"
@@ -2176,7 +2211,20 @@ def _normalizar_texto(texto: str) -> str:
     # À-ÿ cobre letras acentuadas do português (á, é, í, ó, ú, ã, õ, ç, etc.)
     texto = re.sub(r'([,.;:!?])([a-zA-ZÀ-ÿ])', r'\1 \2', texto)
 
-    # 8. Remover espaços no início e fim do texto
+    # 1.5. Padronizar numerais romanos minúsculos com separadores ) e .
+    # Converte: i) → I – | ii. → II – | iii. → III – | iv. → IV –
+    # Também trata maiúsculos com ) e . : I) → I – | II. → II –
+    # \b garante borda de palavra (não pega "BR-IV" ou "i em inglês")
+    # [IVXLCDMivxlcdm] pega maiúsculos E minúsculos
+    # [).]  pega os dois separadores problemáticos
+    # (?=\s) garante que depois do separador tem espaço (evita pegar "iv.5")
+    texto = re.sub(
+        r'\b([IVXLCDMivxlcdm]{1,5})\s*[).]\s+',
+        lambda m: m.group(1).upper() + ' – ',
+        texto
+    ) 
+  
+   # 8. Remover espaços no início e fim do texto
     texto = texto.strip()
 
     return texto
@@ -2292,7 +2340,8 @@ _VERBOS_PADRAO = {
     # L — 1
     "levante": "levantar",
 
-    # M — 2
+    # M — 3
+    "mantenha": "manter",      
     "monitore": "monitorar",
     "normalize": "normalizar",
 
