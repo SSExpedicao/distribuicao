@@ -2045,61 +2045,38 @@ def _extrair_voto(texto):
     return voto.strip()
 
 def _aplicar_substituicoes(texto, regras):
-    """
-    Aplica substituições de frases, termos E verbos cadastrados no banco.
-    Possui Curingas Inteligentes para aniquilar variações gramaticais.
-    """
+    """Aplica o Curinga Inteligente para verbos soltos no fim de frase."""
     import re
-    
-    # 1. CURINGAS INTELIGENTES (Wildcards Nativos do Motor NIP)
-    # Substitui "da decisão que vier a ser proferida/prolatada/exarada/tomada" 
-    # por "desta decisão", independente do verbo que o relator inventar no final.
     texto = re.sub(
         r'\bda\s+decisão\s+que\s+vier\s+a\s+ser\s+\w+\b', 
         'desta decisão', 
         texto, 
         flags=re.IGNORECASE
     )
-    
-    # 2. REGRAS DO BANCO DE DADOS (Com tolerância a quebras de PDF)
     if not regras:
         return texto
-        
     for regra in regras:
         if regra.get("ativo", True):
             procurar = str(regra.get("procurar", "")).strip()
             substituir = str(regra.get("substituir_por", "")).strip()
             tipo = regra.get("tipo", "frase")
-            
-            if not procurar:
-                continue
-
-            # MÁGICA DE TOLERÂNCIA: Substitui espaços da regra por um padrão \s+ 
-            # Isso faz com que a regra encontre a frase mesmo se o PDF quebrar a linha no meio.
+            if not procurar: continue
             padrao_flexivel = r'\s+'.join([re.escape(p) for p in procurar.split()])
-            
-            # Se for termo isolado ou verbo, garante que pega a palavra inteira (\b)
             if tipo in ("termo", "verbo"):
                 padrao_flexivel = rf'\b{padrao_flexivel}\b'
-                
             texto = re.sub(padrao_flexivel, substituir, texto, flags=re.IGNORECASE)
-            
     return texto
 
 def _converter_imperativo_para_infinitivo_algoritmico(palavra, excecoes_banco=None):
-    """
-    FÓRMULA INTELIGENTE: Converte verbos no imperativo para o infinitivo usando regras morfossintáticas
-    e radicais gramaticais da língua portuguesa.
-    """
+    """Converte verbo preservando regras estritas. Sem o 'de' -> 'dar'."""
     p_lower = palavra.lower().strip()
 
-    # 1. Checar exceções e verbos irregulares no banco ou mapa padrão
     irregulares = {
         "faça": "fazer", "faca": "fazer",
-        "dê": "dar", "de": "dar",
+        "dê": "dar", 
         "seja": "ser",
         "veja": "ver",
-        "vênia": "vênia", # Não alterar substantivos comuns
+        "vênia": "vênia",
         "abstenha": "abster",
         "mantenha": "manter",
         "requer": "requerer",
@@ -2110,69 +2087,61 @@ def _converter_imperativo_para_infinitivo_algoritmico(palavra, excecoes_banco=No
     if p_lower in irregulares:
         return irregulares[p_lower]
 
-    # Se a palavra já termina com 'r' (já está no infinitivo), manter
     if p_lower.endswith('r'):
         return p_lower
 
-    # 2. Remoção de Ífens e Pronomes Enclíticos (ex: "notifique-se" -> "notifique")
     pronomes = ["-se", "-nos", "-lhe", "-lhes", "-o", "-a", "-os", "-as"]
     for pronome in pronomes:
         if p_lower.endswith(pronome):
             p_lower = p_lower[:-len(pronome)]
             break
+            
+    if p_lower.endswith("fira"): return p_lower[:-4] + "ferir"
+    if p_lower.endswith("xija"): return p_lower[:-4] + "xigir"
+    if p_lower.endswith("clua"): return p_lower[:-3] + "cluir"
+    if p_lower.endswith("atenda"): return p_lower[:-4] + "tender"
+    if p_lower.endswith("que"): return p_lower[:-3] + "car"
+    if p_lower.endswith("gue"): return p_lower[:-3] + "gar"
+    if p_lower.endswith("ce"): return p_lower[:-2] + "çar"
+    if p_lower.endswith("e"): return p_lower[:-1] + "ar"
+    if p_lower.endswith("em"): return p_lower[:-2] + "ar"
+    if p_lower.endswith("ceda"): return p_lower[:-4] + "ceder"
+    if p_lower.endswith("mova"): return p_lower[:-4] + "mover"
+    if p_lower.endswith("a"): return p_lower[:-1] + "er"
 
-    # 3. Regras Algorítmicas de Sufixos da Língua Portuguesa
-    
-    # Verbos de 3ª Conjugação (-ir): defira -> deferir, indefira -> indeferir, exija -> exigir
-    if p_lower.endswith("fira"):
-        return p_lower[:-4] + "ferir"
-    if p_lower.endswith("xija"):
-        return p_lower[:-4] + "xigir"
-    if p_lower.endswith("clua"):
-        return p_lower[:-3] + "cluir"
-    if p_lower.endswith("atenda"):
-        return p_lower[:-4] + "tender"
-
-    # Verbos de 1ª Conjugação (-ar) [A imensa maioria jurídica: determine, notifique, autorize, chame, tome]
-    if p_lower.endswith("que"):  # comunique -> comunicar, notifique -> notificar
-        return p_lower[:-3] + "car"
-    if p_lower.endswith("gue"):  # homologue -> homologar, prorrogue -> prorrogar
-        return p_lower[:-3] + "gar"
-    if p_lower.endswith("ce"):   # autorize -> autorizar (variantes)
-        return p_lower[:-2] + "çar"
-    if p_lower.endswith("e"):    # determine -> determinar, tome -> tomar, considere -> considerar
-        return p_lower[:-1] + "ar"
-    if p_lower.endswith("em"):   # determinem -> determinar
-        return p_lower[:-2] + "ar"
-
-    # Verbos de 2ª Conjugação (-er)
-    if p_lower.endswith("ceda"): # proceda -> proceder, conceda -> conceder
-        return p_lower[:-4] + "ceder"
-    if p_lower.endswith("mova"): # promova -> promover
-        return p_lower[:-4] + "mover"
-    if p_lower.endswith("a"):    # receba -> receber, responda -> responder
-        return p_lower[:-1] + "er"
-
-    return palavra # Caso não se enquadre, preserva o original
+    return palavra
 
 def _transformar_verbos(texto, regras):
     """
-    Transforma verbos do Modo Imperativo Afirmativo para Infinitivo após numerais romanos e letras.
-    Agora salta a palavra "não " para capturar o verbo corretamente.
+    Transforma APENAS o primeiro verbo da linha de comando principal (Numerais Romanos).
+    Ignora letras de sub-itens e numerais romanos intrusos com parênteses.
+    O Fim do bug "Peçer".
     """
     import re
-
     excecoes_banco = {}
     if regras:
         for r in regras:
             if r.get("tipo") == "verbo" and r.get("ativo", True):
                 excecoes_banco[r["procurar"].lower().strip()] = r["substituir_por"].lower().strip()
 
-    # Regex flexível: aceita o "não " opcional antes do verbo e lida com vários tipos de traços/pontos
+    # Regex Anti-Assessor Doido: Exige Romanos sem parênteses fechando imediatamente
     padrao_romano = re.compile(
-        r'((?:^|\n)\s*(?:[IVXLCDM]+|\d+)[\.\)\s]*[–\-—\.\•]*\s*(?:não\s+)?)(\w+(?:-\w+)?)',
-        re.IGNORECASE
+        r'((?:^|\n)\s*)([IVXLCDMivxlcdm]+)(?![\s\.\-]*\))([\.\s]*[–\-—\.\•]*\s*(?:[Nn][ãa]o\s+)?)(\w+(?:-\w+)?)'
     )
+
+    def _substituir_verbo(match):
+        prefixo = match.group(1)
+        romano = match.group(2)
+        separador = match.group(3)
+        palavra = match.group(4)
+        
+        verbo_convertido = _converter_imperativo_para_infinitivo_algoritmico(palavra, excecoes_banco)
+        if palavra[0].isupper():
+            verbo_convertido = verbo_convertido.capitalize()
+            
+        return prefixo + romano + separador + verbo_convertido
+
+    return padrao_romano.sub(_substituir_verbo, texto)
 
     def _substituir_romano(match):
         prefixo = match.group(1)
@@ -2203,32 +2172,38 @@ def _ofuscar_cpf(texto):
         return f"***.{cpf[4:11]}-**"
     return re.sub(r'\d{3}\.\d{3}\.\d{3}-\d{2}', ofuscar, texto)
 
-def _formatar_numerais(texto):
-    """
-    Padroniza formatação de numerais romanos, letras de itens e abreviações.
-    Garante que tudo fique no formato perfeito ANTES do teleprompt espremer o texto.
-    """
+def _aplicar_negrito(texto):
+    """Aplica negrito sobrevivendo ao Teleprompt."""
     import re
-    
-    # 1. Numerais Romanos: Converte I., I), I - para o padrão oficial "I – "
-    # Usa (^|\s) para garantir que pegue numerais soltos e não partes de palavras.
-    texto = re.sub(r'(^|\s)([IVXLCDM]+)[\.\)]\s*', r'\1\2 – ', texto)
-    texto = re.sub(r'(^|\s)([IVXLCDM]+)\s*-\s*', r'\1\2 – ', texto)
-
-    # 2. Letras de Subitens: Converte a. para a) e padroniza o espaço.
-    texto = re.sub(r'(^|\s)([a-z])\.\s*', r'\1\2) ', texto)
-
-    # 3. Correções de digitação comuns
-    texto = texto.replace("n.º", "nº").replace("n°", "nº")
-    
-    # 4. Garante espaço após nº: nº1.561 → nº 1.561
-    texto = re.sub(r'nº(\d)', r'nº \1', texto)
-
-    # 5. Corrige LTDA - ME
-    texto = re.sub(r'LTDA(?!\.)\s*[-–]\s*ME', 'LTDA. – ME', texto)
-
+    # Romanos
+    texto = re.sub(r'(^|\s)([IVXLCDM]+)(\s*[–\-—])', r'\1**\2**\3', texto)
+    # Letras (a), b), c))
+    texto = re.sub(r'(^|\s)([a-z])(\))', r'\1**\2\3**', texto)
+    # Prazos
+    for i in range(21):
+        texto = re.sub(
+            rf'\b{i}\s*(?:\([^)]+\)\s*)?dias?\b',
+            lambda m: f'**{m.group(0)}**',
+            texto,
+            flags=re.IGNORECASE
+        )
+    palavras_negrito = [
+        "urgente", "urgência", "prioritário", "prioridade", "brevidade",
+        "imediato", "imediatamente", "importância", "suspender", "suspensão", 
+        "revoga", "abster", "abstenção", "anula", "anular", "negar",
+        "continuidade", "continuação", "prosseguimento", "reabertura", "abertura",
+        "licita", "licitação", "licitatório", "certame", "homologar", "adjudicar",
+        "governador", "chefe do poder", "despacho singular", "sustentação oral",
+        "audiência", "acórdão", "acórdãos", "notificação", "notificar",
+        "cientificação", "cientificar", "convocação", "Covid", "Corona", 
+        "prorrog", "aprovar", "minuta", "pagamento", "tomar conhecimento", 
+        "considerar", "determinar", "chamar", "recomendar", "autorizar", "prazo de"
+    ]
+    for palavra in palavras_negrito:
+        padrao = re.compile(rf'(?<!\*\*)({re.escape(palavra)})(?!\*\*)', re.IGNORECASE)
+        texto = padrao.sub(r'**\1**', texto)
     return texto
-
+  
 def _remover_e_antes_itens(texto):
     """Remove 'e' antes de itens (I, II, a), b))."""
     import re
@@ -2237,31 +2212,32 @@ def _remover_e_antes_itens(texto):
     return texto
 
 def _limpar_cabecalho_rodape(texto):
-    """Remove cabeçalhos e rodapés de PDFs de múltiplas páginas."""
+    """Extremamente agressivo contra lixo de PDF do TCDF."""
     import re
     linhas = texto.split('\n')
     linhas_limpas = []
+    
     for linha in linhas:
         linha_strip = linha.strip()
         linha_lower = linha_strip.lower()
+
+        if re.match(r'^\d+\s*peça\s*\d+', linha_lower): continue
         if 'documento assinado digitalmente' in linha_lower: continue
         if 'para verificar as assinaturas' in linha_lower: continue
         if 'acesse www.tc.df.gov.br' in linha_lower: continue
-        if 'acesse www.tc.df.gov' in linha_lower: continue
         if linha_lower.startswith('e-doc'): continue
-        if linha_lower.startswith('proc ') and '-' in linha_lower: continue
-        if linha_lower == 'tribunal de contas do distrito federal': continue
-        if linha_lower.startswith('gabinete da conselheir'): continue
-        if linha_lower.startswith('gabinete do conselheir'): continue
-        if linha_lower.startswith('gabinete do auditor'): continue
-        if re.match(r'^e-?doc\s*\w+$', linha_strip, re.IGNORECASE): continue
+        if re.match(r'^proc\.?\s*:?\s*\d+', linha_lower): continue
+        if re.match(r'^processo\s*n', linha_lower): continue
+        if linha_lower.startswith('tribunal de contas do distrito federal'): continue
+        if linha_lower.startswith('gabinete'): continue
+
         linhas_limpas.append(linha)
 
     texto = '\n'.join(linhas_limpas)
     return re.sub(r'\n{3,}', '\n\n', texto).strip()
 
 def _adicionar_preambulo(texto, relator):
-    """Adiciona o preâmbulo correto baseado no relator e remove o texto original do voto."""
+    """Extermina o preâmbulo original inteiro antes de colar o novo."""
     import re
     if relator == "GCAM":
         preambulo = "O Tribunal, por unanimidade, de acordo com o voto da Relatora, decidiu:"
@@ -2270,14 +2246,15 @@ def _adicionar_preambulo(texto, relator):
     else:
         preambulo = "O Tribunal, por unanimidade, de acordo com o voto do Relator, decidiu:"
 
-    padroes_remocao = [
-        r'^\s*(?:Diante do exposto|Pelo exposto|Ante o exposto)[,\s]*(?:em harmonia com o órgão instrutivo,?\s*)?VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio\s+(?:Tribunal|Plenário)[:\s]*',
-        r'^\s*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio\s+(?:Tribunal|Plenário)[:\s]*',
-        r'^\s*(?:Diante do exposto|Pelo exposto|Ante o exposto)[,\s]*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?',
-        r'^\s*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?',
-    ]
-    for padrao in padroes_remocao:
-        texto = re.sub(padrao, '', texto, flags=re.IGNORECASE)
+    # Remove qualquer coisa desde o VOTO até o Tribunal:
+    texto = re.sub(
+        r'^(?:[\s\S]*?)(?:VOTO\s+.*?)(?:Tribunal|Plenário)[:\s]*', 
+        '', 
+        texto, 
+        flags=re.IGNORECASE
+    )
+    # Remove rebarbas tipo "o Tribunal: " que possam sobrar
+    texto = re.sub(r'^[oO]\s*Tribunal\s*:\s*', '', texto.strip())
 
     return f"{preambulo} {texto.strip()}"
 
@@ -2287,13 +2264,9 @@ def _corrigir_hifenizacao(texto):
     return re.sub(r'(\w)-\s*\n\s*(\w)', r'\1\2', texto)
   
 def _formatar_teleprompt(texto):
-    """Formata o texto como teleprompt (texto corrido sem quebras)."""
+    """Muda texto para linha única, mantendo os espaços limpos."""
     import re
-    texto = re.sub(r'\n+', ' ', texto)
-    texto = re.sub(r'\t+', ' ', texto)
-    texto = re.sub(r'\r+', ' ', texto)
-    texto = re.sub(r' +', ' ', texto)
-    return texto.strip()
+    return re.sub(r'\s+', ' ', texto).strip()
 
 def _aplicar_negrito(texto):
     """
@@ -2433,32 +2406,13 @@ def _normalizar_numero_processo(numero):
     return numero.strip()
 
 def _extrair_numero_processo(texto):
-    """Extrai o numero do processo de forma altamente tolerante a formatos longos e curtos."""
+    """Extração brutal do número do processo."""
     import re
-    # Remove todos os espaços/quebras extras para formar uma string contínua
-    texto_limpo = re.sub(r'\s+', ' ', texto)
-    
-    # 1. CAMADA: Tenta o padrão moderno/longo (Ex: 00600-00009313/2025-11-e)
-    padrao_longo = r'(\d{4,5}\s*-\s*\d{6,8}\s*/\s*\d{4}\s*-\s*\d{2})(?:-e|-E)?'
-    match_longo = re.search(padrao_longo, texto_limpo, re.IGNORECASE)
-    if match_longo:
-        return _normalizar_numero_processo(match_longo.group(1).replace(" ", ""))
-    
-    # 2. CAMADA: O Padrão Curto Ancorado (A sua sugestão!)
-    # Caça variações: "Processo n.º: 25169/2017", "Proc.: 25169/2017", "Proc 25169/2017"
-    padrao_ancora = r'(?:Processo|Proc\.?)\s*(?:n[º°.o]*\s*)?:?\s*(\d{2,8}\s*/\s*\d{4})(?:-e|-E)?'
-    match_ancora = re.search(padrao_ancora, texto_limpo, re.IGNORECASE)
-    if match_ancora:
-        return _normalizar_numero_processo(match_ancora.group(1).replace(" ", ""))
-        
-    # 3. CAMADA DE SEGURANÇA: Procura qualquer número curto (XXXXX/YYYY) perdido no cabeçalho
-    # Lê apenas os primeiros 1000 caracteres para não pegar leis ou artigos no meio do voto
-    texto_inicio = texto_limpo[:1000]
-    padrao_curto = r'\b(\d{2,8}\s*/\s*\d{4})(?:-e|-E)?\b'
-    match_curto = re.search(padrao_curto, texto_inicio)
-    if match_curto:
-        return _normalizar_numero_processo(match_curto.group(1).replace(" ", ""))
-        
+    texto_super_limpo = re.sub(r'[\s\n\r\t]+', '', texto)
+    padrao_absoluto = r'(\d{2,5}[-\.]?\d{0,8}/\d{4}(?:-\d{2})?(?:-e|-E)?)'
+    matches = re.findall(padrao_absoluto, texto_super_limpo)
+    if matches:
+        return _normalizar_numero_processo(matches[0])
     return None
 
 def _identificar_relator_sigla(texto):
