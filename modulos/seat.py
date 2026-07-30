@@ -2954,7 +2954,7 @@ def _renderizar_motor_nip(modo_edicao, usuario):
             if not regras:
                 regras = _obter_regras_padrao()
 
-            texto_editado = _processar_voto(voto_extraido, relator_tipo, regras)
+            texto_editado = _processar_voto(voto_extraido, relator_tipo, regras, db_manager)
                         # 7. Verificar urgencia e SERCON
             palavras_urg = _obter_palavras_urgencia()
             palavras_sercon = _obter_palavras_sercon()
