@@ -2065,7 +2065,6 @@ def _transformar_verbos(texto, regras):
         "recomende": "recomendar",
         "autorize": "autorizar",
         "determine": "determinar",
-        "autorize:": "autorizar:",
         "tome": "tomar",
         "considere": "considerar",
         "suspended": "suspender",
@@ -2116,8 +2115,7 @@ def _transformar_verbos(texto, regras):
         "determine": "determinar",
         "autorize": "autorizar",
         "dê": "dar",
-        "conheça": "conhecer",
-        "não conheça": "nao conhecer", 
+        "de": "dar",
         "faça": "fazer",
         "faca": "fazer",
         "inclua": "incluir",
@@ -2182,7 +2180,22 @@ def _transformar_verbos(texto, regras):
 
     texto = padrao_romano.sub(_substituir_verbo, texto)
 
-      return texto
+    # Também converter verbos após "a)" "b)" "c)" etc. (sub-itens)
+    padrao_letra = re.compile(
+        r'((?:^|\n)\s*[a-z]\)[\s]*)(\w+)',
+        re.IGNORECASE
+    )
+
+    def _substituir_verbo_letra(match):
+        prefixo = match.group(1)
+        verbo = match.group(2).lower()
+        if verbo in imperativo_infinitivo:
+            return prefixo + imperativo_infinitivo[verbo]
+        return match.group(0)
+
+    texto = padrao_letra.sub(_substituir_verbo_letra, texto)
+
+    return texto
 
 def _ofuscar_cpf(texto):
     """Ofusca CPFs no texto (3 primeiros e 2 últimos dígitos)."""
