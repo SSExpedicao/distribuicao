@@ -2045,14 +2045,15 @@ def _extrair_voto(texto):
     return voto.strip()
 
 def _limpar_cabecalho_rodape(texto):
-    """Remove cabeçalhos, rodapés, data e assinatura de PDFs de múltiplas páginas."""
+    """Remove cabeçalhos, rodapés, data e assinatura de PDFs."""
+    import re
     linhas = texto.split('\n')
     linhas_limpas = []
     for linha in linhas:
         linha_strip = linha.strip()
         linha_lower = linha_strip.lower()
 
-        # Pular linhas de rodapé digital
+        # Rodapé digital
         if 'documento assinado digitalmente' in linha_lower:
             continue
         if 'para verificar as assinaturas' in linha_lower:
@@ -2064,7 +2065,7 @@ def _limpar_cabecalho_rodape(texto):
         if linha_lower.startswith('e-doc'):
             continue
 
-        # Cabeçalho/rodapé do TCDF
+        # Cabeçalho/rodapé TCDF
         if linha_lower.startswith('proc ') and '-' in linha_lower:
             continue
         if linha_lower == 'tribunal de contas do distrito federal':
@@ -2084,9 +2085,7 @@ def _limpar_cabecalho_rodape(texto):
         if re.match(r'^bras[íi]lia\s*\(?df\)?[,\s]*\d', linha_lower):
             continue
 
-        # NOVO — Remover assinatura: linha toda em MAIÚSCULAS, curta (provável nome)
-        # Ex: "PAULO TADEU" | "ANILCÉIA MACHADO"
-        # Condições: tudo maiúscula, 5-50 chars, até 5 palavras, tem pelo menos 1 espaço
+        # NOVO — Remover assinatura: linha toda em MAIÚSCULAS (nome do relator)
         if (linha_strip and
                 linha_strip == linha_strip.upper() and
                 any(c.isalpha() for c in linha_strip) and
@@ -2098,7 +2097,6 @@ def _limpar_cabecalho_rodape(texto):
         linhas_limpas.append(linha)
 
     texto = '\n'.join(linhas_limpas)
-    # Remover linhas vazias excessivas (3+ viram 2)
     texto = re.sub(r'\n{3,}', '\n\n', texto)
     return texto.strip()
 
@@ -2129,29 +2127,29 @@ def _normalizar_texto(texto: str) -> str:
     """
     Camada de Normalização — padroniza o texto antes do pipeline do Motor NIP.
     
-    Roda ANTES de qualquer outra função para garantir que todas as regras
-    seguintes funcionem independentemente da formatação original do PDF.
-    
-    NÃO converte para minúsculo (preserva maiúsculas do texto original).
+    NÃO converte para minúsculo.
+    NÃO remove acentos.
+    Preserva o case original do texto do PDF.
     """
     if not texto:
         return texto
 
     # 1. Travessões exóticos → en-dash (–)
-    texto = texto.replace('\u2012', '\u2013')   # ‒ → –
-    texto = texto.replace('\u2014', '\u2013')   # — → –
-    texto = texto.replace('\u2015', '\u2013')   # ― → –
+    texto = texto.replace('\u2012', '\u2013')
+    texto = texto.replace('\u2014', '\u2013')
+    texto = texto.replace('\u2015', '\u2013')
 
-    # 1.5. Padronizar numerais romanos com separadores ) e .
-    # i) → I – | ii. → II – | iii. → III – | iv. → IV –
-    # Usa (?:^|\n) para só pegar no início de linha (não pega "art. IV")
+    # 1.5. Padronizar numerais romanos com ) e . ANTES de remover \n
+    # Usa (?:^|\n) para só pegar no início de linha
+    # Converte: i) → I – | ii. → II – | III. → III – | iv. → IV –
     texto = re.sub(
         r'(?:^|\n)\s*([IVXLCDMivxlcdm]{1,5})\s*[).]\s+',
         lambda m: ('\n' if m.group(0).startswith('\n') else '') + m.group(1).upper() + ' – ',
         texto
     )
 
-    # 1.6. Padronizar sub-itens: a. → a) | b. → b) | c. → c)
+    # 1.6. Padronizar sub-itens ANTES de remover \n
+    # Converte: a. → a) | b. → b) | c. → c)
     # Só no início de linha para não pegar "art. 9" ou "n. 106"
     texto = re.sub(
         r'(?:^|\n)\s*([a-z])\.\s+',
@@ -2165,7 +2163,7 @@ def _normalizar_texto(texto: str) -> str:
     # 3. Tabs → espaço
     texto = texto.replace('\t', ' ')
 
-    # 4. Quebras de linha → espaço (preparação para teleprompt)
+    # 4. Quebras de linha → espaço
     texto = texto.replace('\r\n', ' ')
     texto = texto.replace('\r', ' ')
     texto = texto.replace('\n', ' ')
@@ -2176,58 +2174,10 @@ def _normalizar_texto(texto: str) -> str:
     # 6. Remove espaço antes de pontuação
     texto = re.sub(r'\s+([,.;:!?])', r'\1', texto)
 
-    # 7. Garante espaço após pontuação (se não tiver espaço e não for número)
+    # 7. Garante espaço após pontuação
     texto = re.sub(r'([,.;:!?])(?=[^\s\d])', r'\1 ', texto)
 
     return texto.strip()
-  
-    # 1. Converter travessões exóticos para en-dash (–)
-    texto = texto.replace('\u2012', '\u2013')
-    texto = texto.replace('\u2014', '\u2013')
-    texto = texto.replace('\u2015', '\u2013')
-
-    # 1.5. Padronizar numerais romanos com separadores ) e .
-    # Converte: i) → I – | ii. → II – | iii. → III – | iv. → IV –
-    # Também trata maiúsculos: I) → I – | II. → II –
-    texto = re.sub(
-        r'\b([IVXLCDMivxlcdm]{1,5})\s*[).]\s+',
-        lambda m: m.group(1).upper() + ' – ',
-        texto
-    )
-
-    # 2. Garantir espaço antes e depois do travessão após numerais romanos
-    texto = re.sub(r'\b([IVXLCDM]{1,5})\s*[–\-]\s*', r'\1 – ', texto)
-
-    # 6. Remover espaço antes de pontuação
-    # "autorize :" → "autorize:" | "processo ," → "processo,"
-    # [,.;:!?] são os sinais de pontuação que nos interessam
-    # \s+ pega um ou mais espaços antes da pontuação
-    texto = re.sub(r'\s+([,.;:!?])', r'\1', texto)
-
-    # 7. Garantir espaço após pontuação (se seguido de letra)
-    # "autorize:o" → "autorize: o" | "processo,informe" → "processo, informe"
-    # ([,.;:!?]) captura a pontuação
-    # ([a-zA-ZÀ-ÿ]) captura qualquer letra (incluindo acentuadas)
-    # À-ÿ cobre letras acentuadas do português (á, é, í, ó, ú, ã, õ, ç, etc.)
-    texto = re.sub(r'([,.;:!?])([a-zA-ZÀ-ÿ])', r'\1 \2', texto)
-
-    # 1.5. Padronizar numerais romanos minúsculos com separadores ) e .
-    # Converte: i) → I – | ii. → II – | iii. → III – | iv. → IV –
-    # Também trata maiúsculos com ) e . : I) → I – | II. → II –
-    # \b garante borda de palavra (não pega "BR-IV" ou "i em inglês")
-    # [IVXLCDMivxlcdm] pega maiúsculos E minúsculos
-    # [).]  pega os dois separadores problemáticos
-    # (?=\s) garante que depois do separador tem espaço (evita pegar "iv.5")
-    texto = re.sub(
-        r'\b([IVXLCDMivxlcdm]{1,5})\s*[).]\s+',
-        lambda m: m.group(1).upper() + ' – ',
-        texto
-    ) 
-  
-   # 8. Remover espaços no início e fim do texto
-    texto = texto.strip()
-
-    return texto
 
 def _aplicar_substituicoes(texto, regras):
     """Aplica substituições de frases e termos cadastradas no banco (case-insensitive)."""
@@ -2551,26 +2501,22 @@ def _ofuscar_cpf(texto):
     return re.sub(r'\d{3}\.\d{3}\.\d{3}-\d{2}', ofuscar, texto)
 
 def _formatar_numerais(texto):
-    """Padroniza formatação de numerais romanos, letras de itens e abreviações."""
+    """Padroniza formatação de numerais romanos e abreviações."""
     import re
-
-    # Roman numerals: I. → I –, I - → I –, I) → I –
-    texto = re.sub(r'\b([IVXLCDM]+)[\.\)]\s*', r'\1 – ', texto)
+    # Roman numerals maiúsculos com . ou ) → I – (caso ainda reste algum)
+    texto = re.sub(r'\b([IVXLCDM]+)[\.)]\s*', r'\1 – ', texto)
+    # Roman numerais com - → I –
     texto = re.sub(r'\b([IVXLCDM]+)\s*-\s*', r'\1 – ', texto)
-
-    # Letter items: a. → a), a) stays a)
-    texto = re.sub(r'\b([a-z])\.\s*', r'\1) ', texto)
-
     # Standardize n.º, n° → nº
     texto = texto.replace("n.º", "nº")
     texto = texto.replace("n°", "nº")
-
-    # Add space after nº if missing: nº1.561 → nº 1.561
+    # Add space after nº if missing
     texto = re.sub(r'nº(\d)', r'nº \1', texto)
-
-    # LTDA – ME → LTDA. – ME (add period if missing)
+    # LTDA – ME → LTDA. – ME
     texto = re.sub(r'LTDA(?!\.)\s*[-–]\s*ME', 'LTDA. – ME', texto)
-
+    # REMOVIDO: \b([a-z])\.\s* → \1) 
+    # Este regex era genérico demais, corrompia "art." → "art)" e "9º." → "9o)"
+    # A normalização de a. → a) agora é feita em _normalizar_texto (passo 1.6)
     return texto
 
 def _remover_e_antes_itens(texto):
@@ -2625,6 +2571,7 @@ def _obter_regras_padrao():
         {"procurar": "notifique", "substituir_por": "notificar", "tipo": "verbo", "ativo": True},
         {"procurar": "julgue", "substituir_por": "julgar", "tipo": "verbo", "ativo": True},
         {"procurar": "responda", "substituir_por": "responder", "tipo": "verbo", "ativo": True},
+        {"procurar": "presente Relatório/Voto", "substituir_por": "Relatório/Voto", "tipo": "frase", "ativo": True},
         {"procurar": "ciência da decisão que vier a ser proferida", "substituir_por": "ciência desta decisão", "tipo": "frase", "ativo": True},
         {"procurar": "ciência da decisão que vier a ser prolatada", "substituir_por": "ciência desta decisão", "tipo": "frase", "ativo": True},
     ]
@@ -2718,8 +2665,8 @@ def _aplicar_negrito(texto: str, db_manager=None) -> str:
     texto = re.sub(r'\b([IVXLCDM]{1,5})\s*–', r'**\1** –', texto)
 
     # 2. Negrito em letras de itens: a), b), c)
-    # "a)" → "**a)**" | "b)" → "**b)**"
-    texto = re.sub(r'\b([a-z])\)', r'**\1)**', texto, flags=re.IGNORECASE)
+    # (?<!\d) impede que bold letras precedidas por dígitos (ex: "9o)" não vira "9**o)**")
+    texto = re.sub(r'(?<!\d)\b([a-z])\)', r'**\1)**', texto, flags=re.IGNORECASE)
 
     # 3. Negrito em prazos de 0 a 20 dias
     # Pega: "5 dias" | "30 dias" | "15 (quinze) dias" | "1 dia"
