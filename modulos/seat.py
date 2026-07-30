@@ -3866,15 +3866,6 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
     with tab_gerenciar:
         _renderizar_gerenciar_dados(usuario, "SEAT")
 
-def _normalizar_texto(texto):
-    """Normaliza texto para comparação (lowercase, sem acentos)."""
-    import unicodedata
-    if not texto:
-        return ""
-    texto = str(texto).lower().strip()
-    nfkd = unicodedata.normalize('NFKD', texto)
-    return ''.join([c for c in nfkd if not unicodedata.combining(c)])
-
 def _renderizar_despachos_singulares(modo_edicao, usuario):
     """Renderiza a tab de Despachos Singulares."""
     st.markdown("### Despachos Singulares")
