@@ -1041,9 +1041,14 @@ def _renderizar_card_processo(processo: dict, modo_edicao: bool):
 
         st.markdown("---")
 
-def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
+ddef _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
     """
-    Renderiza a aba de Pauta Ativa com filtros e lista de processos.
+    Renderiza a aba de Pauta Ativa sem listar processos.
+    Nesta tela ficam apenas:
+    - inclusão manual
+    - inclusão em lote
+    - finalização da sessão
+    A operação de editar/revisar fica exclusivamente na aba Distribuição.
     """
     cargo_usuario = usuario.get("cargo", "operacional") if usuario else "operacional"
     nome_usuario = usuario.get("nome", "") if usuario else ""
@@ -1116,42 +1121,47 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
             or _normalizar_texto(p.get("revisor", "")) == nome_norm
         ]
 
-    processos_visiveis = [
-        p for p in processos
-        if not _eh_despacho_ou_sustentacao(p)
-    ]
-
     encaminhados = [
-        p for p in processos_visiveis
+        p for p in processos
         if p.get("status") == "encaminhado"
     ]
 
-    ativos = [
-        p for p in processos_visiveis
-        if p.get("status") != "encaminhado"
+    pendentes_inclusao = [
+        p for p in processos
+        if p.get("status") == "inclusao"
+    ]
+
+    pendentes_edicao = [
+        p for p in processos
+        if p.get("status") == "em_edicao"
+    ]
+
+    pendentes_revisao = [
+        p for p in processos
+        if p.get("status") == "em_revisao"
     ]
 
     col_c1, col_c2, col_c3, col_c4, col_c5 = st.columns(5)
 
     with col_c1:
-        st.metric("Total", len(processos_visiveis))
+        st.metric("Total", len(processos))
 
     with col_c2:
-        st.metric("Inclusao", len([p for p in ativos if p.get("status") == "inclusao"]))
+        st.metric("Inclusao", len(pendentes_inclusao))
 
     with col_c3:
-        st.metric("Em Edicao", len([p for p in ativos if p.get("status") == "em_edicao"]))
+        st.metric("Em Edicao", len(pendentes_edicao))
 
     with col_c4:
-        st.metric("Em Revisao", len([p for p in ativos if p.get("status") == "em_revisao"]))
+        st.metric("Em Revisao", len(pendentes_revisao))
 
     with col_c5:
         st.metric("Encaminhados", len(encaminhados))
 
     st.markdown("---")
 
-    if processos_visiveis and modo_edicao:
-        pendentes = len(processos_visiveis) - len(encaminhados)
+    if processos and modo_edicao:
+        pendentes = len(processos) - len(encaminhados)
 
         if pendentes == 0:
             st.success(
@@ -1222,27 +1232,16 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
                 st.rerun()
 
         st.caption(
-            "Ao finalizar, os processos revisados migram para a esteira da Expedição "
-            "(SEXP) e não poderão mais ser alterados na SEAT."
+            "Os processos são operados exclusivamente na aba Distribuição. "
+            "Nesta tela, use apenas inclusão e finalização da sessão."
         )
 
-        st.markdown("---")
-
-    if not ativos:
-        if filtrar_por_usuario:
-            st.info("Todos os seus processos foram encaminhados para o SEXP. ✅")
-        else:
-            st.info("Todos os processos foram encaminhados para o SEXP. ✅")
+    elif not processos:
+        st.info("Nenhum processo encontrado com os filtros atuais.")
     else:
-        if filtrar_por_usuario:
-            st.markdown(f"### Meus Processos ({len(ativos)})")
-        else:
-            st.markdown(
-                f"### Pauta Ativa ({len(ativos)} processo{'s' if len(ativos) != 1 else ''})"
-            )
-
-        for processo in ativos:
-            _renderizar_card_processo(processo, modo_edicao)
+        st.info(
+            "Os processos desta sessão são operados exclusivamente na aba Distribuição."
+        )
 
  # ============================================================
 # SIDEBARS
