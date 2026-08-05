@@ -1044,7 +1044,7 @@ def _renderizar_card_processo(processo: dict, modo_edicao: bool):
 def _enviar_processo_para_sexp(processo: dict) -> bool:
     """
     Sincroniza um processo finalizado da SEAT para a fila da SEXP.
-    Evita duplicidade por processo + sessão + data.
+    Evita duplicidade por processo + sessao + data.
     """
     if not processo:
         return False
