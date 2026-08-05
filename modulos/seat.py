@@ -1041,7 +1041,7 @@ def _renderizar_card_processo(processo: dict, modo_edicao: bool):
 
         st.markdown("---")
 
-ddef _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
+def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
     """
     Renderiza a aba de Pauta Ativa sem listar processos.
     Nesta tela ficam apenas:
