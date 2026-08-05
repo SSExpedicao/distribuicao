@@ -1462,8 +1462,12 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
 
     if not sessoes_nao_distribuidas:
         st.info("Nao ha processos pendentes de distribuicao.")
+
     elif not modo_edicao:
-        st.info("Modo visualizacao. A distribuicao pode ser executada apenas por gerentes ou superior.")
+        st.info(
+            "Modo visualizacao. A distribuicao pode ser executada apenas por gerentes ou superior."
+        )
+
     else:
         disponiveis = _obter_disponiveis()
 
@@ -1472,8 +1476,10 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
                 "Nao ha membros disponiveis para distribuir. "
                 f"Atualmente ha {len(disponiveis)} membro(s) disponivel(is)."
             )
+
         else:
             chaves_distribuir = list(sessoes_nao_distribuidas.keys())
+
             sessao_sel = st.radio(
                 "Selecione a sessao para distribuir",
                 options=chaves_distribuir,
@@ -1482,14 +1488,22 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
 
             processos_para_distribuir = sessoes_nao_distribuidas[sessao_sel]
 
-            st.write(f"**{len(processos_para_distribuir)} processo(s)** para distribuir nesta sessao.")
+            st.write(
+                f"**{len(processos_para_distribuir)} processo(s)** para distribuir nesta sessao."
+            )
 
             with st.expander("Ver processos", expanded=False):
                 for p in processos_para_distribuir:
-                    st.write(f"- {p.get('processo_numero', '')} | Relator: {p.get('relator', '-') or '-'}")
+                    st.write(
+                        f"- {p.get('processo_numero', '')} | "
+                        f"Relator: {p.get('relator', '-') or '-'}"
+                    )
 
             st.markdown("### Selecionar Membros")
-            st.caption("Desmarque os membros que nao devem participar desta distribuicao. No SEAT, todo mundo revisa todo mundo.")
+            st.caption(
+                "Desmarque os membros que nao devem participar desta distribuicao. "
+                "No SEAT, todo mundo revisa todo mundo."
+            )
 
             col_ed, col_rev = st.columns(2)
             editores_selecionados = []
@@ -1515,80 +1529,103 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
 
             st.markdown("---")
 
-            if st.button("Distribuir", type="primary", use_container_width=True, key="dist_btn_distribuir"):
-              if not editores_selecionados or not revisores_selecionados:
-                st.error("Selecione pelo menos 1 editor e 1 revisor.")
-    else:
-        participantes_distintos = sorted(
-            {
-                _normalizar_texto(nome)
-                for nome in (editores_selecionados + revisores_selecionados)
-                if str(nome).strip()
-            }
-        )
+            if st.button(
+                "Distribuir",
+                type="primary",
+                use_container_width=True,
+                key="dist_btn_distribuir",
+            ):
+                if not editores_selecionados or not revisores_selecionados:
+                    st.error("Selecione pelo menos 1 editor e 1 revisor.")
 
-        if len(participantes_distintos) < 2:
-            st.error("A distribuição da SEAT exige pelo menos 2 colaboradores distintos.")
-        else:
-            editores_sem_revisor_valido = [
-                editor
-                for editor in editores_selecionados
-                if not any(
-                    _normalizar_texto(revisor) != _normalizar_texto(editor)
-                    for revisor in revisores_selecionados
-                )
-            ]
-
-            if editores_sem_revisor_valido:
-                nomes_invalidos = ", ".join(editores_sem_revisor_valido)
-                st.error(
-                    f"Não há revisor válido para: {nomes_invalidos}. "
-                    "O editor nunca pode revisar o próprio processo."
-                )
-            else:
-                with st.spinner("Distribuindo processos..."):
-                    atribuicoes = _distribuir_processos(
-                        processos_para_distribuir,
-                        editores_selecionados,
-                        revisores_selecionados,
+                else:
+                    participantes_distintos = sorted(
+                        {
+                            _normalizar_texto(nome)
+                            for nome in (editores_selecionados + revisores_selecionados)
+                            if str(nome).strip()
+                        }
                     )
 
-                if atribuicoes:
-                    salvos = 0
-                    ignorados = 0
-
-                    for proc_id, (editor, revisor) in atribuicoes.items():
-                        proc_atual = db_manager.buscar_por_id("pauta_seat", proc_id)
-                        if proc_atual and (proc_atual.get("editor") or proc_atual.get("revisor")):
-                            ignorados += 1
-                            continue
-
-                        if _normalizar_texto(editor) == _normalizar_texto(revisor):
-                            continue
-
-                        resultado = db_manager.atualizar(
-                            "pauta_seat",
-                            proc_id,
-                            {
-                                "editor": editor,
-                                "revisor": revisor,
-                            },
+                    if len(participantes_distintos) < 2:
+                        st.error(
+                            "A distribuicao da SEAT exige pelo menos 2 colaboradores distintos."
                         )
 
-                        if resultado:
-                            salvos += 1
+                    else:
+                        editores_sem_revisor_valido = [
+                            editor
+                            for editor in editores_selecionados
+                            if not any(
+                                _normalizar_texto(revisor) != _normalizar_texto(editor)
+                                for revisor in revisores_selecionados
+                            )
+                        ]
 
-                    if ignorados > 0:
-                        st.warning(
-                            f"⚠️ Operação parcial: {ignorados} processo(s) já haviam sido distribuídos por outro colaborador."
-                        )
+                        if editores_sem_revisor_valido:
+                            nomes_invalidos = ", ".join(editores_sem_revisor_valido)
+                            st.error(
+                                f"Nao ha revisor valido para: {nomes_invalidos}. "
+                                "O editor nunca pode revisar o proprio processo."
+                            )
 
-                    if salvos > 0:
-                        st.success(f"{salvos} processo(s) distribuído(s) com sucesso!")
+                        else:
+                            with st.spinner("Distribuindo processos..."):
+                                atribuicoes = _distribuir_processos(
+                                    processos_para_distribuir,
+                                    editores_selecionados,
+                                    revisores_selecionados,
+                                )
 
-                    st.rerun()
-                else:
-                    st.warning("Nenhum processo foi distribuído. Verifique as condições.")
+                            if atribuicoes:
+                                salvos = 0
+                                ignorados = 0
+
+                                for proc_id, (editor, revisor) in atribuicoes.items():
+                                    proc_atual = db_manager.buscar_por_id(
+                                        "pauta_seat",
+                                        proc_id,
+                                    )
+
+                                    if proc_atual and (
+                                        proc_atual.get("editor") or proc_atual.get("revisor")
+                                    ):
+                                        ignorados += 1
+                                        continue
+
+                                    if _normalizar_texto(editor) == _normalizar_texto(revisor):
+                                        continue
+
+                                    resultado = db_manager.atualizar(
+                                        "pauta_seat",
+                                        proc_id,
+                                        {
+                                            "editor": editor,
+                                            "revisor": revisor,
+                                        },
+                                    )
+
+                                    if resultado:
+                                        salvos += 1
+
+                                if ignorados > 0:
+                                    st.warning(
+                                        f"⚠️ Operação parcial: {ignorados} processo(s) já haviam "
+                                        "sido distribuídos por outro colaborador."
+                                    )
+
+                                if salvos > 0:
+                                    st.success(
+                                        f"{salvos} processo(s) distribuído(s) com sucesso!"
+                                    )
+
+                                st.rerun()
+
+                            else:
+                                st.warning(
+                                    "Nenhum processo foi distribuído. Verifique as condições."
+                                )
+
     st.markdown("---")
     st.markdown("### Editar Distribuicao")
 
@@ -1596,6 +1633,7 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
         st.info("Nao ha processos distribuidos para editar.")
     else:
         chaves_editar = list(sessoes_distribuidas.keys())
+
         sessao_editar = st.radio(
             "Selecione a sessao para editar",
             options=chaves_editar,
@@ -1610,6 +1648,7 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
         else:
             if PANDAS_OK and modo_edicao:
                 df_dados = []
+
                 for p in processos_distribuidos:
                     df_dados.append(
                         {
@@ -1630,13 +1669,36 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
                     df,
                     column_config={
                         "id": None,
-                        "processo_numero": st.column_config.TextColumn("Processo", disabled=True),
-                        "relator": st.column_config.TextColumn("Relator", disabled=True),
-                        "editor": st.column_config.SelectboxColumn("Editor", options=disponiveis, required=True),
-                        "editado": st.column_config.CheckboxColumn("Editado", default=False),
-                        "revisor": st.column_config.SelectboxColumn("Revisor", options=disponiveis, required=True),
-                        "revisado": st.column_config.CheckboxColumn("Revisado", default=False),
-                        "comentario": st.column_config.TextColumn("Comentario", width="medium"),
+                        "processo_numero": st.column_config.TextColumn(
+                            "Processo",
+                            disabled=True,
+                        ),
+                        "relator": st.column_config.TextColumn(
+                            "Relator",
+                            disabled=True,
+                        ),
+                        "editor": st.column_config.SelectboxColumn(
+                            "Editor",
+                            options=disponiveis,
+                            required=True,
+                        ),
+                        "editado": st.column_config.CheckboxColumn(
+                            "Editado",
+                            default=False,
+                        ),
+                        "revisor": st.column_config.SelectboxColumn(
+                            "Revisor",
+                            options=disponiveis,
+                            required=True,
+                        ),
+                        "revisado": st.column_config.CheckboxColumn(
+                            "Revisado",
+                            default=False,
+                        ),
+                        "comentario": st.column_config.TextColumn(
+                            "Comentario",
+                            width="medium",
+                        ),
                     },
                     hide_index=True,
                     use_container_width=True,
@@ -1647,7 +1709,15 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
                     salvos = 0
 
                     for _, row in edited_df.iterrows():
-                        original = next((p for p in processos_distribuidos if p.get("id") == row["id"]), None)
+                        original = next(
+                            (
+                                p
+                                for p in processos_distribuidos
+                                if p.get("id") == row["id"]
+                            ),
+                            None,
+                        )
+
                         if not original:
                             continue
 
@@ -1688,7 +1758,11 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
                                 mudancas["status"] = "encaminhado"
 
                         if mudancas:
-                            resultado = db_manager.atualizar("pauta_seat", row["id"], mudancas)
+                            resultado = db_manager.atualizar(
+                                "pauta_seat",
+                                row["id"],
+                                mudancas,
+                            )
                             if resultado:
                                 salvos += 1
 
@@ -1700,6 +1774,7 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
 
             elif PANDAS_OK:
                 df_dados = []
+
                 for p in processos_distribuidos:
                     df_dados.append(
                         {
