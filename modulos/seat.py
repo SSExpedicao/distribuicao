@@ -331,14 +331,69 @@ def _contar_atribuicoes(nomes: list, campo: str) -> dict:
 
 def _distribuir_processos(processos: list, editores: list, revisores: list) -> dict:
     """
-    Distribuicao equalitaria para SEAT.
+    Distribuição equalitária da SEAT com as regras:
+
+    1. editor nunca revisa o próprio processo
+    2. quando um mesmo editor recebe vários processos no lote,
+       os revisores devem girar entre os demais colegas antes de repetir
+    3. também tenta equilibrar a carga total de revisão e evitar repetição
+       excessiva do mesmo par editor->revisor
     """
     if not processos or not editores or not revisores:
         return {}
 
-    contador_editor = _contar_atribuicoes(editores, "editor")
-    contador_revisor = _contar_atribuicoes(revisores, "revisor")
+    def _deduplicar_preservando_ordem(lista):
+        vistos = set()
+        resultado = []
+        for item in lista:
+            nome = str(item or "").strip()
+            if not nome:
+                continue
+            chave = _normalizar_texto(nome)
+            if chave in vistos:
+                continue
+            vistos.add(chave)
+            resultado.append(nome)
+        return resultado
 
+    editores = _deduplicar_preservando_ordem(editores)
+    revisores = _deduplicar_preservando_ordem(revisores)
+
+    if not editores or not revisores:
+        return {}
+
+    participantes_distintos = {
+        _normalizar_texto(nome) for nome in (editores + revisores) if str(nome).strip()
+    }
+
+    if len(participantes_distintos) < 2:
+        return {}
+
+    todos_processos = db_manager.buscar_todos("pauta_seat") or []
+
+    contador_editor = {nome: 0 for nome in editores}
+    contador_revisor = {nome: 0 for nome in revisores}
+    contador_par = {}
+
+    for processo in todos_processos:
+        editor_atual = str(processo.get("editor", "") or "").strip()
+        revisor_atual = str(processo.get("revisor", "") or "").strip()
+
+        if editor_atual in contador_editor:
+            contador_editor[editor_atual] += 1
+
+        if revisor_atual in contador_revisor:
+            contador_revisor[revisor_atual] += 1
+
+        if (
+            editor_atual in contador_editor
+            and revisor_atual in contador_revisor
+            and _normalizar_texto(editor_atual) != _normalizar_texto(revisor_atual)
+        ):
+            chave_par = (_normalizar_texto(editor_atual), _normalizar_texto(revisor_atual))
+            contador_par[chave_par] = contador_par.get(chave_par, 0) + 1
+
+    usados_no_lote_por_editor = {nome: set() for nome in editores}
     atribuicoes = {}
 
     for processo in processos:
@@ -346,13 +401,64 @@ def _distribuir_processos(processos: list, editores: list, revisores: list) -> d
         if not proc_id:
             continue
 
-        editor = min(editores, key=lambda n: contador_editor[n])
-        contador_editor[editor] += 1
+        editores_ordenados = sorted(
+            editores,
+            key=lambda nome: (
+                contador_editor[nome],
+                _normalizar_texto(nome),
+            ),
+        )
 
-        revisor = min(revisores, key=lambda n: contador_revisor[n])
-        contador_revisor[revisor] += 1
+        editor_escolhido = None
+        revisor_escolhido = None
 
-        atribuicoes[proc_id] = (editor, revisor)
+        for editor_candidato in editores_ordenados:
+            candidatos_revisor = [
+                r for r in revisores
+                if _normalizar_texto(r) != _normalizar_texto(editor_candidato)
+            ]
+
+            if not candidatos_revisor:
+                continue
+
+            usados_editor = usados_no_lote_por_editor[editor_candidato]
+
+            candidatos_prioritarios = [
+                r for r in candidatos_revisor
+                if _normalizar_texto(r) not in usados_editor
+            ]
+
+            universo_escolha = candidatos_prioritarios if candidatos_prioritarios else candidatos_revisor
+
+            universo_escolha = sorted(
+                universo_escolha,
+                key=lambda r: (
+                    contador_revisor.get(r, 0),
+                    contador_par.get(
+                        (_normalizar_texto(editor_candidato), _normalizar_texto(r)),
+                        0,
+                    ),
+                    _normalizar_texto(r),
+                ),
+            )
+
+            if universo_escolha:
+                editor_escolhido = editor_candidato
+                revisor_escolhido = universo_escolha[0]
+                break
+
+        if not editor_escolhido or not revisor_escolhido:
+            continue
+
+        atribuicoes[proc_id] = (editor_escolhido, revisor_escolhido)
+
+        contador_editor[editor_escolhido] += 1
+        contador_revisor[revisor_escolhido] += 1
+
+        usados_no_lote_por_editor[editor_escolhido].add(_normalizar_texto(revisor_escolhido))
+
+        chave_par = (_normalizar_texto(editor_escolhido), _normalizar_texto(revisor_escolhido))
+        contador_par[chave_par] = contador_par.get(chave_par, 0) + 1
 
     return atribuicoes
 
@@ -1410,50 +1516,79 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
             st.markdown("---")
 
             if st.button("Distribuir", type="primary", use_container_width=True, key="dist_btn_distribuir"):
-                if not editores_selecionados or not revisores_selecionados:
-                    st.error("Selecione pelo menos 1 editor e 1 revisor.")
-                else:
-                    with st.spinner("Distribuindo processos..."):
-                        atribuicoes = _distribuir_processos(
-                            processos_para_distribuir,
-                            editores_selecionados,
-                            revisores_selecionados,
+              if not editores_selecionados or not revisores_selecionados:
+                st.error("Selecione pelo menos 1 editor e 1 revisor.")
+    else:
+        participantes_distintos = sorted(
+            {
+                _normalizar_texto(nome)
+                for nome in (editores_selecionados + revisores_selecionados)
+                if str(nome).strip()
+            }
+        )
+
+        if len(participantes_distintos) < 2:
+            st.error("A distribuição da SEAT exige pelo menos 2 colaboradores distintos.")
+        else:
+            editores_sem_revisor_valido = [
+                editor
+                for editor in editores_selecionados
+                if not any(
+                    _normalizar_texto(revisor) != _normalizar_texto(editor)
+                    for revisor in revisores_selecionados
+                )
+            ]
+
+            if editores_sem_revisor_valido:
+                nomes_invalidos = ", ".join(editores_sem_revisor_valido)
+                st.error(
+                    f"Não há revisor válido para: {nomes_invalidos}. "
+                    "O editor nunca pode revisar o próprio processo."
+                )
+            else:
+                with st.spinner("Distribuindo processos..."):
+                    atribuicoes = _distribuir_processos(
+                        processos_para_distribuir,
+                        editores_selecionados,
+                        revisores_selecionados,
+                    )
+
+                if atribuicoes:
+                    salvos = 0
+                    ignorados = 0
+
+                    for proc_id, (editor, revisor) in atribuicoes.items():
+                        proc_atual = db_manager.buscar_por_id("pauta_seat", proc_id)
+                        if proc_atual and (proc_atual.get("editor") or proc_atual.get("revisor")):
+                            ignorados += 1
+                            continue
+
+                        if _normalizar_texto(editor) == _normalizar_texto(revisor):
+                            continue
+
+                        resultado = db_manager.atualizar(
+                            "pauta_seat",
+                            proc_id,
+                            {
+                                "editor": editor,
+                                "revisor": revisor,
+                            },
                         )
 
-                    if atribuicoes:
-                        salvos = 0
-                        ignorados = 0
+                        if resultado:
+                            salvos += 1
 
-                        for proc_id, (editor, revisor) in atribuicoes.items():
-                            proc_atual = db_manager.buscar_por_id("pauta_seat", proc_id)
-                            if proc_atual and (proc_atual.get("editor") or proc_atual.get("revisor")):
-                                ignorados += 1
-                                continue
+                    if ignorados > 0:
+                        st.warning(
+                            f"⚠️ Operação parcial: {ignorados} processo(s) já haviam sido distribuídos por outro colaborador."
+                        )
 
-                            resultado = db_manager.atualizar(
-                                "pauta_seat",
-                                proc_id,
-                                {
-                                    "editor": editor,
-                                    "revisor": revisor,
-                                },
-                            )
+                    if salvos > 0:
+                        st.success(f"{salvos} processo(s) distribuído(s) com sucesso!")
 
-                            if resultado:
-                                salvos += 1
-
-                        if ignorados > 0:
-                            st.warning(
-                                f"⚠️ Operação parcial: {ignorados} processo(s) já haviam sido distribuídos por outro colaborador."
-                            )
-
-                        if salvos > 0:
-                            st.success(f"{salvos} processo(s) distribuído(s) com sucesso!")
-
-                        st.rerun()
-                    else:
-                        st.warning("Nenhum processo foi distribuido. Verifique as condicoes.")
-
+                    st.rerun()
+                else:
+                    st.warning("Nenhum processo foi distribuído. Verifique as condições.")
     st.markdown("---")
     st.markdown("### Editar Distribuicao")
 
