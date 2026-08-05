@@ -179,25 +179,65 @@ def _formatar_data_curta(data_iso: str) -> str:
 # FUNCOES AUXILIARES: EQUIPE E AFASTAMENTOS
 # ============================================================
 
-def _obter_equipe_seat() -> list:
+def _obter_colaboradores_para_distribuicao_seat():
     """
-    Retorna lista com os Nomes de Guerra de TODOS os membros da SEAT (incluindo Gerentes),
-    lendo diretamente da Fonte Única da Verdade (usuarios_acesso).
+    Retorna os colaboradores elegíveis para o sorteio automático da SEAT
+    com base na política centralizada do backend.
+
+    Regras aplicadas no backend:
+    - entram automaticamente assessores da SEAT
+    - entra automaticamente Matheus Guimarães De Sousa Coelho
+    - ficam fora automaticamente Luis Felipe Coelho Medina, Thaís,
+      demais gerentes, estagiários e contas técnicas
+    - a conta técnica do desenvolvedor não entra na distribuição automática
+
+    Esta função não decide mais a regra localmente.
+    Ela apenas consome a política centralizada do db_manager, mantendo
+    a SEAT alinhada com a fonte única de verdade do sistema.
+
+    Observação:
+    A possibilidade posterior de a chefia editar a tabela e incluir nomes
+    manualmente continua sendo tratada em outra camada da aplicação.
     """
     try:
-        todos = db_manager.buscar_todos("usuarios_acesso", filtros={"ativo": True}) or []
-        membros_seat = [u for u in todos if _normalizar_texto(u.get("setor", "")) == "seat"]
-        
-        nomes = []
-        for m in membros_seat:
-            ng = m.get("nome_guerra")
-            if ng and str(ng).strip():
-                nomes.append(str(ng).strip())
-            elif m.get("nome"):
-                nomes.append(str(m["nome"]).strip().split()[0])
-                
-        return sorted(list(set(nomes)))
-    except Exception:
+        colaboradores = db_manager.listar_colaboradores_elegiveis_distribuicao(
+            setor="SEAT",
+            tipo_sessao=None,
+            incluir_contas_tecnicas=False,
+        ) or []
+
+        resultado = []
+
+        for colaborador in colaboradores:
+            if not isinstance(colaborador, dict):
+                continue
+
+            nome = str(colaborador.get("nome", "") or "").strip()
+            matricula = str(colaborador.get("matricula", "") or "").strip()
+            setor = str(colaborador.get("setor", "") or "").strip()
+
+            if not nome:
+                continue
+
+            if not matricula:
+                continue
+
+            if not setor:
+                continue
+
+            resultado.append(colaborador)
+
+        resultado.sort(
+            key=lambda item: (
+                str(item.get("nome_exibicao", "") or "").strip().lower(),
+                str(item.get("matricula", "") or "").strip(),
+            )
+        )
+
+        return resultado
+
+    except Exception as e:
+        print(f"[ERRO SEAT _obter_colaboradores_para_distribuicao_seat] {e}")
         return []
 
 def _obter_afastados() -> list:
