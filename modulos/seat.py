@@ -1079,14 +1079,18 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
 
     if modo_edicao:
         tab_manual, tab_lote = st.tabs(["Inclusao Manual", "Inclusao em Lote (CSV)"])
+
         with tab_manual:
             _incluir_processo_manual(modo_edicao)
+
         with tab_lote:
             _incluir_processo_lote(modo_edicao)
 
     filtros = {}
+
     if filtro_status != "todos":
         filtros["status"] = filtro_status
+
     if filtro_tipo != "todos":
         filtros["tipo_sessao"] = filtro_tipo
 
@@ -1113,36 +1117,41 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
         ]
 
     processos_visiveis = [
-     p for p in processos
-     if not _eh_despacho_ou_sustentacao(p)
+        p for p in processos
+        if not _eh_despacho_ou_sustentacao(p)
     ]
 
     encaminhados = [
-     p for p in processos_visiveis
-     if p.get("status") == "encaminhado"
+        p for p in processos_visiveis
+        if p.get("status") == "encaminhado"
     ]
 
     ativos = [
-     p for p in processos_visiveis
-     if p.get("status") != "encaminhado"
+        p for p in processos_visiveis
+        if p.get("status") != "encaminhado"
     ]
 
     col_c1, col_c2, col_c3, col_c4, col_c5 = st.columns(5)
+
     with col_c1:
-        st.metric("Total", len(processos))
+        st.metric("Total", len(processos_visiveis))
+
     with col_c2:
         st.metric("Inclusao", len([p for p in ativos if p.get("status") == "inclusao"]))
+
     with col_c3:
         st.metric("Em Edicao", len([p for p in ativos if p.get("status") == "em_edicao"]))
+
     with col_c4:
         st.metric("Em Revisao", len([p for p in ativos if p.get("status") == "em_revisao"]))
+
     with col_c5:
         st.metric("Encaminhados", len(encaminhados))
 
     st.markdown("---")
 
-    if processos and modo_edicao:
-        pendentes = len(processos) - len(encaminhados)
+    if processos_visiveis and modo_edicao:
+        pendentes = len(processos_visiveis) - len(encaminhados)
 
         if pendentes == 0:
             st.success(
@@ -1157,6 +1166,7 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
             )
 
         confirmar_envio = True
+
         if pendentes > 0:
             confirmar_envio = st.checkbox(
                 f"Estou ciente das pendências e desejo finalizar a sessão "
@@ -1172,7 +1182,9 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
             key="btn_finalizar_sessao_geral",
         ):
             if len(encaminhados) == 0:
-                st.error("Nenhum processo foi revisado ainda. Impossível enviar sessão vazia para a SEXP.")
+                st.error(
+                    "Nenhum processo foi revisado ainda. Impossível enviar sessão vazia para a SEXP."
+                )
             else:
                 with st.spinner("Enviando processos para a SEXP..."):
                     salvos = 0
@@ -1180,6 +1192,7 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
 
                     for p in encaminhados:
                         proc_atual = db_manager.buscar_por_id("pauta_seat", p["id"])
+
                         if proc_atual and proc_atual.get("sessao_finalizada"):
                             ignorados += 1
                             continue
@@ -1192,6 +1205,7 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
                                 "status": "encaminhado",
                             },
                         )
+
                         if res:
                             salvos += 1
 
@@ -1201,7 +1215,9 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
                     )
 
                 if salvos > 0:
-                    st.success(f"✅ Sessão finalizada com sucesso. {salvos} processo(s) enviado(s) para a SEXP.")
+                    st.success(
+                        f"✅ Sessão finalizada com sucesso. {salvos} processo(s) enviado(s) para a SEXP."
+                    )
 
                 st.rerun()
 
@@ -1209,6 +1225,7 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
             "Ao finalizar, os processos revisados migram para a esteira da Expedição "
             "(SEXP) e não poderão mais ser alterados na SEAT."
         )
+
         st.markdown("---")
 
     if not ativos:
@@ -1220,7 +1237,9 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
         if filtrar_por_usuario:
             st.markdown(f"### Meus Processos ({len(ativos)})")
         else:
-            st.markdown(f"### Pauta Ativa ({len(ativos)} processo{'s' if len(ativos) != 1 else ''})")
+            st.markdown(
+                f"### Pauta Ativa ({len(ativos)} processo{'s' if len(ativos) != 1 else ''})"
+            )
 
         for processo in ativos:
             _renderizar_card_processo(processo, modo_edicao)
