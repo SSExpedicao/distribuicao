@@ -2,29 +2,26 @@
 modulos/seat.py - SEAT: Edicao e Triagem
 Secretaria das Sessoes - TCDF
 
-Sub-etapa 1A+1B: Pauta Ativa com sessoes + Distribuicao Equalitaria
-
-Correcoes aplicadas:
-- Delimitador CSV auto-detectado (; ou ,)
-- Remocao do sufixo -e do numero do processo
-- Adicao do prefixo GC nas iniciais do relator (exceto GAVF / Subst.)
-
-Fluxo de status:
-  inclusao -> em_edicao -> em_revisao -> encaminhado
-
-RBAC:
-- modo_edicao=True: pode incluir, distribuir, alterar status, editar atribuicoes
-- modo_edicao=False: somente visualizacao
+Fluxo principal:
+- Pauta Ativa
+- Distribuicao
+- Despachos Singulares
+- Motor NIP
+- Urgentes
+- Escala DOE
+- Ferias e Afastamentos
 """
 
 import streamlit as st
 import csv
 import io
+import re
 import unicodedata
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
+
 import db_manager
 from modulos.gerenciar_dados import _renderizar_gerenciar_dados
-import re
+
 try:
     import pandas as pd
     PANDAS_OK = True
@@ -66,88 +63,117 @@ TIPOS_SESSAO = [
     "Urgente",
 ]
 
+_RELATOR_SIGLA_MAP = {
+    "MÁRCIO MICHEL": "GCMM",
+    "MANOEL DE ANDRADE": "GCMA",
+    "RENATO RAINHA": "GCRR",
+    "ANILCÉIA MACHADO": "GCAM",
+    "INÁCIO MAGALHÃES FILHO": "GCIM",
+    "PAULO TADEU": "GCPT",
+    "ANDRÉ CLEMENTE": "GCAC",
+    "VINÍCIUS FRAGOSO": "GAVF",
+}
+
 # ============================================================
 # FUNCOES AUXILIARES: NORMALIZACAO E HIGIENIZACAO
 # ============================================================
 
+def _normalizar_texto(texto: str) -> str:
+    """
+    Normaliza texto para comparacoes gerais do modulo.
+    Remove acentos, converte para minusculas e normaliza espacos.
+    """
+    if not texto:
+        return ""
+
+    texto = str(texto).strip().lower()
+    texto = unicodedata.normalize("NFKD", texto)
+    texto = "".join(c for c in texto if not unicodedata.combining(c))
+    texto = " ".join(texto.split())
+    return texto
+
+def _normalizar_numero_processo(numero: str) -> str:
+    """
+    Normaliza o numero do processo removendo sufixos, espacos e caracteres invisiveis.
+    """
+    if not numero:
+        return ""
+
+    numero = str(numero).strip()
+    numero = numero.replace(" ", "")
+    numero = numero.replace("\n", "")
+    numero = numero.replace("\r", "")
+    numero = numero.replace("\t", "")
+    numero = numero.replace("\u200b", "")
+    numero = numero.replace("\u00a0", "")
+    numero = numero.replace("\ufeff", "")
+
+    if numero.endswith("-e") or numero.endswith("-E"):
+        numero = numero[:-2]
+
+    return numero.strip()
+
+def _higienizar_numero_processo(numero: str) -> str:
+    """
+    Alias semantico para padronizacao do numero do processo.
+    """
+    return _normalizar_numero_processo(numero)
+
 def _normalizar_tipo_sessao(tipo: str) -> str:
     """
-    Normaliza o tipo de sessao do CSV para corresponder aos valores padrao.
-    Aceita variacoes como 'ordinaria', 'Ordinaria', 'ORDINARIA'.
+    Normaliza o tipo de sessao vindo do CSV para corresponder aos valores padrao.
     """
     if not tipo:
         return ""
+
     tipo_norm = _normalizar_texto(tipo)
     for tipo_padrao in TIPOS_SESSAO:
         if _normalizar_texto(tipo_padrao) == tipo_norm:
             return tipo_padrao
-    return tipo.strip()
 
-def _higienizar_numero_processo(numero: str) -> str:
-    """
-    Limpa o numero do processo:
-    - Remove o sufixo -e (processo eletronico) do final
-    
-    Exemplo: 00600-00007999/2022-63-e -> 00600-00007999/2022-63
-    """
-    if not numero:
-        return numero
-    numero = numero.strip()
-    if numero.lower().endswith("-e"):
-        numero = numero[:-2]
-    return numero
+    return str(tipo).strip()
 
 def _higienizar_relator(relator: str) -> str:
     """
     Formata o nome do relator:
-    - Adiciona o prefixo GC antes das iniciais
-    - Excecao: GAVF / Subst. e variantes sao mantidos como estao
-    
-    Exemplos:
-      AM -> GCAM
-      GAVF / Subst. -> GAVF / Subst. (mantido)
-      GAVF / Subst -> GAVF / Subst (mantido)
+    - adiciona prefixo GC nas iniciais
+    - mantem GAVF / Subst. e variantes
     """
     if not relator:
         return relator
-    relator = relator.strip()
-    
-    # Excecao: se ja contem GAVF ou Subst, manter como esta
+
+    relator = str(relator).strip()
     relator_upper = relator.upper()
+
     if "GAVF" in relator_upper or "SUBST" in relator_upper:
         return relator
-    
-    # Se ja comeca com GC, nao duplicar
+
     if relator_upper.startswith("GC"):
         return relator
-    
-    # Adicionar prefixo GC
+
     return f"GC{relator}"
 
 def _higienizar_colaborador(nome_digitado: str, nomes_oficiais: list) -> str:
     """
-    Faz matching inteligente entre nome digitado e nome oficial da equipe.
-    Tolerante a variacoes de escrita (acentos, maiusculas, espacos).
+    Faz matching tolerante entre nome digitado e nome oficial da equipe.
     """
     if not nome_digitado or not nomes_oficiais:
         return nome_digitado or ""
 
     alvo = _normalizar_texto(nome_digitado)
 
-    # 1. Match exato normalizado
     for oficial in nomes_oficiais:
         if _normalizar_texto(oficial) == alvo:
             return oficial
 
-    # 2. Match por primeiro nome + ultimo nome
     partes_alvo = alvo.split()
+
     for oficial in nomes_oficiais:
         partes_oficial = _normalizar_texto(oficial).split()
         if len(partes_alvo) >= 2 and len(partes_oficial) >= 2:
             if partes_alvo[0] == partes_oficial[0] and partes_alvo[-1] == partes_oficial[-1]:
                 return oficial
 
-    # 3. Match por primeiro nome
     for oficial in nomes_oficiais:
         partes_oficial = _normalizar_texto(oficial).split()
         if partes_oficial and partes_alvo and partes_oficial[0] == partes_alvo[0]:
@@ -156,9 +182,12 @@ def _higienizar_colaborador(nome_digitado: str, nomes_oficiais: list) -> str:
     return nome_digitado
 
 def _formatar_data(data_iso: str) -> str:
-    """Converte data ISO para DD/MM/YYYY HH:MM."""
+    """
+    Converte data ISO para DD/MM/YYYY HH:MM.
+    """
     if not data_iso:
         return "-"
+
     try:
         dt = datetime.fromisoformat(str(data_iso).replace("Z", "+00:00"))
         return dt.strftime("%d/%m/%Y %H:%M")
@@ -166,38 +195,48 @@ def _formatar_data(data_iso: str) -> str:
         return str(data_iso) if data_iso else "-"
 
 def _formatar_data_curta(data_iso: str) -> str:
-    """Converte data ISO para DD/MM/YYYY."""
+    """
+    Converte data ISO para DD/MM/YYYY.
+    """
     if not data_iso:
         return "-"
+
     try:
         dt = datetime.fromisoformat(str(data_iso).replace("Z", "+00:00"))
         return dt.strftime("%d/%m/%Y")
     except (ValueError, TypeError):
-        return str(data_iso) if data_iso else "-"
+        return str(data_iso)[:10] if data_iso else "-"
 
 # ============================================================
 # FUNCOES AUXILIARES: EQUIPE E AFASTAMENTOS
 # ============================================================
 
+def _obter_equipe_seat() -> list:
+    """
+    Retorna os nomes ativos da equipe da SEAT, sem contas tecnicas.
+    """
+    try:
+        equipe = db_manager.listar_equipe(
+            setor="SEAT",
+            incluir_inativos=False,
+            incluir_contas_tecnicas=False,
+        ) or []
+
+        nomes = []
+        for colaborador in equipe:
+            nome = str(colaborador.get("nome_exibicao") or colaborador.get("nome") or "").strip()
+            if nome:
+                nomes.append(nome)
+
+        nomes_unicos = sorted(set(nomes), key=_normalizar_texto)
+        return nomes_unicos
+    except Exception:
+        return []
+
 def _obter_colaboradores_para_distribuicao_seat():
     """
-    Retorna os colaboradores elegíveis para o sorteio automático da SEAT
-    com base na política centralizada do backend.
-
-    Regras aplicadas no backend:
-    - entram automaticamente assessores da SEAT
-    - entra automaticamente Matheus Guimarães De Sousa Coelho
-    - ficam fora automaticamente Luis Felipe Coelho Medina, Thaís,
-      demais gerentes, estagiários e contas técnicas
-    - a conta técnica do desenvolvedor não entra na distribuição automática
-
-    Esta função não decide mais a regra localmente.
-    Ela apenas consome a política centralizada do db_manager, mantendo
-    a SEAT alinhada com a fonte única de verdade do sistema.
-
-    Observação:
-    A possibilidade posterior de a chefia editar a tabela e incluir nomes
-    manualmente continua sendo tratada em outra camada da aplicação.
+    Retorna os colaboradores elegiveis para o sorteio automatico da SEAT
+    com base na politica centralizada do backend.
     """
     try:
         colaboradores = db_manager.listar_colaboradores_elegiveis_distribuicao(
@@ -216,13 +255,7 @@ def _obter_colaboradores_para_distribuicao_seat():
             matricula = str(colaborador.get("matricula", "") or "").strip()
             setor = str(colaborador.get("setor", "") or "").strip()
 
-            if not nome:
-                continue
-
-            if not matricula:
-                continue
-
-            if not setor:
+            if not nome or not matricula or not setor:
                 continue
 
             resultado.append(colaborador)
@@ -233,7 +266,6 @@ def _obter_colaboradores_para_distribuicao_seat():
                 str(item.get("matricula", "") or "").strip(),
             )
         )
-
         return resultado
 
     except Exception as e:
@@ -241,50 +273,57 @@ def _obter_colaboradores_para_distribuicao_seat():
         return []
 
 def _obter_afastados() -> list:
-    """Retorna lista de nomes de membros atualmente afastados."""
+    """
+    Retorna lista de nomes de membros atualmente afastados.
+    """
     return db_manager.listar_nomes_afastados()
 
 def _obter_disponiveis() -> list:
-    """Retorna membros disponiveis para distribuicao: equipe ativa - afastados."""
-    equipe = _obter_equipe_seat()
+    """
+    Retorna os membros elegiveis e disponiveis para distribuicao na SEAT.
+    """
+    elegiveis = _obter_colaboradores_para_distribuicao_seat()
     afastados = _obter_afastados()
-
     afastados_norm = set(_normalizar_texto(a) for a in afastados)
 
     disponiveis = []
-    for nome in equipe:
-        if _normalizar_texto(nome) not in afastados_norm:
+    for colaborador in elegiveis:
+        nome = str(colaborador.get("nome_exibicao") or colaborador.get("nome") or "").strip()
+        if nome and _normalizar_texto(nome) not in afastados_norm:
             disponiveis.append(nome)
 
-    return disponiveis
+    return sorted(set(disponiveis), key=_normalizar_texto)
 
 # ============================================================
-# FUNCOES AUXILIARES: DUPLICIDADE
+# FUNCOES AUXILIARES: DUPLICIDADE E DISTRIBUICAO
 # ============================================================
 
 def _verificar_duplicidade(processo_numero: str, numero_sessao: str, dia_sessao: str) -> bool:
-    """Verifica se um processo ja esta cadastrado na mesma sessao/dia."""
+    """
+    Verifica se um processo ja esta cadastrado na mesma sessao e data.
+    """
     if not processo_numero or not numero_sessao or not dia_sessao:
         return False
 
-    resultados = db_manager.buscar_todos("pauta_seat", filtros={
-        "processo_numero": processo_numero,
-        "numero_sessao": numero_sessao,
-        "dia_sessao": dia_sessao,
-    })
+    resultados = db_manager.buscar_todos(
+        "pauta_seat",
+        filtros={
+            "processo_numero": processo_numero,
+            "numero_sessao": numero_sessao,
+            "dia_sessao": dia_sessao,
+        },
+    )
     return len(resultados) > 0
 
-# ============================================================
-# FUNCOES AUXILIARES: DISTRIBUICAO
-# ============================================================
-
 def _contar_atribuicoes(nomes: list, campo: str) -> dict:
-    """Conta quantos processos estao atribuidos a cada nome como editor ou revisor."""
-    todos_processos = db_manager.buscar_todos("pauta_seat")
+    """
+    Conta quantos processos estao atribuidos a cada nome como editor ou revisor.
+    """
+    todos_processos = db_manager.buscar_todos("pauta_seat") or []
     contador = {nome: 0 for nome in nomes}
 
-    for proc in todos_processos:
-        nome_atribuido = proc.get(campo)
+    for processo in todos_processos:
+        nome_atribuido = processo.get(campo)
         if nome_atribuido and nome_atribuido in contador:
             contador[nome_atribuido] += 1
 
@@ -292,12 +331,7 @@ def _contar_atribuicoes(nomes: list, campo: str) -> dict:
 
 def _distribuir_processos(processos: list, editores: list, revisores: list) -> dict:
     """
-    Algoritmo de distribuicao equalitaria para SEAT.
-    
-    Diferenca do SEXP:
-    - No SEAT, todo mundo revisa todo mundo.
-    - Editor PODE ser o mesmo que revisor (sem restricao).
-    - Apenas balanceia a carga igualmente entre os disponiveis.
+    Distribuicao equalitaria para SEAT.
     """
     if not processos or not editores or not revisores:
         return {}
@@ -312,11 +346,9 @@ def _distribuir_processos(processos: list, editores: list, revisores: list) -> d
         if not proc_id:
             continue
 
-        # Editor: membro com menos atribuicoes
         editor = min(editores, key=lambda n: contador_editor[n])
         contador_editor[editor] += 1
 
-        # Revisor: membro com menos atribuicoes (pode ser o mesmo do editor)
         revisor = min(revisores, key=lambda n: contador_revisor[n])
         contador_revisor[revisor] += 1
 
@@ -325,121 +357,100 @@ def _distribuir_processos(processos: list, editores: list, revisores: list) -> d
     return atribuicoes
 
 # ============================================================
-# FUNCOES AUXILIARES: PARSING CSV
+# FUNCOES AUXILIARES: CSV
 # ============================================================
 
 def _detectar_delimitador(texto: str) -> str:
     """
-    Detecta o delimitador do CSV automaticamente.
-    Suporta ; (padrao brasileiro) e , (padrao internacional).
-    Usa csv.Sniffer primeiro, com fallback para verificacao manual.
+    Detecta automaticamente o delimitador do CSV.
     """
-    primeira_linha = texto.split('\n')[0] if texto else ""
-    
-    # Tentar com Sniffer (mais robusto)
+    primeira_linha = texto.split("\n")[0] if texto else ""
+
     try:
-        dialect = csv.Sniffer().sniff(primeira_linha, delimiters=';,')
+        dialect = csv.Sniffer().sniff(primeira_linha, delimiters=";,")
         return dialect.delimiter
     except Exception:
         pass
-    
-    # Fallback: verificacao manual
-    count_ponto_virgula = primeira_linha.count(';')
-    count_virgula = primeira_linha.count(',')
-    
+
+    count_ponto_virgula = primeira_linha.count(";")
+    count_virgula = primeira_linha.count(",")
+
     if count_ponto_virgula > count_virgula:
-        return ';'
-    elif count_virgula > 0:
-        return ','
-    else:
-        return ';'  # Default brasileiro
+        return ";"
+    if count_virgula > 0:
+        return ","
+
+    return ";"
 
 def _parse_csv(arquivo) -> list:
     """
-    Faz parse de um arquivo CSV e retorna lista de processos higienizados.
-
-    Correcoes:
-    - Remove BOM (Byte Order Mark) de arquivos salvos no Windows
-    - Mostra colunas detectadas para debug
-    - Aceita variacoes de nomes de coluna
+    Faz parse de um CSV e retorna lista de processos higienizados.
     """
     if arquivo is None:
         return []
 
-    # Ler conteudo
     conteudo = arquivo.read()
 
-    # Decodificar - usar utf-8-sig para remover BOM automaticamente
     try:
-        texto = conteudo.decode('utf-8-sig')
+        texto = conteudo.decode("utf-8-sig")
     except (UnicodeDecodeError, AttributeError):
         try:
-            texto = conteudo.decode('latin-1')
+            texto = conteudo.decode("latin-1")
         except Exception:
             texto = str(conteudo)
 
-    # Remover BOM manualmente como fallback
-    texto = texto.lstrip('\ufeff')
-
-    # Detectar delimitador
+    texto = texto.lstrip("\ufeff")
     delimiter = _detectar_delimitador(texto)
-
-    # Parse
     reader = csv.DictReader(io.StringIO(texto), delimiter=delimiter)
 
-    # Debug: mostrar colunas detectadas
     if reader.fieldnames:
         st.caption(f"Colunas detectadas: {', '.join(reader.fieldnames)} | Delimitador: '{delimiter}'")
 
     processos = []
+
     for row in reader:
         if not row:
             continue
 
-        # Normalizar nomes de coluna (lowercase, sem espacos, sem BOM)
         row_norm = {}
         for k, v in row.items():
-            if k and v:
-                # Remover BOM e normalizar nome da coluna
-                chave = k.replace('\ufeff', '').lower().strip()
-                row_norm[chave] = v.strip()
+            if k is not None:
+                chave = k.replace("\ufeff", "").lower().strip()
+                row_norm[chave] = (v or "").strip()
 
-        # Buscar coluna de processo (aceita variacoes)
         processo_numero = (
-            row_norm.get('processo_numero')
-            or row_norm.get('processo')
-            or row_norm.get('numero')
-            or row_norm.get('n_processo')
-            or row_norm.get('numero_processo')
-            or row_norm.get('n_processo')
+            row_norm.get("processo_numero")
+            or row_norm.get("processo")
+            or row_norm.get("numero")
+            or row_norm.get("n_processo")
+            or row_norm.get("numero_processo")
             or ""
         )
 
-        # Buscar coluna de relator (opcional)
         relator = (
-            row_norm.get('relator')
-            or row_norm.get('relatora')
-            or row_norm.get('relator(a)')
-            or row_norm.get('rel')
+            row_norm.get("relator")
+            or row_norm.get("relatora")
+            or row_norm.get("relator(a)")
+            or row_norm.get("rel")
             or None
         )
 
-        # Buscar coluna de tipo de sessao
         tipo_sessao = (
-            row_norm.get('tipo_sessao')
-            or row_norm.get('tipo')
-            or row_norm.get('sessao')
-            or row_norm.get('tipo_sessao')
-            or row_norm.get('tipo_ses')
+            row_norm.get("tipo_sessao")
+            or row_norm.get("tipo")
+            or row_norm.get("sessao")
+            or row_norm.get("tipo_ses")
             or ""
         )
 
         if processo_numero and tipo_sessao:
-            processos.append({
-                'processo_numero': _higienizar_numero_processo(processo_numero),
-                'relator': _higienizar_relator(relator) if relator else None,
-                'tipo_sessao': _normalizar_tipo_sessao(tipo_sessao),
-            })
+            processos.append(
+                {
+                    "processo_numero": _higienizar_numero_processo(processo_numero),
+                    "relator": _higienizar_relator(relator) if relator else None,
+                    "tipo_sessao": _normalizar_tipo_sessao(tipo_sessao),
+                }
+            )
 
     return processos
 
@@ -448,10 +459,14 @@ def _parse_csv(arquivo) -> list:
 # ============================================================
 
 def _incluir_processo_manual(modo_edicao: bool):
-    """Formulario para incluir processo manualmente, um por vez."""
+    """
+    Formulario para incluir processo manualmente.
+    """
     st.markdown("### Incluir Processo")
+
     with st.form("form_incluir_manual"):
         col1, col2 = st.columns(2)
+
         with col1:
             processo_numero = st.text_input(
                 "Numero do Processo *",
@@ -461,6 +476,7 @@ def _incluir_processo_manual(modo_edicao: bool):
                 "Numero da Sessao *",
                 placeholder="Ex: 123/2026",
             )
+
         with col2:
             tipo_sessao = st.selectbox(
                 "Tipo de Sessao *",
@@ -471,33 +487,39 @@ def _incluir_processo_manual(modo_edicao: bool):
                 "Dia da Sessao *",
                 value=date.today(),
             )
+
         col3, col4 = st.columns(2)
+
         with col3:
             relator = st.text_input(
                 "Relator (opcional)",
                 placeholder="Ex: AM ou GAVF / Subst.",
             )
+
         with col4:
             observacoes = st.text_input(
                 "Observacoes (opcional)",
                 placeholder="Info adicional",
             )
+
         submit = st.form_submit_button("Incluir na Pauta", use_container_width=True)
+
         if submit:
             if not processo_numero.strip() or not numero_sessao.strip():
                 st.error("Numero do processo e numero da sessao sao obrigatorios.")
                 return
-            # Higienizar dados antes de salvar
+
             numero_limpo = _higienizar_numero_processo(processo_numero.strip())
             relator_limpo = _higienizar_relator(relator.strip()) if relator else None
             dia_iso = dia_sessao.isoformat()
-            # Verificar duplicidade
+
             if _verificar_duplicidade(numero_limpo, numero_sessao.strip(), dia_iso):
                 st.error(
                     f"Duplicidade: o processo {numero_limpo} ja esta cadastrado "
                     f"na sessao {numero_sessao} de {_formatar_data_curta(dia_iso)}."
                 )
                 return
+
             dados = {
                 "processo_numero": numero_limpo,
                 "numero_sessao": numero_sessao.strip(),
@@ -507,50 +529,60 @@ def _incluir_processo_manual(modo_edicao: bool):
                 "status": "inclusao",
                 "observacoes": observacoes.strip() if observacoes else "",
             }
+
             resultado = db_manager.inserir("pauta_seat", dados)
+
             if resultado:
-                # GATILHO DS: identifica despacho singular pendente
                 _identificar_ds_apos_inclusao(numero_limpo, resultado.get("id"))
                 st.success(f"Processo {numero_limpo} incluido na pauta SEAT.")
+
                 if relator and relator_limpo != relator.strip():
                     st.caption(f"Relator formatado: {relator.strip()} -> {relator_limpo}")
+
                 if processo_numero.strip() != numero_limpo:
                     st.caption(f"Numero limpo: {processo_numero.strip()} -> {numero_limpo}")
+
                 st.rerun()
             else:
                 st.error("Erro ao incluir processo. Verifique a conexao com o banco.")
 
 def _incluir_processo_lote(modo_edicao: bool):
-    """Upload de arquivo CSV com multiplos processos."""
+    """
+    Upload de arquivo CSV com multiplos processos.
+    """
     st.markdown("### Incluir em Lote (CSV)")
     st.caption(
         "Formato esperado: colunas `processo_numero`, `relator` (opcional), `tipo_sessao`.\n\n"
-        "Delimitador automatico: aceita `;` (padrao BR) ou `,`.\n\n"
+        "Delimitador automatico: aceita `;` ou `,`.\n\n"
         "O sistema remove o sufixo `-e` do numero do processo e adiciona `GC` "
-        "antes das iniciais do relator (exceto GAVF / Subst.)."
+        "antes das iniciais do relator, exceto GAVF / Subst."
     )
+
     arquivo = st.file_uploader(
         "Selecionar arquivo CSV",
-        type=['csv'],
+        type=["csv"],
         key="csv_upload_seat",
     )
+
     if arquivo is None:
         return
-    # Parse do CSV
+
     processos_csv = _parse_csv(arquivo)
+
     if not processos_csv:
         st.error(
             "Nenhum processo valido encontrado no arquivo. "
             "Verifique se as colunas `processo_numero` e `tipo_sessao` existem e estao preenchidas."
         )
         return
-    # Detectar tipos de sessao unicos no arquivo
-    tipos_encontrados = sorted(set(p['tipo_sessao'] for p in processos_csv if p['tipo_sessao']))
+
+    tipos_encontrados = sorted(set(p["tipo_sessao"] for p in processos_csv if p["tipo_sessao"]))
+
     st.success(
         f"CSV carregado: {len(processos_csv)} processos encontrados, "
         f"{len(tipos_encontrados)} tipo(s) de sessao."
     )
-    # Mostrar preview dos dados higienizados
+
     with st.expander("Preview dos dados (apos higienizacao)", expanded=False):
         for p in processos_csv[:10]:
             st.write(
@@ -560,84 +592,103 @@ def _incluir_processo_lote(modo_edicao: bool):
             )
         if len(processos_csv) > 10:
             st.caption(f"... e mais {len(processos_csv) - 10} processo(s).")
-    # Formulario para numero e data de cada tipo de sessao
+
     st.markdown("### Informacoes das Sessoes")
     st.markdown("Preencha o numero e a data para cada tipo de sessao encontrado no arquivo:")
+
     session_info = {}
+
     for i, tipo in enumerate(tipos_encontrados):
         st.markdown(f"**{tipo}**")
+
         col_n, col_d = st.columns(2)
+
         with col_n:
             numero = st.text_input(
                 "Numero da Sessao *",
-                placeholder=f"Ex: 123/2026",
+                placeholder="Ex: 123/2026",
                 key=f"csv_sessao_num_{i}",
             )
+
         with col_d:
             dia = st.date_input(
                 "Data da Sessao *",
                 value=date.today(),
                 key=f"csv_sessao_dia_{i}",
             )
+
         session_info[tipo] = {
-            'numero': numero.strip(),
-            'dia': dia.isoformat(),
+            "numero": numero.strip(),
+            "dia": dia.isoformat(),
         }
+
         st.markdown("---")
-    # Botao de confirmacao
+
     if st.button("Confirmar e Inserir", type="primary", key="csv_confirmar"):
         erros_validacao = []
+
         for tipo, info in session_info.items():
-            if not info['numero']:
+            if not info["numero"]:
                 erros_validacao.append(f"Numero da sessao para {tipo} e obrigatorio.")
+
         if erros_validacao:
             for erro in erros_validacao:
                 st.error(erro)
             return
+
         inseridos = 0
         duplicados = 0
         erros = 0
         lista_duplicados = []
+
         for proc in processos_csv:
-            tipo = proc['tipo_sessao']
+            tipo = proc["tipo_sessao"]
             info = session_info.get(tipo)
             if not info:
                 erros += 1
                 continue
-            if _verificar_duplicidade(proc['processo_numero'], info['numero'], info['dia']):
+
+            if _verificar_duplicidade(proc["processo_numero"], info["numero"], info["dia"]):
                 lista_duplicados.append(
                     f"{proc['processo_numero']} (sessao {info['numero']} de {_formatar_data_curta(info['dia'])})"
                 )
                 duplicados += 1
                 continue
+
             dados = {
-                "processo_numero": proc['processo_numero'],
-                "numero_sessao": info['numero'],
-                "dia_sessao": info['dia'],
+                "processo_numero": proc["processo_numero"],
+                "numero_sessao": info["numero"],
+                "dia_sessao": info["dia"],
                 "tipo_sessao": tipo,
-                "relator": proc.get('relator'),
+                "relator": proc.get("relator"),
                 "status": "inclusao",
             }
+
             resultado = db_manager.inserir("pauta_seat", dados)
+
             if resultado:
-                # GATILHO DS: identifica despacho singular pendente
-                _identificar_ds_apos_inclusao(proc['processo_numero'], resultado.get("id"))
+                _identificar_ds_apos_inclusao(proc["processo_numero"], resultado.get("id"))
                 inseridos += 1
             else:
                 erros += 1
+
         st.success(
             f"Importacao concluida: {inseridos} inseridos, "
             f"{duplicados} duplicados, {erros} erros."
         )
+
         if lista_duplicados:
             with st.expander(f"Ver {len(lista_duplicados)} processo(s) duplicado(s)"):
                 for dup in lista_duplicados:
                     st.warning(f"Duplicado: {dup}")
+
         if inseridos > 0:
             st.rerun()
 
 def _avancar_status(id_processo: int, status_atual: str):
-    """Avanca o status do processo para a proxima etapa."""
+    """
+    Avanca o status do processo para a proxima etapa.
+    """
     info_status = STATUS_FLOW.get(status_atual)
     if not info_status or not info_status["proximo"]:
         return
@@ -657,25 +708,34 @@ def _avancar_status(id_processo: int, status_atual: str):
         st.error("Erro ao atualizar status do processo.")
 
 def _voltar_status(id_processo: int, status_atual: str):
-    """Volta o status do processo para a etapa anterior."""
+    """
+    Volta o status do processo para a etapa anterior.
+    """
     ordem = ["inclusao", "em_edicao", "em_revisao", "encaminhado"]
     indice = ordem.index(status_atual)
+
     if indice > 0:
         status_anterior = ordem[indice - 1]
         dados_update = {"status": status_anterior}
+
         if status_atual == "encaminhado":
             dados_update["data_conclusao"] = None
 
         resultado = db_manager.atualizar("pauta_seat", id_processo, dados_update)
+
         if resultado:
             st.success(f"Processo retornado para: {STATUS_FLOW[status_anterior]['label']}")
             st.rerun()
 
 def _remover_processo(id_processo: int, numero: str):
-    """Remove um processo da pauta com confirmacao."""
+    """
+    Remove um processo da pauta com confirmacao dupla.
+    """
     chave_confirm = f"confirmar_remocao_{id_processo}"
+
     if st.session_state.get(chave_confirm):
         resultado = db_manager.deletar("pauta_seat", id_processo)
+
         if resultado:
             st.success(f"Processo {numero} removido da pauta.")
             del st.session_state[chave_confirm]
@@ -689,257 +749,84 @@ def _remover_processo(id_processo: int, numero: str):
         st.warning(f"Confirme a remocao do processo {numero} clicando novamente.")
         st.rerun()
 
-def _marcar_editado(id_proc, valor):
-    """Marca/desmarca editado e atualiza o status automaticamente."""
+def _marcar_editado(id_proc: int, valor: bool):
+    """
+    Marca ou desmarca editado e atualiza o status automaticamente.
+    """
     if valor:
-        # Marcando como editado → status em_edicao
-        db_manager.atualizar("pauta_seat", id_proc, {
-            "editado": True,
-            "status": "em_edicao",
-        })
+        db_manager.atualizar(
+            "pauta_seat",
+            id_proc,
+            {
+                "editado": True,
+                "status": "em_edicao",
+            },
+        )
     else:
-        # Desmarcando editado → desmarca revisado também e volta status
-        db_manager.atualizar("pauta_seat", id_proc, {
-            "editado": False,
-            "revisado": False,
-            "status": "inclusao",
-        })
+        db_manager.atualizar(
+            "pauta_seat",
+            id_proc,
+            {
+                "editado": False,
+                "revisado": False,
+                "status": "inclusao",
+                "data_conclusao": None,
+            },
+        )
     st.rerun()
 
-def _marcar_revisado(id_proc, valor):
-    """Marca/desmarca revisado e encaminha para SEXP automaticamente."""
-    if valor:
-        # Marcando como revisado → encaminhado automaticamente para SEXP
-        from datetime import datetime
-        db_manager.atualizar("pauta_seat", id_proc, {
-            "revisado": True,
-            "status": "encaminhado",
-            "data_conclusao": datetime.now().isoformat(),
-        })
-    else:
-        # Desmarcando revisado → volta para em_revisao
-        db_manager.atualizar("pauta_seat", id_proc, {
-            "revisado": False,
-            "status": "em_revisao",
-            "data_conclusao": None,
-        })
-    st.rerun()
-
-def _marcar_revisado(id_processo: int, valor: bool):
-    """Marca/desmarca o checkbox de revisado e atualiza o status automaticamente."""
-    processo = db_manager.buscar_por_id("pauta_seat", id_processo)
+def _marcar_revisado(id_proc: int, valor: bool):
+    """
+    Marca ou desmarca revisado e atualiza o status automaticamente.
+    """
+    processo = db_manager.buscar_por_id("pauta_seat", id_proc)
     if not processo:
         return
 
-    editado = processo.get("editado", False)
+    editado_atual = bool(processo.get("editado", False))
 
-    if valor and editado:
-        novo_status = "encaminhado"
-    elif valor and not editado:
-        novo_status = "encaminhado"
-    elif not valor and editado:
-        novo_status = "em_revisao"
+    if valor:
+        db_manager.atualizar(
+            "pauta_seat",
+            id_proc,
+            {
+                "revisado": True,
+                "status": "encaminhado",
+                "data_conclusao": datetime.now().isoformat(),
+            },
+        )
     else:
-        novo_status = "em_edicao"
+        novo_status = "em_revisao" if editado_atual else "em_edicao"
+        db_manager.atualizar(
+            "pauta_seat",
+            id_proc,
+            {
+                "revisado": False,
+                "status": novo_status,
+                "data_conclusao": None,
+            },
+        )
 
-    db_manager.atualizar("pauta_seat", id_processo, {
-        "revisado": valor,
-        "status": novo_status,
-    })
     st.rerun()
 
 def _salvar_comentario(id_processo: int, comentario: str):
-    """Salva o comentario de um processo."""
-    db_manager.atualizar("pauta_seat", id_processo, {
-        "comentario": comentario.strip(),
-    })
+    """
+    Salva o comentario de um processo.
+    """
+    db_manager.atualizar(
+        "pauta_seat",
+        id_processo,
+        {
+            "comentario": comentario.strip(),
+        },
+    )
     st.success("Comentario salvo.")
     st.rerun()
 
-
-def renderizar_sidebar(usuario: dict, modo_edicao: bool = False):
-    """
-    Renderiza tabelas de carga na barra lateral.
-    - Filtra apenas as sessoes mais recentes de cada tipo
-    - Exclui Urgente (rito diferente)
-    - Mostra apenas membros que participaram da distribuicao
-    - Operacionais: veem apenas seus proprios dados
-    - Gerente e acima: veem todos os membros que participaram
-    """
-    import pandas as pd
-
-    cargo_usuario = usuario.get("cargo", "operacional")
-    nome_usuario = usuario.get("nome", "")
-    filtrar_por_usuario = (cargo_usuario == "operacional" and nome_usuario)
-
-    todos_processos = db_manager.buscar_todos("pauta_seat")
-    if not todos_processos:
-        return
-
-    datas_recentes = {}
-    for p in todos_processos:
-        tipo = p.get("tipo_sessao", "")
-        dia = p.get("dia_sessao")
-        if not tipo or not dia:
-            continue
-        if "urgente" in _normalizar_texto(tipo):
-            continue
-        dia_str = str(dia)[:10]
-        tipo_key = _normalizar_texto(tipo)
-        if tipo_key not in datas_recentes or dia_str > datas_recentes[tipo_key]:
-            datas_recentes[tipo_key] = dia_str
-
-    if not datas_recentes:
-        return
-
-    processos_recentes = []
-    for p in todos_processos:
-        tipo = p.get("tipo_sessao", "")
-        dia = p.get("dia_sessao")
-        if not tipo or not dia:
-            continue
-        dia_str = str(dia)[:10]
-        tipo_key = _normalizar_texto(tipo)
-        if tipo_key in datas_recentes and dia_str == datas_recentes[tipo_key]:
-            processos_recentes.append(p)
-
-    if not processos_recentes:
-        return
-
-    nomes_participantes = set()
-    for p in processos_recentes:
-        editor = (p.get("editor") or "").strip()
-        revisor = (p.get("revisor") or "").strip()
-        if editor:
-            nomes_participantes.add(_normalizar_texto(editor))
-        if revisor:
-            nomes_participantes.add(_normalizar_texto(revisor))
-
-    if not nomes_participantes:
-        return
-
-    equipe = _obter_equipe_seat()
-    equipe_participante = []
-    for nome in equipe:
-        if _normalizar_texto(nome) in nomes_participantes:
-            equipe_participante.append(nome)
-
-    if not equipe_participante:
-        return
-
-    if filtrar_por_usuario:
-        nome_norm = _normalizar_texto(nome_usuario)
-        equipe_filtrada = [n for n in equipe_participante if _normalizar_texto(n) == nome_norm]
-    else:
-        equipe_filtrada = equipe_participante
-
-    dados_edicao = []
-    dados_revisao = []
-    for nome in equipe_filtrada:
-        nome_norm = _normalizar_texto(nome)
-        qtd_editar = 0
-        faltam_editar = 0
-        qtd_revisar = 0
-        faltam_revisar = 0
-        for p in processos_recentes:
-            editor_p = _normalizar_texto(p.get("editor", "") or "")
-            revisor_p = _normalizar_texto(p.get("revisor", "") or "")
-            editado_p = bool(p.get("editado", False))
-            revisado_p = bool(p.get("revisado", False))
-            if editor_p == nome_norm:
-                qtd_editar += 1
-                if not editado_p:
-                    faltam_editar += 1
-            if revisor_p == nome_norm:
-                qtd_revisar += 1
-                if not revisado_p:
-                    faltam_revisar += 1
-        dados_edicao.append({"Resp.": nome, "Qtd": qtd_editar, "Faltam": faltam_editar})
-        dados_revisao.append({"Resp.": nome, "Qtd": qtd_revisar, "Faltam": faltam_revisar})
-
-    if not dados_edicao:
-        return
-
-    df_ed = pd.DataFrame(dados_edicao)
-    df_rev = pd.DataFrame(dados_revisao)
-
-    if not filtrar_por_usuario:
-        df_ed = pd.concat([df_ed, pd.DataFrame([{"Resp.": "Total", "Qtd": df_ed["Qtd"].sum(), "Faltam": df_ed["Faltam"].sum()}])], ignore_index=True)
-        df_rev = pd.concat([df_rev, pd.DataFrame([{"Resp.": "Total", "Qtd": df_rev["Qtd"].sum(), "Faltam": df_rev["Faltam"].sum()}])], ignore_index=True)
-
-    # TUDO DENTRO DA SIDEBAR
-    with st.sidebar:
-        st.markdown("**Edicao**")
-        st.dataframe(df_ed, hide_index=True, use_container_width=True, height=len(df_ed) * 35 + 40)
-        st.markdown("**Revisao**")
-        st.dataframe(df_rev, hide_index=True, use_container_width=True, height=len(df_rev) * 35 + 40)
-
-def _renderizar_sidebar_ds(usuario: dict):
-    """
-    Mostra os ultimos 5 DS e 5 Sustentacoes Orais na sidebar.
-    Apenas criador, raiz e gerente.
-    """
-    import pandas as pd
-
-    cargo = usuario.get("cargo", "operacional")
-    if cargo not in ("criador", "raiz", "gerente"):
-        return
-
-    todos_ds = db_manager.buscar_todos(
-        "despachos_ds",
-        ordem_coluna="created_at",
-        ordem_desc=True,
-    )
-
-    if not todos_ds:
-        return
-
-    ds_lista = [d for d in todos_ds if d.get("tipo") == "Despacho Singular"][:5]
-    so_lista = [d for d in todos_ds if d.get("tipo") == "Sustentacao Oral"][:5]
-
-    with st.sidebar:
-        st.markdown("---")
-
-        if ds_lista:
-            st.markdown("##### Despachos Singulares (Recentes)")
-            dados_ds = []
-            for ds in ds_lista:
-                oficios = db_manager.buscar_todos(
-                    "oficios_ds",
-                    filtros={"despacho_id": ds["id"]},
-                )
-                dados_ds.append({
-                    "Processo": ds.get("processo_numero", ""),
-                    "Relator": ds.get("relator", "-") or "-",
-                    "Docs": len(oficios),
-                })
-            df_ds = pd.DataFrame(dados_ds)
-            st.dataframe(
-                df_ds,
-                hide_index=True,
-                use_container_width=True,
-                height=len(df_ds) * 35 + 40,
-            )
-
-        if so_lista:
-            st.markdown("##### Sustentacao Oral (Recentes)")
-            dados_so = []
-            for so in so_lista:
-                dados_so.append({
-                    "Processo": so.get("processo_numero", ""),
-                    "Relator": so.get("relator", "-") or "-",
-                    "Confirmada": "Sim" if so.get("recebido_confirmado") else "Nao",
-                })
-            df_so = pd.DataFrame(dados_so)
-            st.dataframe(
-                df_so,
-                hide_index=True,
-                use_container_width=True,
-                height=len(df_so) * 35 + 40,
-            )
-
 def _renderizar_card_processo(processo: dict, modo_edicao: bool):
-    """Renderiza um card individual de processo na pauta ativa."""
+    """
+    Renderiza um card individual de processo na pauta ativa.
+    """
     id_proc = processo.get("id")
     numero = processo.get("processo_numero", "")
     numero_sessao = processo.get("numero_sessao", "") or "-"
@@ -954,7 +841,6 @@ def _renderizar_card_processo(processo: dict, modo_edicao: bool):
     comentario = processo.get("comentario", "") or ""
     data_entrada = _formatar_data(processo.get("data_entrada"))
 
-    # Ícone de status
     if status == "encaminhado":
         icone_status = "📤"
     elif revisado:
@@ -965,12 +851,14 @@ def _renderizar_card_processo(processo: dict, modo_edicao: bool):
         icone_status = "⏳"
 
     with st.container():
-        # Linha 1: Processo + Relator + Status
         col_proc, col_rel, col_status = st.columns([3, 2, 1])
+
         with col_proc:
             st.markdown(f"### {icone_status} {numero}")
+
         with col_rel:
             st.markdown(f"**Relator:** {relator}")
+
         with col_status:
             if status == "encaminhado":
                 st.success("Encaminhado")
@@ -979,7 +867,6 @@ def _renderizar_card_processo(processo: dict, modo_edicao: bool):
             else:
                 st.caption("Aguardando")
 
-        # Linha 2: Sessao + Tipo + Data
         col1, col2, col3 = st.columns(3)
         with col1:
             st.markdown(f"**Sessão:** {numero_sessao}")
@@ -988,30 +875,30 @@ def _renderizar_card_processo(processo: dict, modo_edicao: bool):
         with col3:
             st.markdown(f"**Data:** {dia_sessao}")
 
-        # Linha 3: Editor + Revisor
         col1, col2 = st.columns(2)
         with col1:
             st.markdown(f"**Editor:** {editor}")
         with col2:
             st.markdown(f"**Revisor:** {revisor}")
 
-        # Linha 4: Checkboxes Editado / Revisado
         if modo_edicao:
             col_chk1, col_chk2 = st.columns(2)
+
             with col_chk1:
                 novo_editado = st.checkbox(
-                    "Editado", value=editado, key=f"chk_editado_{id_proc}"
+                    "Editado",
+                    value=editado,
+                    key=f"chk_editado_{id_proc}",
                 )
                 if novo_editado != editado:
                     _marcar_editado(id_proc, novo_editado)
 
             with col_chk2:
-                # TRAVA: Revisado só funciona se Editado estiver marcado
                 novo_revisado = st.checkbox(
                     "Revisado",
                     value=revisado,
                     key=f"chk_revisado_{id_proc}",
-                    disabled=not novo_editado,  # ← TRAVA AQUI
+                    disabled=not novo_editado,
                     help="Marque como editado primeiro" if not novo_editado else None,
                 )
                 if novo_revisado != revisado and novo_editado:
@@ -1023,7 +910,6 @@ def _renderizar_card_processo(processo: dict, modo_edicao: bool):
             with col_chk2:
                 st.markdown(f"{'☑' if revisado else '☐'} Revisado")
 
-        # Linha 5: Comentario
         if modo_edicao:
             novo_comentario = st.text_area(
                 "Comentário",
@@ -1041,22 +927,21 @@ def _renderizar_card_processo(processo: dict, modo_edicao: bool):
             else:
                 st.caption("Sem comentário.")
 
-        # Rodapé
         st.caption(f"Entrada: {data_entrada}")
 
-        # Botão de remover
         if modo_edicao:
             if st.button("Remover", key=f"remover_{id_proc}"):
                 _remover_processo(id_proc, numero)
 
         st.markdown("---")
 
-
 def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
-    """Renderiza a aba de Pauta Ativa com filtros e lista de processos."""
+    """
+    Renderiza a aba de Pauta Ativa com filtros e lista de processos.
+    """
     cargo_usuario = usuario.get("cargo", "operacional") if usuario else "operacional"
     nome_usuario = usuario.get("nome", "") if usuario else ""
-    filtrar_por_usuario = (cargo_usuario == "operacional" and nome_usuario)
+    filtrar_por_usuario = cargo_usuario == "operacional" and bool(nome_usuario)
 
     col_f1, col_f2, col_f3 = st.columns(3)
 
@@ -1066,16 +951,19 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
             placeholder="Digite o numero...",
             key="busca_pauta_seat",
         )
+
     with col_f2:
         status_opcoes = ["todos"] + list(STATUS_FLOW.keys())
         status_labels = {"todos": "Todos os Status"}
         status_labels.update({k: v["label"] for k, v in STATUS_FLOW.items()})
+
         filtro_status = st.selectbox(
             "Filtrar por status",
             options=status_opcoes,
             format_func=lambda x: status_labels[x],
             key="filtro_status_seat",
         )
+
     with col_f3:
         filtro_tipo = st.selectbox(
             "Filtrar por tipo de sessao",
@@ -1101,14 +989,15 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
         filtros=filtros if filtros else None,
         ordem_coluna="created_at",
         ordem_desc=True,
-    )
+    ) or []
 
-    # Filtro de busca por numero (client-side)
     if busca.strip():
         busca_lower = busca.strip().lower()
-        processos = [p for p in processos if busca_lower in (p.get("processo_numero", "") or "").lower()]
+        processos = [
+            p for p in processos
+            if busca_lower in (p.get("processo_numero", "") or "").lower()
+        ]
 
-    # FILTRAR POR USUARIO: operacionais so veem seus processos
     if filtrar_por_usuario:
         nome_norm = _normalizar_texto(nome_usuario)
         processos = [
@@ -1117,11 +1006,9 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
             or _normalizar_texto(p.get("revisor", "")) == nome_norm
         ]
 
-    # === Separar encaminhados dos ativos ===
     encaminhados = [p for p in processos if p.get("status") == "encaminhado"]
     ativos = [p for p in processos if p.get("status") != "encaminhado"]
 
-    # Contadores
     col_c1, col_c2, col_c3, col_c4, col_c5 = st.columns(5)
     with col_c1:
         st.metric("Total", len(processos))
@@ -1136,25 +1023,27 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
 
     st.markdown("---")
 
-    # === Botão Finalizar Sessão (Liberado para toda a equipe operando na SEAT) ===
     if processos and modo_edicao:
-        st.markdown("---")
         pendentes = len(processos) - len(encaminhados)
 
         if pendentes == 0:
-            st.success(f"🎉 **Todos os {len(encaminhados)} processos foram revisados! A sessão está pronta para envio.**")
+            st.success(
+                f"🎉 Todos os {len(encaminhados)} processos foram revisados. "
+                "A sessão está pronta para envio."
+            )
         else:
             st.warning(
-                f"⚠️ **Alerta de Pendência:** Ainda há **{pendentes}** processo(s) sem revisão final nesta pauta.\n\n"
-                f"Se você finalizar agora, apenas os **{len(encaminhados)}** processos já revisados serão enviados para a SEXP."
+                f"⚠️ Ainda há {pendentes} processo(s) sem revisão final nesta pauta.\n\n"
+                f"Se você finalizar agora, apenas os {len(encaminhados)} processos "
+                "já revisados serão enviados para a SEXP."
             )
 
-        # Trava de segurança: se houver pendentes, exige marcação do checkbox para liberar o botão
         confirmar_envio = True
         if pendentes > 0:
             confirmar_envio = st.checkbox(
-                f"Estou ciente das pendências e desejo finalizar a sessão enviando apenas os {len(encaminhados)} processos revisados para a SEXP.",
-                key="chk_confirmar_finalizacao_seat"
+                f"Estou ciente das pendências e desejo finalizar a sessão "
+                f"enviando apenas os {len(encaminhados)} processos revisados para a SEXP.",
+                key="chk_confirmar_finalizacao_seat",
             )
 
         if st.button(
@@ -1162,7 +1051,7 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
             type="primary",
             use_container_width=True,
             disabled=not confirmar_envio,
-            key="btn_finalizar_sessao_geral"
+            key="btn_finalizar_sessao_geral",
         ):
             if len(encaminhados) == 0:
                 st.error("Nenhum processo foi revisado ainda. Impossível enviar sessão vazia para a SEXP.")
@@ -1170,34 +1059,43 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
                 with st.spinner("Enviando processos para a SEXP..."):
                     salvos = 0
                     ignorados = 0
+
                     for p in encaminhados:
-                        # TRAVA OTIMISTA: Verifica se outro usuário já finalizou antes de regravar
                         proc_atual = db_manager.buscar_por_id("pauta_seat", p["id"])
                         if proc_atual and proc_atual.get("sessao_finalizada"):
                             ignorados += 1
                             continue
 
-                        # Marca como finalizada para destravar a leitura no SEXP
-                        res = db_manager.atualizar("pauta_seat", p["id"], {
-                            "sessao_finalizada": True,
-                            "status": "encaminhado"
-                        })
+                        res = db_manager.atualizar(
+                            "pauta_seat",
+                            p["id"],
+                            {
+                                "sessao_finalizada": True,
+                                "status": "encaminhado",
+                            },
+                        )
                         if res:
                             salvos += 1
 
                 if ignorados > 0:
-                    st.warning(f"⚠️ {ignorados} processo(s) ignorado(s) pois já haviam sido enviados por outro gerente. Tela atualizada.")
+                    st.warning(
+                        f"⚠️ {ignorados} processo(s) ignorado(s), pois já haviam sido enviados por outro gerente."
+                    )
+
                 if salvos > 0:
-                    st.success(f"✅ Sessão finalizada com sucesso! {salvos} processo(s) enviado(s) para a SEXP.")
+                    st.success(f"✅ Sessão finalizada com sucesso. {salvos} processo(s) enviado(s) para a SEXP.")
+
                 st.rerun()
 
-        st.caption("Ao finalizar, os processos revisados migram para a esteira da Expedição (SEXP) e não poderão mais ser alterados na SEAT.")
+        st.caption(
+            "Ao finalizar, os processos revisados migram para a esteira da Expedição "
+            "(SEXP) e não poderão mais ser alterados na SEAT."
+        )
         st.markdown("---")
 
-    # === Listar processos ativos (nao encaminhados) ===
     if not ativos:
         if filtrar_por_usuario:
-            st.info(f"Todos os seus processos foram encaminhados para o SEXP. ✅")
+            st.info("Todos os seus processos foram encaminhados para o SEXP. ✅")
         else:
             st.info("Todos os processos foram encaminhados para o SEXP. ✅")
     else:
@@ -1205,28 +1103,233 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
             st.markdown(f"### Meus Processos ({len(ativos)})")
         else:
             st.markdown(f"### Pauta Ativa ({len(ativos)} processo{'s' if len(ativos) != 1 else ''})")
+
         for processo in ativos:
             _renderizar_card_processo(processo, modo_edicao)
+
+ # ============================================================
+# SIDEBARS
+# ============================================================
+
+def renderizar_sidebar(usuario: dict, modo_edicao: bool = False):
+    """
+    Renderiza tabelas de carga na barra lateral.
+    """
+    cargo_usuario = usuario.get("cargo", "operacional")
+    nome_usuario = usuario.get("nome", "")
+    filtrar_por_usuario = cargo_usuario == "operacional" and bool(nome_usuario)
+
+    todos_processos = db_manager.buscar_todos("pauta_seat") or []
+    if not todos_processos:
+        return
+
+    datas_recentes = {}
+
+    for p in todos_processos:
+        tipo = p.get("tipo_sessao", "")
+        dia = p.get("dia_sessao")
+        if not tipo or not dia:
+            continue
+        if "urgente" in _normalizar_texto(tipo):
+            continue
+
+        dia_str = str(dia)[:10]
+        tipo_key = _normalizar_texto(tipo)
+
+        if tipo_key not in datas_recentes or dia_str > datas_recentes[tipo_key]:
+            datas_recentes[tipo_key] = dia_str
+
+    if not datas_recentes:
+        return
+
+    processos_recentes = []
+
+    for p in todos_processos:
+        tipo = p.get("tipo_sessao", "")
+        dia = p.get("dia_sessao")
+        if not tipo or not dia:
+            continue
+
+        dia_str = str(dia)[:10]
+        tipo_key = _normalizar_texto(tipo)
+
+        if tipo_key in datas_recentes and dia_str == datas_recentes[tipo_key]:
+            processos_recentes.append(p)
+
+    if not processos_recentes:
+        return
+
+    nomes_participantes = set()
+    for p in processos_recentes:
+        editor = (p.get("editor") or "").strip()
+        revisor = (p.get("revisor") or "").strip()
+
+        if editor:
+            nomes_participantes.add(_normalizar_texto(editor))
+        if revisor:
+            nomes_participantes.add(_normalizar_texto(revisor))
+
+    if not nomes_participantes:
+        return
+
+    equipe = _obter_equipe_seat()
+    equipe_participante = [nome for nome in equipe if _normalizar_texto(nome) in nomes_participantes]
+
+    if not equipe_participante:
+        return
+
+    if filtrar_por_usuario:
+        nome_norm = _normalizar_texto(nome_usuario)
+        equipe_filtrada = [n for n in equipe_participante if _normalizar_texto(n) == nome_norm]
+    else:
+        equipe_filtrada = equipe_participante
+
+    dados_edicao = []
+    dados_revisao = []
+
+    for nome in equipe_filtrada:
+        nome_norm = _normalizar_texto(nome)
+        qtd_editar = 0
+        faltam_editar = 0
+        qtd_revisar = 0
+        faltam_revisar = 0
+
+        for p in processos_recentes:
+            editor_p = _normalizar_texto(p.get("editor", "") or "")
+            revisor_p = _normalizar_texto(p.get("revisor", "") or "")
+            editado_p = bool(p.get("editado", False))
+            revisado_p = bool(p.get("revisado", False))
+
+            if editor_p == nome_norm:
+                qtd_editar += 1
+                if not editado_p:
+                    faltam_editar += 1
+
+            if revisor_p == nome_norm:
+                qtd_revisar += 1
+                if not revisado_p:
+                    faltam_revisar += 1
+
+        dados_edicao.append({"Resp.": nome, "Qtd": qtd_editar, "Faltam": faltam_editar})
+        dados_revisao.append({"Resp.": nome, "Qtd": qtd_revisar, "Faltam": faltam_revisar})
+
+    if not dados_edicao:
+        return
+
+    df_ed = pd.DataFrame(dados_edicao)
+    df_rev = pd.DataFrame(dados_revisao)
+
+    if not filtrar_por_usuario:
+        df_ed = pd.concat(
+            [
+                df_ed,
+                pd.DataFrame(
+                    [{"Resp.": "Total", "Qtd": df_ed["Qtd"].sum(), "Faltam": df_ed["Faltam"].sum()}]
+                ),
+            ],
+            ignore_index=True,
+        )
+        df_rev = pd.concat(
+            [
+                df_rev,
+                pd.DataFrame(
+                    [{"Resp.": "Total", "Qtd": df_rev["Qtd"].sum(), "Faltam": df_rev["Faltam"].sum()}]
+                ),
+            ],
+            ignore_index=True,
+        )
+
+    with st.sidebar:
+        st.markdown("**Edicao**")
+        st.dataframe(df_ed, hide_index=True, use_container_width=True, height=len(df_ed) * 35 + 40)
+        st.markdown("**Revisao**")
+        st.dataframe(df_rev, hide_index=True, use_container_width=True, height=len(df_rev) * 35 + 40)
+
+def _renderizar_sidebar_ds(usuario: dict):
+    """
+    Mostra os ultimos 5 DS e 5 Sustentacoes Orais na sidebar.
+    """
+    cargo = usuario.get("cargo", "operacional")
+    if cargo not in ("criador", "raiz", "gerente"):
+        return
+
+    todos_ds = db_manager.buscar_todos(
+        "despachos_ds",
+        ordem_coluna="created_at",
+        ordem_desc=True,
+    ) or []
+
+    if not todos_ds:
+        return
+
+    ds_lista = [d for d in todos_ds if d.get("tipo") == "Despacho Singular"][:5]
+    so_lista = [d for d in todos_ds if d.get("tipo") == "Sustentacao Oral"][:5]
+
+    with st.sidebar:
+        st.markdown("---")
+
+        if ds_lista:
+            st.markdown("##### Despachos Singulares (Recentes)")
+            dados_ds = []
+            for ds in ds_lista:
+                oficios = db_manager.buscar_todos(
+                    "oficios_ds",
+                    filtros={"despacho_id": ds["id"]},
+                ) or []
+                dados_ds.append(
+                    {
+                        "Processo": ds.get("processo_numero", ""),
+                        "Relator": ds.get("relator", "-") or "-",
+                        "Docs": len(oficios),
+                    }
+                )
+
+            df_ds = pd.DataFrame(dados_ds)
+            st.dataframe(
+                df_ds,
+                hide_index=True,
+                use_container_width=True,
+                height=len(df_ds) * 35 + 40,
+            )
+
+        if so_lista:
+            st.markdown("##### Sustentacao Oral (Recentes)")
+            dados_so = []
+            for so in so_lista:
+                dados_so.append(
+                    {
+                        "Processo": so.get("processo_numero", ""),
+                        "Relator": so.get("relator", "-") or "-",
+                        "Confirmada": "Sim" if so.get("recebido_confirmado") else "Nao",
+                    }
+                )
+
+            df_so = pd.DataFrame(dados_so)
+            st.dataframe(
+                df_so,
+                hide_index=True,
+                use_container_width=True,
+                height=len(df_so) * 35 + 40,
+            )
 
 # ============================================================
 # TAB 2: DISTRIBUICAO
 # ============================================================
 
 def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
-    """Renderiza a aba de Distribuicao Equalitaria."""
-
-    # Determinar se precisa filtrar por usuario
+    """
+    Renderiza a aba de Distribuicao Equalitaria.
+    """
     cargo_usuario = usuario.get("cargo", "operacional") if usuario else "operacional"
     nome_usuario = usuario.get("nome", "") if usuario else ""
-    filtrar_por_usuario = (cargo_usuario == "operacional" and nome_usuario)
+    filtrar_por_usuario = cargo_usuario == "operacional" and bool(nome_usuario)
 
     todos_processos = db_manager.buscar_todos(
         "pauta_seat",
         ordem_coluna="created_at",
         ordem_desc=True,
-    )
+    ) or []
 
-    # FILTRAR POR USUARIO: operacionais so veem seus processos
     if filtrar_por_usuario:
         nome_norm = _normalizar_texto(nome_usuario)
         todos_processos = [
@@ -1245,15 +1348,10 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
         chave = f"{tipo_sessao} | Sessao {numero_sessao} | {dia_sessao}"
 
         if p.get("editor") or p.get("revisor"):
-            if chave not in sessoes_distribuidas:
-                sessoes_distribuidas[chave] = []
-            sessoes_distribuidas[chave].append(p)
+            sessoes_distribuidas.setdefault(chave, []).append(p)
         else:
-            if chave not in sessoes_nao_distribuidas:
-                sessoes_nao_distribuidas[chave] = []
-            sessoes_nao_distribuidas[chave].append(p)
+            sessoes_nao_distribuidas.setdefault(chave, []).append(p)
 
-    # --- SECAO 1: DISTRIBUIR ---
     st.markdown("### Distribuir Processos")
 
     if not sessoes_nao_distribuidas:
@@ -1277,6 +1375,7 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
             )
 
             processos_para_distribuir = sessoes_nao_distribuidas[sessao_sel]
+
             st.write(f"**{len(processos_para_distribuir)} processo(s)** para distribuir nesta sessao.")
 
             with st.expander("Ver processos", expanded=False):
@@ -1287,7 +1386,6 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
             st.caption("Desmarque os membros que nao devem participar desta distribuicao. No SEAT, todo mundo revisa todo mundo.")
 
             col_ed, col_rev = st.columns(2)
-
             editores_selecionados = []
             revisores_selecionados = []
 
@@ -1305,11 +1403,12 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
 
             afastados = _obter_afastados()
             if afastados:
-                with st.expander(f"{len(afastados)} membro(s) afastado(s) (excluido(s) automaticamente)"):
+                with st.expander(f"{len(afastados)} membro(s) afastado(s)"):
                     for nome in afastados:
                         st.write(f"- {nome}")
 
             st.markdown("---")
+
             if st.button("Distribuir", type="primary", use_container_width=True, key="dist_btn_distribuir"):
                 if not editores_selecionados or not revisores_selecionados:
                     st.error("Selecione pelo menos 1 editor e 1 revisor.")
@@ -1324,31 +1423,38 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
                     if atribuicoes:
                         salvos = 0
                         ignorados = 0
+
                         for proc_id, (editor, revisor) in atribuicoes.items():
-                            # TRAVA OTIMISTA: Verifica se o processo ainda está sem atribuição
                             proc_atual = db_manager.buscar_por_id("pauta_seat", proc_id)
                             if proc_atual and (proc_atual.get("editor") or proc_atual.get("revisor")):
                                 ignorados += 1
-                                continue # Pula, pois outro gerente já distribuiu neste meio tempo
+                                continue
 
-                            resultado = db_manager.atualizar("pauta_seat", proc_id, {
-                                "editor": editor,
-                                "revisor": revisor,
-                            })
+                            resultado = db_manager.atualizar(
+                                "pauta_seat",
+                                proc_id,
+                                {
+                                    "editor": editor,
+                                    "revisor": revisor,
+                                },
+                            )
+
                             if resultado:
                                 salvos += 1
 
                         if ignorados > 0:
-                            st.warning(f"⚠️ Operação parcial: {ignorados} processo(s) já haviam sido distribuídos por outro colaborador no mesmo instante.")
+                            st.warning(
+                                f"⚠️ Operação parcial: {ignorados} processo(s) já haviam sido distribuídos por outro colaborador."
+                            )
+
                         if salvos > 0:
                             st.success(f"{salvos} processo(s) distribuído(s) com sucesso!")
+
                         st.rerun()
                     else:
                         st.warning("Nenhum processo foi distribuido. Verifique as condicoes.")
 
     st.markdown("---")
-
-    # --- SECAO 2: EDITAR DISTRIBUICAO ---
     st.markdown("### Editar Distribuicao")
 
     if not sessoes_distribuidas:
@@ -1368,19 +1474,20 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
             st.warning("Nao ha membros da equipe cadastrados.")
         else:
             if PANDAS_OK and modo_edicao:
-                # Ordem correta: Processo - Relator - Editor - Editado - Revisor - Revisado - Comentario
                 df_dados = []
                 for p in processos_distribuidos:
-                    df_dados.append({
-                        "id": p.get("id"),
-                        "processo_numero": p.get("processo_numero", ""),
-                        "relator": p.get("relator", "") or "",
-                        "editor": p.get("editor", "") or "",
-                        "editado": bool(p.get("editado", False)),
-                        "revisor": p.get("revisor", "") or "",
-                        "revisado": bool(p.get("revisado", False)),
-                        "comentario": p.get("comentario", "") or "",
-                    })
+                    df_dados.append(
+                        {
+                            "id": p.get("id"),
+                            "processo_numero": p.get("processo_numero", ""),
+                            "relator": p.get("relator", "") or "",
+                            "editor": p.get("editor", "") or "",
+                            "editado": bool(p.get("editado", False)),
+                            "revisor": p.get("revisor", "") or "",
+                            "revisado": bool(p.get("revisado", False)),
+                            "comentario": p.get("comentario", "") or "",
+                        }
+                    )
 
                 df = pd.DataFrame(df_dados)
 
@@ -1405,20 +1512,17 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
                     salvos = 0
 
                     for _, row in edited_df.iterrows():
-                        editor_atual = row["editor"]
-                        revisor_atual = row["revisor"]
-
                         original = next((p for p in processos_distribuidos if p.get("id") == row["id"]), None)
                         if not original:
                             continue
 
                         mudancas = {}
 
-                        if (original.get("editor") or "") != editor_atual:
-                            mudancas["editor"] = editor_atual if editor_atual else None
+                        if (original.get("editor") or "") != row["editor"]:
+                            mudancas["editor"] = row["editor"] if row["editor"] else None
 
-                        if (original.get("revisor") or "") != revisor_atual:
-                            mudancas["revisor"] = revisor_atual if revisor_atual else None
+                        if (original.get("revisor") or "") != row["revisor"]:
+                            mudancas["revisor"] = row["revisor"] if row["revisor"] else None
 
                         editado_original = bool(original.get("editado", False))
                         editado_novo = bool(row["editado"])
@@ -1435,7 +1539,6 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
                         if comentario_original != comentario_novo:
                             mudancas["comentario"] = comentario_novo.strip()
 
-                        # Recalcular status automaticamente
                         if "editado" in mudancas or "revisado" in mudancas:
                             editado_val = mudancas.get("editado", editado_original)
                             revisado_val = mudancas.get("revisado", revisado_original)
@@ -1461,18 +1564,20 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
                         st.info("Nenhuma alteracao detectada.")
 
             elif PANDAS_OK:
-                # Modo visualizacao
                 df_dados = []
                 for p in processos_distribuidos:
-                    df_dados.append({
-                        "Processo": p.get("processo_numero", ""),
-                        "Relator": p.get("relator", "") or "-",
-                        "Editor": p.get("editor", "") or "-",
-                        "Editado": "Sim" if p.get("editado", False) else "Nao",
-                        "Revisor": p.get("revisor", "") or "-",
-                        "Revisado": "Sim" if p.get("revisado", False) else "Nao",
-                        "Comentario": p.get("comentario", "") or "-",
-                    })
+                    df_dados.append(
+                        {
+                            "Processo": p.get("processo_numero", ""),
+                            "Relator": p.get("relator", "") or "-",
+                            "Editor": p.get("editor", "") or "-",
+                            "Editado": "Sim" if p.get("editado", False) else "Nao",
+                            "Revisor": p.get("revisor", "") or "-",
+                            "Revisado": "Sim" if p.get("revisado", False) else "Nao",
+                            "Comentario": p.get("comentario", "") or "-",
+                        }
+                    )
+
                 df = pd.DataFrame(df_dados)
                 st.dataframe(df, hide_index=True, use_container_width=True)
 
@@ -1493,13 +1598,12 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
 # ============================================================
 
 def _verificar_despacho_singular_tab(numero_processo):
-    """Verifica se um processo está cadastrado na tab de Despachos Singulares."""
+    """
+    Verifica se um processo esta cadastrado na tab de Despachos Singulares.
+    """
     try:
         proc_norm = _normalizar_numero_processo(numero_processo)
         despachos = db_manager.buscar_todos("despachos_ds") or []
-
-        if not despachos:
-            return False, ""
 
         for d in despachos:
             d_num = _normalizar_numero_processo(d.get("processo_numero", ""))
@@ -1508,85 +1612,95 @@ def _verificar_despacho_singular_tab(numero_processo):
                 if "sustentacao" in _normalizar_texto(tipo):
                     return True, "Sustentação Oral"
                 return True, "Despacho Singular"
+
         return False, ""
     except Exception:
         return False, ""
 
 def _verificar_despacho_singular(processo_pauta):
-    """Verifica se um processo da pauta é Despacho Singular."""
+    """
+    Verifica se um processo da pauta e Despacho Singular.
+    """
     if not processo_pauta:
         return False
-    # Verificar pelo tipo de sessão
+
     tipo = _normalizar_texto(str(processo_pauta.get("tipo_sessao", "")))
     if "despacho" in tipo and "singular" in tipo:
         return True
-    # Verificar pelas observações
+
     obs = _normalizar_texto(str(processo_pauta.get("observacoes", "")))
     if "despacho singular" in obs:
         return True
-    # Verificar pelo relator (se tiver "subst" ou "substituto")
+
     relator = _normalizar_texto(str(processo_pauta.get("relator", "")))
     if "despacho" in relator:
         return True
+
     return False
 
 def _mover_despacho_singular_para_urgentes():
-    """Move todos os processos de Despacho Singular da tab para a lista de urgentes."""
+    """
+    Move todos os processos de Despacho Singular da tab para a lista de urgentes.
+    """
     try:
         despachos = db_manager.buscar_todos("despachos_ds") or []
         urgentes_existentes = db_manager.buscar_todos("processos_urgentes") or []
+
         nums_existentes = set()
         for u in urgentes_existentes:
             nums_existentes.add(_normalizar_numero_processo(u.get("processo_numero", "")))
 
         for d in despachos:
             d_num = _normalizar_numero_processo(d.get("processo_numero", ""))
-            if d_num and d_num not in nums_existentes:
-                tipo = d.get("tipo", "Despacho Singular")
-                motivo = "Sustentação Oral" if "sustentacao" in _normalizar_texto(tipo) else "Despacho Singular"
+            if not d_num or d_num in nums_existentes:
+                continue
 
-                # Buscar dados da sessão na pauta
-                tipo_sessao = ""
-                sessao_num = ""
-                dia_sessao = ""
-                try:
-                    pauta = db_manager.buscar_todos("pauta_seat") or []
-                    for p in pauta:
-                        p_num = _normalizar_numero_processo(p.get("processo_numero", ""))
-                        if p_num == d_num:
-                            tipo_sessao = p.get("tipo_sessao", "")
-                            sessao_num = str(p.get("numero_sessao", ""))
-                            dia_sessao = str(p.get("dia_sessao", ""))[:10]
-                            break
-                except Exception:
-                    pass
+            tipo = d.get("tipo", "Despacho Singular")
+            motivo = "Sustentação Oral" if "sustentacao" in _normalizar_texto(tipo) else "Despacho Singular"
 
-                db_manager.inserir("processos_urgentes", {
+            tipo_sessao = ""
+            sessao_num = ""
+            dia_sessao = ""
+
+            try:
+                pauta = db_manager.buscar_todos("pauta_seat") or []
+                for p in pauta:
+                    p_num = _normalizar_numero_processo(p.get("processo_numero", ""))
+                    if p_num == d_num:
+                        tipo_sessao = p.get("tipo_sessao", "")
+                        sessao_num = str(p.get("numero_sessao", ""))
+                        dia_sessao = str(p.get("dia_sessao", ""))[:10]
+                        break
+            except Exception:
+                pass
+
+            db_manager.inserir(
+                "processos_urgentes",
+                {
                     "processo_numero": d_num,
                     "relator": d.get("relator", "N/I") or "N/I",
                     "motivo": motivo,
                     "tipo_sessao": tipo_sessao,
                     "sessao_numero": sessao_num,
                     "dia_sessao": dia_sessao,
-                })
-                nums_existentes.add(d_num)
+                },
+            )
+            nums_existentes.add(d_num)
     except Exception:
         pass
 
 def _verificar_ds_pendente(processo_numero):
     """
     Verifica se o processo tem um DS pendente.
-    Retorna o tipo ('Despacho Singular' ou 'Sustentacao Oral') ou None.
     """
     if not processo_numero:
         return None
 
     proc_higienizado = _higienizar_numero_processo(processo_numero)
-
     resultados = db_manager.buscar_todos(
         "despachos_ds",
-        filtros={"processo_numero": proc_higienizado, "status": "pendente"}
-    )
+        filtros={"processo_numero": proc_higienizado, "status": "pendente"},
+    ) or []
 
     if resultados:
         return resultados[0].get("tipo", "Despacho Singular")
@@ -1594,38 +1708,38 @@ def _verificar_ds_pendente(processo_numero):
     return None
 
 def _marcar_ds_distribuido(processo_numero):
-    """Marca o DS como distribuido apos o processo entrar na pauta."""
+    """
+    Marca o DS como distribuido apos o processo entrar na pauta.
+    """
     if not processo_numero:
         return
 
     proc_higienizado = _higienizar_numero_processo(processo_numero)
-
     resultados = db_manager.buscar_todos(
         "despachos_ds",
-        filtros={"processo_numero": proc_higienizado, "status": "pendente"}
-    )
+        filtros={"processo_numero": proc_higienizado, "status": "pendente"},
+    ) or []
 
     for ds in resultados:
         db_manager.atualizar("despachos_ds", ds["id"], {"status": "distribuido"})
 
 def _identificar_ds_apos_inclusao(processo_numero, pauta_id):
     """
-    Funcao gatilho: apos incluir um processo na pauta_seat, verifica se
-    existe um DS pendente para ele. Se sim, preenche o comentario e marca
-    o DS como distribuido.
+    Gatilho para comentar a pauta quando existir DS pendente.
     """
     if not processo_numero or not pauta_id:
         return
 
     ds_tipo = _verificar_ds_pendente(processo_numero)
-
     if ds_tipo:
         comentario_ds = ds_tipo.upper()
         db_manager.atualizar("pauta_seat", pauta_id, {"comentario": comentario_ds})
         _marcar_ds_distribuido(processo_numero)
 
 def _cadastrar_despacho(usuario):
-    """Formulario para cadastrar novo Despacho Singular."""
+    """
+    Formulario para cadastrar novo Despacho Singular.
+    """
     st.markdown("#### Cadastrar Novo Despacho")
 
     nome_usuario = usuario.get("nome", "Sistema")
@@ -1639,38 +1753,37 @@ def _cadastrar_despacho(usuario):
         processo_numero = st.text_input(
             "Numero do Processo *",
             placeholder="Ex: 00600-0007999/2022-63-e",
-            key="ds_processo_numero"
+            key="ds_processo_numero",
         )
         tipo = st.selectbox(
             "Tipo *",
             options=["Despacho Singular", "Sustentacao Oral"],
-            key="ds_tipo"
+            key="ds_tipo",
         )
 
     with col2:
         relator = st.text_input(
             "Relator (opcional)",
             placeholder="Ex: AM ou GAVF / Subst.",
-            key="ds_relator"
+            key="ds_relator",
         )
         forma_envio = st.selectbox(
             "Forma de Envio *",
             options=["E-mail", "Mensageria", "Protocolo"],
-            key="ds_forma_envio"
+            key="ds_forma_envio",
         )
 
     observacoes = st.text_area(
         "Observacoes (opcional)",
         placeholder="Informacoes adicionais...",
         height=60,
-        key="ds_observacoes"
+        key="ds_observacoes",
     )
 
     st.markdown("---")
     st.markdown("##### Documentos Vinculados (Oficios / Memorandos)")
     st.caption("E obrigatorio cadastrar pelo menos 1 documento.")
 
-    # Mostrar documentos ja adicionados
     if st.session_state["ds_oficios_temp"]:
         for i, of in enumerate(st.session_state["ds_oficios_temp"]):
             col_a, col_b, col_c, col_d, col_e = st.columns([2, 2, 2, 2, 1])
@@ -1689,31 +1802,33 @@ def _cadastrar_despacho(usuario):
     else:
         st.info("Nenhum documento adicionado ainda.")
 
-    # Form para adicionar documento
     with st.form("form_add_oficio_ds"):
         st.markdown("**Adicionar Documento**")
+
         col_of1, col_of2 = st.columns(2)
+
         with col_of1:
             tipo_doc = st.selectbox(
                 "Tipo de Documento",
                 options=["Oficio", "Memorando"],
-                key="ds_oficio_tipo"
+                key="ds_oficio_tipo",
             )
             numero_oficio = st.text_input(
                 "Numero do Documento *",
                 placeholder="Ex: 123/2026",
-                key="ds_oficio_numero"
+                key="ds_oficio_numero",
             )
+
         with col_of2:
             destinatario = st.text_input(
                 "Destinatario *",
                 placeholder="Ex: Secretaria de Fazenda",
-                key="ds_oficio_dest"
+                key="ds_oficio_dest",
             )
             tipo_envio_of = st.selectbox(
                 "Tipo de Envio",
                 options=["E-mail", "Mensageria", "Protocolo"],
-                key="ds_oficio_envio"
+                key="ds_oficio_envio",
             )
 
         adicionar = st.form_submit_button("Adicionar Documento")
@@ -1722,18 +1837,19 @@ def _cadastrar_despacho(usuario):
             if not numero_oficio or not destinatario:
                 st.error("Preencha o numero e o destinatario do documento.")
             else:
-                st.session_state["ds_oficios_temp"].append({
-                    "tipo_documento": tipo_doc,
-                    "numero_oficio": numero_oficio,
-                    "destinatario": destinatario,
-                    "tipo_envio": tipo_envio_of,
-                    "status": "aguardando",
-                })
+                st.session_state["ds_oficios_temp"].append(
+                    {
+                        "tipo_documento": tipo_doc,
+                        "numero_oficio": numero_oficio,
+                        "destinatario": destinatario,
+                        "tipo_envio": tipo_envio_of,
+                        "status": "aguardando",
+                    }
+                )
                 st.rerun()
 
     st.markdown("---")
 
-    # Botao para salvar o DS completo
     if st.button("Salvar Despacho", type="primary", use_container_width=True, key="btn_salvar_ds"):
         if not processo_numero:
             st.error("Numero do processo e obrigatorio.")
@@ -1743,7 +1859,6 @@ def _cadastrar_despacho(usuario):
             proc_higienizado = _higienizar_numero_processo(processo_numero)
             relator_higienizado = _higienizar_relator(relator) if relator else None
 
-            # Verificar se ja existe DS pendente
             ds_existente = _verificar_ds_pendente(proc_higienizado)
             if ds_existente:
                 st.error(f"Ja existe um DS pendente para o processo {proc_higienizado}.")
@@ -1781,38 +1896,40 @@ def _cadastrar_despacho(usuario):
                             salvos += 1
 
                     st.session_state["ds_oficios_temp"] = []
-                    st.success(f"Despacho cadastrado com sucesso! {salvos} documento(s) vinculado(s).")
+                    st.success(f"Despacho cadastrado com sucesso. {salvos} documento(s) vinculado(s).")
                     st.rerun()
                 else:
-                    st.success("Despacho cadastrado, mas houve erro ao vincular documentos. Adicione manualmente na lista.")
+                    st.success("Despacho cadastrado, mas houve erro ao vincular documentos.")
                     st.rerun()
             else:
                 st.error("Erro ao cadastrar despacho. Tente novamente.")
-
 def _listar_despachos(usuario, modo_edicao):
-    """Lista todos os DS cadastrados com seus documentos vinculados."""
+    """
+    Lista todos os DS cadastrados com seus documentos vinculados.
+    """
     st.markdown("#### Despachos Cadastrados")
 
     nome_usuario = usuario.get("nome", "")
-
     todos_ds = db_manager.buscar_todos(
-       "despachos_ds",
+        "despachos_ds",
         ordem_coluna="created_at",
-        ordem_desc=True,  # ← MUDAR DE False PARA True
-       )
+        ordem_desc=True,
+    ) or []
 
     col_f1, col_f2 = st.columns(2)
+
     with col_f1:
         filtro_status = st.selectbox(
             "Filtrar por status",
             options=["todos", "pendente", "distribuido"],
-            key="ds_filtro_status"
+            key="ds_filtro_status",
         )
+
     with col_f2:
         busca = st.text_input(
             "Buscar por processo",
             placeholder="Digite o numero...",
-            key="ds_busca"
+            key="ds_busca",
         )
 
     if filtro_status != "todos":
@@ -1830,7 +1947,6 @@ def _listar_despachos(usuario, modo_edicao):
 
     for ds in todos_ds:
         status_icone = "🟡" if ds.get("status") == "pendente" else "🟢"
-        # Exibir alterado_por se existir, senao cadastrado_por
         exibido_por = ds.get("alterado_por") or ds.get("cadastrado_por", "")
         rotulo_por = "Alterado por" if ds.get("alterado_por") else "Cadastrado por"
 
@@ -1841,12 +1957,15 @@ def _listar_despachos(usuario, modo_edicao):
             f"{rotulo_por}: {exibido_por}"
         ):
             col1, col2, col3 = st.columns(3)
+
             with col1:
                 st.write(f"**Processo:** {ds.get('processo_numero', '')}")
                 st.write(f"**Relator:** {ds.get('relator', '-') or '-'}")
+
             with col2:
                 st.write(f"**Tipo:** {ds.get('tipo', '')}")
                 st.write(f"**Envio:** {ds.get('forma_envio', '-') or '-'}")
+
             with col3:
                 st.write(f"**{rotulo_por}:** {exibido_por}")
                 st.write(f"**Recebido:** {'Sim' if ds.get('recebido_confirmado') else 'Nao'}")
@@ -1859,20 +1978,26 @@ def _listar_despachos(usuario, modo_edicao):
                 filtros={"despacho_id": ds["id"]},
                 ordem_coluna="created_at",
                 ordem_desc=False,
-            )
+            ) or []
 
             st.markdown("**Documentos Vinculados:**")
+
             if oficios:
                 for of in oficios:
                     col_a, col_b, col_c, col_d, col_e = st.columns([2, 2, 2, 2, 1])
+
                     with col_a:
                         st.write(f"{of.get('tipo_documento', '')} {of.get('numero_oficio', '')}")
+
                     with col_b:
                         st.write(f"Para: {of.get('destinatario', '')}")
+
                     with col_c:
                         st.write(f"Envio: {of.get('tipo_envio', '')}")
+
                     with col_d:
                         st.write(f"Status: {of.get('status', '')}")
+
                     with col_e:
                         if modo_edicao and of.get("status") == "aguardando":
                             if st.button("OK", key=f"of_recv_{of['id']}", help="Marcar como recebido"):
@@ -1883,126 +2008,213 @@ def _listar_despachos(usuario, modo_edicao):
                 st.caption("Nenhum documento vinculado.")
 
             if modo_edicao:
-                # Form para editar dados do DS
                 with st.form(f"form_edit_ds_{ds['id']}"):
                     st.markdown("**Editar Despacho**")
+
                     col_e1, col_e2 = st.columns(2)
+
                     with col_e1:
                         edit_processo = st.text_input(
                             "Processo",
                             value=ds.get("processo_numero", ""),
-                            key=f"edit_proc_{ds['id']}"
+                            key=f"edit_proc_{ds['id']}",
                         )
                         edit_relator = st.text_input(
                             "Relator",
                             value=ds.get("relator", "") or "",
-                            key=f"edit_rel_{ds['id']}"
+                            key=f"edit_rel_{ds['id']}",
                         )
                         edit_forma = st.selectbox(
                             "Forma de Envio",
                             options=["E-mail", "Mensageria", "Protocolo"],
-                            index=["E-mail", "Mensageria", "Protocolo"].index(ds.get("forma_envio", "E-mail")) if ds.get("forma_envio") in ["E-mail", "Mensageria", "Protocolo"] else 0,
-                            key=f"edit_forma_{ds['id']}"
+                            index=["E-mail", "Mensageria", "Protocolo"].index(ds.get("forma_envio", "E-mail"))
+                            if ds.get("forma_envio") in ["E-mail", "Mensageria", "Protocolo"] else 0,
+                            key=f"edit_forma_{ds['id']}",
                         )
+
                     with col_e2:
                         edit_tipo = st.selectbox(
                             "Tipo",
                             options=["Despacho Singular", "Sustentacao Oral"],
-                            index=["Despacho Singular", "Sustentacao Oral"].index(ds.get("tipo", "Despacho Singular")) if ds.get("tipo") in ["Despacho Singular", "Sustentacao Oral"] else 0,
-                            key=f"edit_tipo_{ds['id']}"
+                            index=["Despacho Singular", "Sustentacao Oral"].index(ds.get("tipo", "Despacho Singular"))
+                            if ds.get("tipo") in ["Despacho Singular", "Sustentacao Oral"] else 0,
+                            key=f"edit_tipo_{ds['id']}",
                         )
                         edit_obs = st.text_area(
                             "Observacoes",
                             value=ds.get("observacoes", "") or "",
                             height=60,
-                            key=f"edit_obs_{ds['id']}"
+                            key=f"edit_obs_{ds['id']}",
                         )
 
                     if st.form_submit_button("Salvar Alteracoes"):
                         proc_higienizado = _higienizar_numero_processo(edit_processo) if edit_processo else ds.get("processo_numero", "")
                         relator_higienizado = _higienizar_relator(edit_relator) if edit_relator else None
-                        db_manager.atualizar("despachos_ds", ds["id"], {
-                            "processo_numero": proc_higienizado,
-                            "relator": relator_higienizado,
-                            "tipo": edit_tipo,
-                            "forma_envio": edit_forma,
-                            "observacoes": edit_obs.strip(),
-                            "alterado_por": nome_usuario,
-                        })
-                        st.success("Alteracoes salvas!")
+
+                        db_manager.atualizar(
+                            "despachos_ds",
+                            ds["id"],
+                            {
+                                "processo_numero": proc_higienizado,
+                                "relator": relator_higienizado,
+                                "tipo": edit_tipo,
+                                "forma_envio": edit_forma,
+                                "observacoes": edit_obs.strip(),
+                                "alterado_por": nome_usuario,
+                            },
+                        )
+                        st.success("Alteracoes salvas.")
                         st.rerun()
 
-                # Form para adicionar documento extra
                 with st.form(f"form_add_oficio_extra_{ds['id']}"):
                     st.markdown("**Adicionar Documento**")
+
                     col_a1, col_a2 = st.columns(2)
+
                     with col_a1:
                         novo_tipo_doc = st.selectbox(
                             "Tipo",
                             options=["Oficio", "Memorando"],
-                            key=f"extra_tipo_{ds['id']}"
+                            key=f"extra_tipo_{ds['id']}",
                         )
                         novo_numero = st.text_input(
                             "Numero *",
-                            key=f"extra_numero_{ds['id']}"
+                            key=f"extra_numero_{ds['id']}",
                         )
+
                     with col_a2:
                         novo_dest = st.text_input(
                             "Destinatario *",
-                            key=f"extra_dest_{ds['id']}"
+                            key=f"extra_dest_{ds['id']}",
                         )
                         novo_envio = st.selectbox(
                             "Tipo de Envio",
                             options=["E-mail", "Mensageria", "Protocolo"],
-                            key=f"extra_envio_{ds['id']}"
+                            key=f"extra_envio_{ds['id']}",
                         )
 
                     if st.form_submit_button("Adicionar"):
                         if novo_numero and novo_dest:
-                            db_manager.inserir("oficios_ds", {
-                                "despacho_id": ds["id"],
-                                "tipo_documento": novo_tipo_doc,
-                                "numero_oficio": novo_numero,
-                                "destinatario": novo_dest,
-                                "tipo_envio": novo_envio,
-                                "status": "aguardando",
-                            })
+                            db_manager.inserir(
+                                "oficios_ds",
+                                {
+                                    "despacho_id": ds["id"],
+                                    "tipo_documento": novo_tipo_doc,
+                                    "numero_oficio": novo_numero,
+                                    "destinatario": novo_dest,
+                                    "tipo_envio": novo_envio,
+                                    "status": "aguardando",
+                                },
+                            )
                             db_manager.atualizar("despachos_ds", ds["id"], {"alterado_por": nome_usuario})
-                            st.success("Documento adicionado!")
+                            st.success("Documento adicionado.")
                             st.rerun()
                         else:
                             st.error("Preencha numero e destinatario.")
 
                 col_btn1, col_btn2 = st.columns(2)
+
                 with col_btn1:
                     if not ds.get("recebido_confirmado"):
                         if st.button("Marcar Recebido", key=f"ds_recv_{ds['id']}"):
-                            db_manager.atualizar("despachos_ds", ds["id"], {
-                                "recebido_confirmado": True,
-                                "alterado_por": nome_usuario,
-                            })
+                            db_manager.atualizar(
+                                "despachos_ds",
+                                ds["id"],
+                                {
+                                    "recebido_confirmado": True,
+                                    "alterado_por": nome_usuario,
+                                },
+                            )
                             st.rerun()
+
                 with col_btn2:
                     if ds.get("status") == "pendente":
                         if st.button("Marcar como Distribuido", key=f"ds_dist_{ds['id']}"):
-                            db_manager.atualizar("despachos_ds", ds["id"], {
-                                "status": "distribuido",
-                                "alterado_por": nome_usuario,
-                            })
+                            db_manager.atualizar(
+                                "despachos_ds",
+                                ds["id"],
+                                {
+                                    "status": "distribuido",
+                                    "alterado_por": nome_usuario,
+                                },
+                            )
                             st.rerun()
 
-# ==================== MOTOR NIP ====================
+def _renderizar_resumo_despachos_pauta_atual():
+    """
+    Mostra os despachos singulares atualmente presentes na pauta.
+    """
+    try:
+        todos_processos = db_manager.buscar_todos("pauta_seat") or []
+    except Exception:
+        todos_processos = []
+
+    despachos = [
+        p for p in todos_processos
+        if not p.get("sessao_finalizada", False)
+        and not p.get("removido_pauta", False)
+        and (
+            "despacho singular" in _normalizar_texto(p.get("tipo_sessao", ""))
+            or p.get("despacho_singular", False)
+        )
+    ]
+
+    st.markdown("#### Despachos Singulares da Pauta Atual")
+
+    if not despachos:
+        st.info("Nenhum despacho singular na pauta atual.")
+        return
+
+    dados = []
+    for p in despachos:
+        dados.append(
+            {
+                "Processo": p.get("processo_numero", "—"),
+                "Relator": p.get("relator", "—"),
+                "Sessão": p.get("numero_sessao", "—"),
+                "Dia": str(p.get("dia_sessao", "—"))[:10],
+                "Editor": p.get("editor", "—"),
+                "Status": "Editado" if p.get("editado") else "Pendente",
+            }
+        )
+
+    df = pd.DataFrame(dados)
+    st.dataframe(df, hide_index=True, use_container_width=True)
+
+def _renderizar_despachos_singulares(modo_edicao, usuario):
+    """
+    Renderiza a tab de Despachos Singulares.
+    """
+    st.markdown("### Despachos Singulares")
+    st.caption("Cadastro, acompanhamento e documentos vinculados dos despachos singulares e sustentações orais.")
+
+    if modo_edicao:
+        _cadastrar_despacho(usuario)
+
+    st.markdown("---")
+    _listar_despachos(usuario, modo_edicao)
+
+    st.markdown("---")
+    _renderizar_resumo_despachos_pauta_atual()
+
+# ============================================================
+# MOTOR NIP
+# ============================================================
 
 def _extrair_texto_pdf(arquivo):
-    """Extrai texto de um arquivo PDF usando pdfplumber."""
+    """
+    Extrai texto de um arquivo PDF usando pdfplumber.
+    """
     try:
         import pdfplumber
+
         texto = ""
         with pdfplumber.open(arquivo) as pdf:
             for pagina in pdf.pages:
                 pagina_texto = pagina.extract_text()
                 if pagina_texto:
                     texto += pagina_texto + "\n"
+
         return texto
     except ImportError:
         st.error("Biblioteca 'pdfplumber' não instalada. Execute: pip install pdfplumber")
@@ -2012,39 +2224,35 @@ def _extrair_texto_pdf(arquivo):
         return None
 
 def _identificar_relator(texto):
-    """Identifica o relator pelo cabeçalho do PDF."""
+    """
+    Identifica o relator pelo cabecalho do PDF.
+    """
     texto_upper = texto.upper()
+
     if "ANILCÉIA MACHADO" in texto_upper or "GABINETE DA CONSELHEIRA ANILCÉIA" in texto_upper:
         return "GCAM"
-    elif "VINÍCIUS FRAGOSO" in texto_upper:
+    if "VINÍCIUS FRAGOSO" in texto_upper:
         return "VINICIUS_FRAGOSO"
-    else:
-        return "OUTRO"
+
+    return "OUTRO"
 
 def _extrair_voto(texto):
-    """Extrai somente a parte do voto principal do texto completo do PDF."""
-    import re
-
-    # Padrões prioritários (voto principal — sempre têm "no sentido de que" + "egrégio")
+    """
+    Extrai somente a parte do voto principal do texto completo do PDF.
+    """
     padroes_prioritarios = [
-        r'(?:Diante do exposto|Pelo exposto|Ante o exposto)[,\s]*(?:em harmonia com o órgão instrutivo,?\s*)?VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio\s+(?:Tribunal|Plenário)[:\s]*',
-        r'VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio\s+(?:Tribunal|Plenário)[:\s]*',
-        r'(?:Diante do exposto|Pelo exposto|Ante o exposto)[,\s]*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?',
-        r'VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?',
+        r"(?:Diante do exposto|Pelo exposto|Ante o exposto)[,\s]*(?:em harmonia com o órgão instrutivo,?\s*)?VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio\s+(?:Tribunal|Plenário)[:\s]*",
+        r"VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio\s+(?:Tribunal|Plenário)[:\s]*",
+        r"(?:Diante do exposto|Pelo exposto|Ante o exposto)[,\s]*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?",
+        r"VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?",
     ]
 
-    # Padrões de Voto de Vista que devem ser IGNORADOS
-    padrao_voto_vista = re.compile(
-        r'VOTO\s+em\s+harmonia',
-        re.IGNORECASE
-    )
-
+    padrao_voto_vista = re.compile(r"VOTO\s+em\s+harmonia", re.IGNORECASE)
     inicio_voto = None
 
     for padrao in padroes_prioritarios:
         matches = list(re.finditer(padrao, texto, re.IGNORECASE))
         if matches:
-            # Filtrar: pegar o primeiro match que NÃO seja um Voto de Vista
             for match in matches:
                 trecho_apos = texto[match.start():match.start() + 80]
                 if not padrao_voto_vista.search(trecho_apos):
@@ -2058,12 +2266,12 @@ def _extrair_voto(texto):
 
     voto = texto[inicio_voto:]
 
-    # Remover assinatura no final
     assinatura_padroes = [
-        r'\n\s*Sala das Sessões.*',
-        r'\n\s*(?:Conselheir[oa]|Auditor|Conselheiro-Substituto)\s+',
-        r'\n\s*[A-ZÀ-Ú]{4,}\s*\n\s*[A-ZÀ-Ú]',
+        r"\n\s*Sala das Sessões.*",
+        r"\n\s*(?:Conselheir[oa]|Auditor|Conselheiro-Substituto)\s+",
+        r"\n\s*[A-ZÀ-Ú]{4,}\s*\n\s*[A-ZÀ-Ú]",
     ]
+
     for ass_padrao in assinatura_padroes:
         ass_match = re.search(ass_padrao, voto, re.DOTALL)
         if ass_match:
@@ -2072,166 +2280,135 @@ def _extrair_voto(texto):
     return voto.strip()
 
 def _limpar_cabecalho_rodape(texto):
-    """Remove cabeçalhos, rodapés, data e assinatura de PDFs."""
-    import re
-    linhas = texto.split('\n')
+    """
+    Remove cabecalhos, rodapes, data e assinatura de PDFs.
+    """
+    linhas = texto.split("\n")
     linhas_limpas = []
+
     for linha in linhas:
         linha_strip = linha.strip()
         linha_lower = linha_strip.lower()
 
-        # Rodapé digital
-        if 'documento assinado digitalmente' in linha_lower:
+        if "documento assinado digitalmente" in linha_lower:
             continue
-        if 'para verificar as assinaturas' in linha_lower:
+        if "para verificar as assinaturas" in linha_lower:
             continue
-        if 'acesse www.tc.df.gov.br' in linha_lower:
+        if "acesse www.tc.df.gov.br" in linha_lower:
             continue
-        if 'acesse www.tc.df.gov' in linha_lower:
+        if "acesse www.tc.df.gov" in linha_lower:
             continue
-        if linha_lower.startswith('e-doc'):
+        if linha_lower.startswith("e-doc"):
             continue
-
-        # Cabeçalho/rodapé TCDF
-        if linha_lower.startswith('proc ') and '-' in linha_lower:
+        if linha_lower.startswith("proc ") and "-" in linha_lower:
             continue
-        if linha_lower == 'tribunal de contas do distrito federal':
+        if linha_lower == "tribunal de contas do distrito federal":
             continue
-        if linha_lower.startswith('gabinete da conselheir'):
+        if linha_lower.startswith("gabinete da conselheir"):
             continue
-        if linha_lower.startswith('gabinete do conselheir'):
+        if linha_lower.startswith("gabinete do conselheir"):
             continue
-        if linha_lower.startswith('gabinete do auditor'):
+        if linha_lower.startswith("gabinete do auditor"):
             continue
-
-        # e-DOC isolado
-        if re.match(r'^e-?doc\s*\w+$', linha_strip, re.IGNORECASE):
+        if re.match(r"^e-?doc\s*\w+$", linha_strip, re.IGNORECASE):
+            continue
+        if re.match(r"^bras[íi]lia\s*\(?df\)?[,\s]*\d", linha_lower):
             continue
 
-        # Remover data: "Brasília (DF), 15 de julho de 2026."
-        if re.match(r'^bras[íi]lia\s*\(?df\)?[,\s]*\d', linha_lower):
-            continue
-
-        # Remover assinatura: linha toda em MAIÚSCULAS (nome do relator)
-        # Condições: tudo maiúscula, tem letra, 5-50 chars, até 5 palavras, tem espaço
-        if (linha_strip and
-                linha_strip == linha_strip.upper() and
-                any(c.isalpha() for c in linha_strip) and
-                5 <= len(linha_strip) <= 50 and
-                len(linha_strip.split()) <= 5 and
-                ' ' in linha_strip):
+        if (
+            linha_strip
+            and linha_strip == linha_strip.upper()
+            and any(c.isalpha() for c in linha_strip)
+            and 5 <= len(linha_strip) <= 50
+            and len(linha_strip.split()) <= 5
+            and " " in linha_strip
+        ):
             continue
 
         linhas_limpas.append(linha)
 
-    texto = '\n'.join(linhas_limpas)
-    texto = re.sub(r'\n{3,}', '\n\n', texto)
+    texto = "\n".join(linhas_limpas)
+    texto = re.sub(r"\n{3,}", "\n\n", texto)
     return texto.strip()
 
 def _adicionar_preambulo(texto, relator):
-    """Adiciona o preâmbulo correto baseado no relator e remove o texto original do voto."""
-    import re
+    """
+    Adiciona o preambulo correto baseado no relator e remove o texto original do voto.
+    """
     if relator == "GCAM":
         preambulo = "O Tribunal, por unanimidade, de acordo com o voto da Relatora, decidiu:"
     elif relator == "VINICIUS_FRAGOSO":
-        preambulo = "O Tribunal, por unanimidade, de acordo com o voto do Relator, Conselheiro-Substituto VINÍCIUS FRAGOSO, atuando em substituição ao Conselheiro TAL, nos termos do art. 44, § 3º, do RI/TCDF, decidiu:"
+        preambulo = (
+            "O Tribunal, por unanimidade, de acordo com o voto do Relator, "
+            "Conselheiro-Substituto VINÍCIUS FRAGOSO, atuando em substituição "
+            "ao Conselheiro TAL, nos termos do art. 44, § 3º, do RI/TCDF, decidiu:"
+        )
     else:
         preambulo = "O Tribunal, por unanimidade, de acordo com o voto do Relator, decidiu:"
 
     padroes_remocao = [
-        # NOVO — cobre "Pelo exposto, VOTO por que o Plenário:"
-        r'^\s*(?:Diante do exposto|Pelo exposto|Ante o exposto)[,\s]*(?:em harmonia com o órgão instrutivo,?\s*)?VOTO\s*por\s*que\s*(?:o\s+)?(?:egrégio\s+)?(?:Tribunal|Plenário)[:\s]*',
-        # Padrões existentes
-        r'^\s*(?:Diante do exposto|Pelo exposto|Ante o exposto)[,\s]*(?:em harmonia com o órgão instrutivo,?\s*)?VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio\s+(?:Tribunal|Plenário)[:\s]*',
-        r'^\s*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio\s+(?:Tribunal|Plenário)[:\s]*',
-        # NOVO — cobre "Pelo exposto, VOTO por que o Plenário:" sem "egrégio"
-        r'^\s*(?:Diante do exposto|Pelo exposto|Ante o exposto)[,\s]*VOTO\s*por\s*que\s*(?:o\s+)?(?:Tribunal|Plenário)[:\s]*',
-        r'^\s*(?:Diante do exposto|Pelo exposto|Ante o exposto)[,\s]*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?',
-        r'^\s*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?',
-        # NOVO — cobre "VOTO por que o Plenário:" sem prefixo
-        r'^\s*VOTO\s*por\s*que\s*(?:o\s+)?(?:Tribunal|Plenário)[:\s]*',
+        r"^\s*(?:Diante do exposto|Pelo exposto|Ante o exposto)[,\s]*(?:em harmonia com o órgão instrutivo,?\s*)?VOTO\s*por\s*que\s*(?:o\s+)?(?:egrégio\s+)?(?:Tribunal|Plenário)[:\s]*",
+        r"^\s*(?:Diante do exposto|Pelo exposto|Ante o exposto)[,\s]*(?:em harmonia com o órgão instrutivo,?\s*)?VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio\s+(?:Tribunal|Plenário)[:\s]*",
+        r"^\s*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?(?:o\s+)?egrégio\s+(?:Tribunal|Plenário)[:\s]*",
+        r"^\s*(?:Diante do exposto|Pelo exposto|Ante o exposto)[,\s]*VOTO\s*por\s*que\s*(?:o\s+)?(?:Tribunal|Plenário)[:\s]*",
+        r"^\s*(?:Diante do exposto|Pelo exposto|Ante o exposto)[,\s]*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?",
+        r"^\s*VOTO\s*(?:no sentido de que\s*)?(?:por\s+o\s*)?",
+        r"^\s*VOTO\s*por\s*que\s*(?:o\s+)?(?:Tribunal|Plenário)[:\s]*",
     ]
+
     for padrao in padroes_remocao:
-        texto = re.sub(padrao, '', texto, flags=re.IGNORECASE)
+        texto = re.sub(padrao, "", texto, flags=re.IGNORECASE)
+
     return f"{preambulo} {texto.strip()}"
 
-def _normalizar_texto(texto: str) -> str:
+def _normalizar_texto_nip(texto: str) -> str:
     """
-    Camada de Normalização — padroniza o texto antes do pipeline do Motor NIP.
-    NÃO converte para minúsculo. NÃO remove acentos.
-    Preserva o case e os acentos originais do texto do PDF.
+    Camada de normalizacao do pipeline do Motor NIP.
+    Preserva case e acentos originais.
     """
     if not texto:
         return texto
 
-    # 1. Travessões exóticos → en-dash (–)
-    texto = texto.replace('\u2012', '\u2013')
-    texto = texto.replace('\u2014', '\u2013')
-    texto = texto.replace('\u2015', '\u2013')
+    texto = texto.replace("\u2012", "\u2013")
+    texto = texto.replace("\u2014", "\u2013")
+    texto = texto.replace("\u2015", "\u2013")
 
-    # 1.5. Padronizar numerais romanos com ) e . ANTES de remover \n
-    # Usa (?:^|\n) para só pegar no início de linha
-    # Converte: i) → I – | ii. → II – | III. → III – | iv. → IV –
     texto = re.sub(
-        r'(?:^|\n)\s*([IVXLCDMivxlcdm]{1,5})\s*[).]\s+',
-        lambda m: ('\n' if m.group(0).startswith('\n') else '') + m.group(1).upper() + ' – ',
-        texto
+        r"(?:^|\n)\s*([IVXLCDMivxlcdm]{1,5})\s*[).]\s+",
+        lambda m: ("\n" if m.group(0).startswith("\n") else "") + m.group(1).upper() + " – ",
+        texto,
     )
 
-    # 1.6. Padronizar sub-itens ANTES de remover \n
-    # Converte: a. → a) | b. → b) | c. → c)
-    # Só no início de linha para não pegar "art. 9" ou "n. 106"
     texto = re.sub(
-        r'(?:^|\n)\s*([a-z])\.\s+',
-        lambda m: ('\n' if m.group(0).startswith('\n') else '') + m.group(1) + ') ',
-        texto
+        r"(?:^|\n)\s*([a-z])\.\s+",
+        lambda m: ("\n" if m.group(0).startswith("\n") else "") + m.group(1) + ") ",
+        texto,
     )
 
-    # 2. Garantir espaço antes e depois do travessão após numerais romanos maiúsculos
-    texto = re.sub(r'\b([IVXLCDM]{1,5})\s*[–\-]\s*', r'\1 – ', texto)
-
-    # 3. Tabs → espaço
-    texto = texto.replace('\t', ' ')
-
-    # 4. Quebras de linha → espaço
-    texto = texto.replace('\r\n', ' ')
-    texto = texto.replace('\r', ' ')
-    texto = texto.replace('\n', ' ')
-
-    # 5. Múltiplos espaços → espaço único
-    texto = re.sub(r' {2,}', ' ', texto)
-
-    # 6. Remove espaço antes de pontuação
-    texto = re.sub(r'\s+([,.;:!?])', r'\1', texto)
-
-    # 7. Garante espaço após pontuação (se não tiver espaço e não for número)
-    texto = re.sub(r'([,.;:!?])(?=[^\s\d])', r'\1 ', texto)
+    texto = re.sub(r"\b([IVXLCDM]{1,5})\s*[–\-]\s*", r"\1 – ", texto)
+    texto = texto.replace("\t", " ")
+    texto = texto.replace("\r\n", " ")
+    texto = texto.replace("\r", " ")
+    texto = texto.replace("\n", " ")
+    texto = re.sub(r" {2,}", " ", texto)
+    texto = re.sub(r"\s+([,.;:!?])", r"\1", texto)
+    texto = re.sub(r"([,.;:!?])(?=[^\s\d])", r"\1 ", texto)
 
     return texto.strip()
 
 def _aplicar_substituicoes(texto, regras):
-    """Aplica substituições de frases e termos cadastradas no banco (case-insensitive)."""
-    import re
+    """
+    Aplica substituicoes de frases e termos cadastradas.
+    """
     for regra in regras:
         if regra.get("tipo") in ("frase", "termo") and regra.get("ativo", True):
-            procurar = regra["procurar"]
-            substituir = regra["substituir_por"]
-            texto = re.sub(re.escape(procurar), substituir, texto, flags=re.IGNORECASE)
+            procurar = regra.get("procurar", "")
+            substituir = regra.get("substituir_por", "")
+            if procurar:
+                texto = re.sub(re.escape(procurar), substituir, texto, flags=re.IGNORECASE)
     return texto
 
-# ============================================================================
-# DICIONÁRIO DE VERBOS (FALLBACK) — VERSÃO DEFINITIVA
-# ============================================================================
-# 97 verbos únicos. Zero duplicatas. Zero versões sem acento.
-# Merge: dicionário original do seat.py + macro VBA + testes com PDFs.
-# 
-# Removidos: "de" (preposição), "suspended" (inglês), "requerira/requeria/
-# requer" (não-imperativo), "adopte" (ortografia antiga), "peça" (substantivo),
-# e todas as versões sem acento (cobertas pelo matching acento-insensível).
-# ============================================================================
-
 _VERBOS_PADRAO = {
-    # A — 18
     "abstenha": "abster",
     "acolha": "acolher",
     "adeque": "ajustar",
@@ -2250,11 +2427,7 @@ _VERBOS_PADRAO = {
     "autorize": "autorizar",
     "avalie": "avaliar",
     "acompanhe": "acompanhar",
-
-    # B — 1
     "baixe": "baixar",
-
-    # C — 14
     "chame": "chamar",
     "cientifique": "cientificar",
     "comprove": "comprovar",
@@ -2268,8 +2441,6 @@ _VERBOS_PADRAO = {
     "corrija": "corrigir",
     "compulse": "compulsar",
     "cumpra": "cumprir",
-
-    # D — 11
     "declare": "declarar",
     "defira": "deferir",
     "deixe": "deixar",
@@ -2281,8 +2452,6 @@ _VERBOS_PADRAO = {
     "devolva": "devolver",
     "dispense": "dispensar",
     "dê": "dar",
-
-    # E — 9
     "efetue": "efetuar",
     "encaminhe": "encaminhar",
     "esclareça": "esclarecer",
@@ -2292,19 +2461,13 @@ _VERBOS_PADRAO = {
     "exclua": "excluir",
     "exija": "exigir",
     "extinga": "extinguir",
-
-    # F — 6
     "faculte": "facultar",
     "faça": "fazer",
     "fiscalize": "fiscalizar",
     "firme": "firmar",
     "fixe": "fixar",
     "forneça": "fornecer",
-
-    # H — 1
     "homologue": "homologar",
-
-    # I — 8
     "implante": "implantar",
     "implemente": "implementar",
     "impeça": "impedir",
@@ -2313,31 +2476,19 @@ _VERBOS_PADRAO = {
     "informe": "informar",
     "instaure": "instaurar",
     "intime": "intimar",
-
-    # J — 1
     "julgue": "julgar",
-
-    # L — 1
     "levante": "levantar",
-
-    # M — 3
-    "mantenha": "manter",      
+    "mantenha": "manter",
     "monitore": "monitorar",
     "normalize": "normalizar",
-
-    # N — 3
     "negue": "negar",
     "nomeie": "nomear",
     "notifique": "notificar",
-
-    # O — 5
     "obrigue": "obrigar",
     "observe": "observar",
     "oficie": "oficiar",
     "ordene": "ordenar",
     "oriente": "orientar",
-
-    # P — 8
     "padronize": "padronizar",
     "postergue": "postergar",
     "preste": "prestar",
@@ -2345,8 +2496,6 @@ _VERBOS_PADRAO = {
     "promova": "promover",
     "prorrogue": "prorrogar",
     "providencie": "providenciar",
-
-    # R — 16
     "ratifique": "ratificar",
     "reabra": "reabrir",
     "realize": "realizar",
@@ -2370,206 +2519,140 @@ _VERBOS_PADRAO = {
     "retorne": "retornar",
     "revise": "revisar",
     "revogue": "revogar",
-
-    # S — 5
     "sobresteja": "sobrestar",
     "solicite": "solicitar",
     "substitua": "substituir",
     "supervisione": "supervisionar",
     "suspenda": "suspender",
-
-    # T — 3
     "tenha por": "ter por",
     "tome": "tomar",
     "torne": "tornar",
-
-    # V — 1
     "verifique": "verificar",
 }
 
-def _remover_acentos(texto: str) -> str:
-    """
-    Remove acentos e cedilhas de um texto.
-    Usado para comparação insensível a acentos.
-    """
-    nfkd = unicodedata.normalize('NFKD', texto)
-    return ''.join([c for c in nfkd if not unicodedata.combining(c)])
-
 def _build_pattern_acento_insensitive(palavra: str) -> str:
     """
-    Constrói um pattern de regex que ignora acentos e cedilhas.
-    
-    Exemplo: "conheça" gera um pattern que encontra "conheça" E "conheca"
-    
-    Como funciona: para cada letra da palavra, se ela tem variação com acento,
-    o pattern inclui todas as variações possíveis.
-    
-    "conheça" → "conhe[cç]a" (encontra ambos)
+    Constrói pattern regex que ignora acentos.
     """
-    # Mapeamento de letras base → variações com acento
     subs = {
-        'a': '[aáàâãä]',
-        'e': '[eéèêë]',
-        'i': '[iíìîï]',
-        'o': '[oóòôõö]',
-        'u': '[uúùûü]',
-        'c': '[cç]',
-        'n': '[nñ]',
+        "a": "[aáàâãä]",
+        "e": "[eéèêë]",
+        "i": "[iíìîï]",
+        "o": "[oóòôõö]",
+        "u": "[uúùûü]",
+        "c": "[cç]",
+        "n": "[nñ]",
     }
-    result = ''
+
+    result = ""
     for char in palavra.lower():
         if char in subs:
             result += subs[char]
-        elif char == ' ':
-            # Espaço vira \s+ para flexibilizar espaçamento do PDF
-            result += r'\s+'
+        elif char == " ":
+            result += r"\s+"
         else:
-            # Letras sem variação de acento são escapadas literalmente
             result += re.escape(char)
+
     return result
 
-def _carregar_verbos_banco(db_manager) -> dict:
+def _carregar_verbos_banco(db_manager_inst) -> dict:
     """
-    Carrega verbos da tabela regras_palavras_chave no Supabase.
-    
-    Busca registros onde:
-    - tipo = 'verbo'
-    - ativo = True
-    
-    Retorna um dicionário {imperativo: infinitivo}.
-    Se o banco estiver vazio ou der erro, retorna {} (dicionário vazio).
-    A função _transformar_verbos usa _VERBOS_PADRAO como fallback.
+    Carrega verbos da tabela regras_palavras_chave.
     """
     try:
-        regras = db_manager.buscar_todos(
-            'regras_palavras_chave',
-            filtros={'tipo': 'verbo', 'ativo': True}
-        )
+        regras = db_manager_inst.buscar_todos(
+            "regras_palavras_chave",
+            filtros={"tipo": "verbo", "ativo": True},
+        ) or []
+
         verbos = {}
         for regra in regras:
-            imperativo = (regra.get('palavra_original') or '').strip().lower()
-            infinitivo = (regra.get('palavra_substituida') or '').strip()
+            imperativo = (regra.get("palavra_original") or "").strip().lower()
+            infinitivo = (
+                regra.get("palavra_substituida")
+                or regra.get("palavra_substituta")
+                or ""
+            ).strip()
+
             if imperativo and infinitivo:
                 verbos[imperativo] = infinitivo
+
         return verbos
     except Exception:
-        # Se der qualquer erro (sem conexão, tabela vazia, etc.),
-        # retorna vazio — o fallback _VERBOS_PADRAO cuida disso
         return {}
 
-def _transformar_verbos(texto: str, db_manager=None) -> str:
+def _transformar_verbos(texto: str, db_manager_inst=None) -> str:
     """
     Transforma verbos do imperativo afirmativo para infinitivo.
-    
-    Usa o marcador ^= (igual à macro VBA do TCDF) para garantir que
-    SÓ verbos após numerais romanos sejam convertidos.
-    
-    Regras:
-    1. Marca numerais romanos: "I – " → "I ^= "
-    2. Para cada verbo do dicionário, busca após ^= e substitui
-    3. NÃO substitui se precedido por "não" (não conheça permanece)
-    4. Remove marcador: "^=" → "–"
-    
-    Parâmetros:
-    - texto: o voto já normalizado (após _normalizar_texto)
-    - db_manager: instância do gerenciador de banco (opcional)
-                  Se None, usa apenas _VERBOS_PADRAO (fallback)
     """
-    # 1. Carregar dicionário: fallback + banco (banco tem prioridade)
     verbos = _VERBOS_PADRAO.copy()
-    if db_manager:
-        verbos_banco = _carregar_verbos_banco(db_manager)
+
+    if db_manager_inst:
+        verbos_banco = _carregar_verbos_banco(db_manager_inst)
         if verbos_banco:
-            # Banco sobrescreve fallback (verbos do banco têm prioridade)
             verbos.update(verbos_banco)
 
-    # 2. Marcar numerais romanos com ^=
-    # "I – determine" → "I ^= determine"
-    # \b garante borda de palavra (não pega "BR-02")
-    # [IVXLCDM]{1,5} pega de I até MMMMM
-    # \s*–\s* pega o travessão (en-dash) com ou sem espaços
-    texto = re.sub(r'\b([IVXLCDM]{1,5})\s*–\s*', r'\1 ^= ', texto)
+    texto = re.sub(r"\b([IVXLCDM]{1,5})\s*–\s*", r"\1 ^= ", texto)
 
-    # 3. Para cada verbo, substituir após ^=
     for imperativo, infinitivo in verbos.items():
-        # Construir pattern que ignora acentos
         pattern_verbo = _build_pattern_acento_insensitive(imperativo)
+        pattern = re.compile(r"(\^=\s+)(n[aã]o\s+)?(" + pattern_verbo + r")\b", re.IGNORECASE)
 
-        # Pattern completo: ^= + (não)? + verbo + \b
-        # Grupo 1: "^= " (o marcador)
-        # Grupo 2: "não " (opcional — se presente, NÃO substitui)
-        # Grupo 3: o verbo encontrado
-        pattern = re.compile(
-            r'(\^=\s+)(n[aã]o\s+)?(' + pattern_verbo + r')\b',
-            re.IGNORECASE
-        )
-
-        def _substituir(match, infinitivo=infinitivo):
+        def _substituir(match, infinitivo_local=infinitivo):
             negacao = match.group(2)
             if negacao:
-                # Tem "não" antes do verbo → não substitui, mantém original
                 return match.group(0)
-            # Sem negação → substitui o verbo pelo infinitivo
-            # Mantém o marcador ^= e o espaço
-            return match.group(1) + infinitivo
+            return match.group(1) + infinitivo_local
 
         texto = pattern.sub(_substituir, texto)
 
-    # 4. Remover marcador ^= → – (volta ao formato final)
-    texto = texto.replace('^=', '–')
-
+    texto = texto.replace("^=", "–")
     return texto
 
 def _ofuscar_cpf(texto):
-    """Ofusca CPFs no texto (3 primeiros e 2 últimos dígitos)."""
-    import re
-
+    """
+    Ofusca CPFs no texto.
+    """
     def ofuscar(match):
         cpf = match.group(0)
         return f"***.{cpf[4:11]}-**"
 
-    return re.sub(r'\d{3}\.\d{3}\.\d{3}-\d{2}', ofuscar, texto)
+    return re.sub(r"\d{3}\.\d{3}\.\d{3}-\d{2}", ofuscar, texto)
 
 def _formatar_numerais(texto):
-    """Padroniza formatação de numerais romanos e abreviações."""
-    import re
-    # Só I, V, X (igual à macro) — NÃO usa [IVXLCDM] que pega C, D, M, L
-    # Converte: I. → I – | I) → I – | I- → I –
-    texto = re.sub(r'\b([IVX]+)[\.)]\s*', r'\1 – ', texto)
-    texto = re.sub(r'\b([IVX]+)\s*-\s*', r'\1 – ', texto)
-    # Standardize n.º, n° → nº
+    """
+    Padroniza formatação de numerais romanos e abreviações.
+    """
+    texto = re.sub(r"\b([IVX]+)[\.)]\s*", r"\1 – ", texto)
+    texto = re.sub(r"\b([IVX]+)\s*-\s*", r"\1 – ", texto)
+
     texto = texto.replace("n.º", "nº")
     texto = texto.replace("n°", "nº")
-    texto = re.sub(r'nº(\d)', r'nº \1', texto)
-    # LTDA – ME → LTDA. – ME
-    texto = re.sub(r'LTDA(?!\.)\s*[-–]\s*ME', 'LTDA. – ME', texto)
+    texto = re.sub(r"nº(\d)", r"nº \1", texto)
+    texto = re.sub(r"LTDA(?!\.)\s*[-–]\s*ME", "LTDA. – ME", texto)
+
     return texto
 
 def _remover_e_antes_itens(texto):
-    """Remove 'e' antes de itens (I, II, a), b))."""
-    import re
-
-    # ; e V. → ; V.
-    texto = re.sub(r';\s+e\s+([IVXLCDM]+)', r'; \1', texto)
-    # ; e c. → ; c)
-    texto = re.sub(r';\s+e\s+([a-z])\)', r'; \1)', texto)
-
+    """
+    Remove 'e' antes de itens.
+    """
+    texto = re.sub(r";\s+e\s+([IVXLCDM]+)", r"; \1", texto)
+    texto = re.sub(r";\s+e\s+([a-z])\)", r"; \1)", texto)
     return texto
 
 def _corrigir_hifenizacao(texto):
-    """Remove hifens que quebram palavras no final de linhas (comum em extração de PDF)."""
-    import re
-    # Caso 1: Palavra quebrada por hífen entre LETRAS
-    # "inscri-\nção" → "inscrição" (remove hífen E quebra de linha)
-    # Só entre letras (não entre dígitos)
-    texto = re.sub(r'([a-zA-ZÀ-ÿ])-\s*\n\s*([a-zA-ZÀ-ÿ])', r'\1\2', texto)
-    # Caso 2: Número quebrado por hífen entre DÍGITOS
-    # "2026-\n86" → "2026-86" (mantém hífen, remove apenas quebra de linha)
-    texto = re.sub(r'(\d)-\s*\n\s*(\d)', r'\1-\2', texto)
+    """
+    Remove hifens que quebram palavras no final de linhas.
+    """
+    texto = re.sub(r"([a-zA-ZÀ-ÿ])-\s*\n\s*([a-zA-ZÀ-ÿ])", r"\1\2", texto)
+    texto = re.sub(r"(\d)-\s*\n\s*(\d)", r"\1-\2", texto)
     return texto
-  
+
 def _obter_regras_padrao():
-    """Retorna regras padrão caso não existam no banco."""
+    """
+    Retorna regras padrão caso não existam no banco.
+    """
     return [
         {"procurar": "Ministério Público junto ao Tribunal de Contas do Distrito Federal", "substituir_por": "Ministério Público junto ao Tribunal", "tipo": "frase", "ativo": True},
         {"procurar": "os acórdãos que submeto à apreciação plenária", "substituir_por": "os acórdãos apresentados pelo Relator", "tipo": "frase", "ativo": True},
@@ -2606,555 +2689,178 @@ def _obter_regras_padrao():
         {"procurar": "notifique", "substituir_por": "notificar", "tipo": "verbo", "ativo": True},
         {"procurar": "julgue", "substituir_por": "julgar", "tipo": "verbo", "ativo": True},
         {"procurar": "responda", "substituir_por": "responder", "tipo": "verbo", "ativo": True},
-        {"procurar": "presente Relatório/Voto", "substituir_por": "Relatório/Voto", "tipo": "frase", "ativo": True},
         {"procurar": "ciência da decisão que vier a ser proferida", "substituir_por": "ciência desta decisão", "tipo": "frase", "ativo": True},
         {"procurar": "ciência da decisão que vier a ser prolatada", "substituir_por": "ciência desta decisão", "tipo": "frase", "ativo": True},
     ]
 
 def _formatar_teleprompt(texto):
-    """Formata o texto como teleprompt (texto corrido sem quebras)."""
-    import re
-
-    texto = re.sub(r'\n+', ' ', texto)
-    texto = re.sub(r'\t+', ' ', texto)
-    texto = re.sub(r'\r+', ' ', texto)
-    texto = re.sub(r' +', ' ', texto)
-
+    """
+    Formata o texto como teleprompt.
+    """
+    texto = re.sub(r"\n+", " ", texto)
+    texto = re.sub(r"\t+", " ", texto)
+    texto = re.sub(r"\r+", " ", texto)
+    texto = re.sub(r" +", " ", texto)
     return texto.strip()
 
-# ============================================================================
-# LISTAS DE PALAVRAS PARA NEGRITO
-# ============================================================================
-# Stems: raízes de palavras que capturam derivadas.
-# Usam \b apenas no início (sem \b no final) para pegar todas as formas.
-# ============================================================================
-
 _STEMS_NEGRITO = [
-    "revoga",      # revogar, revogação, revogada, revogado
-    "anula",       # anular, anulação, anulado
-    "licita",      # licitar, licitação, licitatório, licitante
-    "prorrog",     # prorrogar, prorrogação, prorrogado
+    "revoga",
+    "anula",
+    "licita",
+    "prorrog",
 ]
 
-# Palavras completas: usam \b nos dois lados (não casam dentro de outras palavras)
 _PALAVRAS_NEGRITO = [
-    # Urgência
     "urgente", "urgência", "prioritário", "prioridade", "brevidade",
     "imediato", "imediatamente", "importância",
-    # Suspensão / Revogação
     "suspender", "suspensão", "abster", "abstenção", "negar",
-    # Continuidade
     "continuidade", "continuação", "prosseguimento", "reabertura", "abertura",
-    # Licitação
     "certame", "homologar", "adjudicar",
-    # Autoridade
     "governador", "chefe do poder",
-    # Despacho Singular / Sustentação
     "despacho singular", "sustentação oral",
-    # SERCON
     "audiência", "acórdão", "acórdãos", "notificação", "notificar",
     "cientificação", "cientificar", "convocação",
-    # Outros
     "Covid", "Corona", "aprovar", "minuta", "pagamento",
-    # Verbos de decisão (após _transformar_verbos, já estão em infinitivo)
     "tomar conhecimento", "considerar", "determinar", "chamar",
     "recomendar", "autorizar",
-    # Prazos
     "prazo de",
 ]
 
-# ============================================================================
-# FASE 1.3 — _aplicar_negrito UNIFICADA
-# ============================================================================
-# Substitui as duas versões duplicadas que existiam no seat.py.
-# Correções:
-# 1. \b (word boundary) em TODAS as palavras — resolve "determinarções"
-# 2. Recupera negrito de numerais romanos, letras de itens e prazos (da V1)
-# 3. Lista deduplicada e mesclada (de V1 + V2 + macro VBA)
-# 4. Stems separados (\b só no início) para capturar derivadas
-# 5. Acento-insensível (usa _build_pattern_acento_insensitive)
-# 6. Palavras ordenadas por tamanho (maiores primeiro) — evita match parcial
-# 7. Cleanup de **** no final
-# 8. Integração opcional com tabela palavras_urgencia_nip
-# ============================================================================
-
-def _aplicar_negrito(texto: str, db_manager=None) -> str:
+def _aplicar_negrito(texto: str, db_manager_inst=None) -> str:
     """
-    Aplica negrito em numerais romanos, letras de itens, prazos e palavras-chave.
-    
-    Marca as palavras com ** (markdown bold) que depois é convertido para
-    negrito real no DOCX pela função _gerar_docx.
-    
-    Parâmetros:
-    - texto: o voto já processado (após _transformar_verbos, _formatar_teleprompt, etc.)
-    - db_manager: instância do gerenciador de banco (opcional)
-                  Se fornecido, carrega palavras adicionais de palavras_urgencia_nip
+    Aplica negrito em numerais, itens, prazos e palavras-chave.
     """
     if not texto:
         return texto
 
-    # Negrito em numerais romanos seguidos de travessão
-    # SÓ I, V, X (igual à macro) — não pega D de "Denúncia" ou C de "Cidadão"
-    # (?<![a-zA-ZÀ-ÿ]) impede pegar letra dentro de palavra (ex: não pega "D" de "Denúncia")
-    texto = re.sub(r'(?<![a-zA-ZÀ-ÿ])([IVX]+)\s*[–\-]', r'**\1** –', texto)
+    texto = re.sub(r"(?<![a-zA-ZÀ-ÿ])([IVX]+)\s*[–\-]", r"**\1** –", texto)
+    texto = re.sub(r"(?<!\d)\b([a-z])\)", r"**\1)**", texto, flags=re.IGNORECASE)
 
-    # 2. Negrito em letras de itens: a), b), c)
-    # (?<!\d) impede bold em letras precedidas por dígitos (ex: "9o)" não vira "9**o)**")
-    texto = re.sub(r'(?<!\d)\b([a-z])\)', r'**\1)**', texto, flags=re.IGNORECASE)
-
-    # 3. Negrito em prazos de 0 a 20 dias
-    # Pega: "5 dias" | "30 dias" | "15 (quinze) dias" | "1 dia"
-    # O loop é necessário porque o número é variável
     for i in range(21):
         texto = re.sub(
-            rf'\b{i}\s*(?:\([^)]+\)\s*)?dias?\b',
-            lambda m: f'**{m.group(0)}**',
+            rf"\b{i}\s*(?:\([^)]+\)\s*)?dias?\b",
+            lambda m: f"**{m.group(0)}**",
             texto,
-            flags=re.IGNORECASE
+            flags=re.IGNORECASE,
         )
 
-    # 4. Negrito em stems (raízes que capturam derivadas)
-    # \b no início, SEM \b no final — para pegar "revogar", "revogação", etc.
     for stem in _STEMS_NEGRITO:
         pattern_stem = _build_pattern_acento_insensitive(stem)
-        pattern = re.compile(r'\b' + pattern_stem, re.IGNORECASE)
-        texto = pattern.sub(lambda m: f'**{m.group(0)}**', texto)
+        pattern = re.compile(r"\b" + pattern_stem, re.IGNORECASE)
+        texto = pattern.sub(lambda m: f"**{m.group(0)}**", texto)
 
-    # 5. Negrito em palavras completas
-    # \b nos dois lados — NÃO casa dentro de outras palavras
-    # Ordenadas por tamanho decrescente: "despacho singular" antes de "despacho"
-    # (se "despacho" estivesse na lista, o que não está — mas é boa prática)
     palavras_ordenadas = sorted(_PALAVRAS_NEGRITO, key=len, reverse=True)
+
     for palavra in palavras_ordenadas:
         pattern_palavra = _build_pattern_acento_insensitive(palavra)
-        pattern = re.compile(r'\b' + pattern_palavra + r'\b', re.IGNORECASE)
-        texto = pattern.sub(lambda m: f'**{m.group(0)}**', texto)
+        pattern = re.compile(r"\b" + pattern_palavra + r"\b", re.IGNORECASE)
+        texto = pattern.sub(lambda m: f"**{m.group(0)}**", texto)
 
-    # 6. Carregar palavras adicionais do banco (se disponível)
-    # Lê da tabela palavras_urgencia_nip
-    # Estas palavras são gerenciadas pelo GAB
-    if db_manager:
+    if db_manager_inst:
         try:
-            palavras_banco = db_manager.buscar_todos(
-                'palavras_urgencia_nip',
-                filtros={'ativo': True}
-            )
+            palavras_banco = db_manager_inst.buscar_todos(
+                "palavras_urgencia_nip",
+                filtros={"ativo": True},
+            ) or []
+
             for reg in palavras_banco:
-                palavra = (reg.get('palavra') or '').strip()
-                # Só processa palavras com mais de 2 caracteres
-                # (evita falsos positivos com "de", "a", etc.)
+                palavra = (reg.get("palavra") or "").strip()
                 if palavra and len(palavra) > 2:
                     pattern_palavra = _build_pattern_acento_insensitive(palavra)
-                    pattern = re.compile(r'\b' + pattern_palavra + r'\b', re.IGNORECASE)
-                    texto = pattern.sub(lambda m: f'**{m.group(0)}**', texto)
+                    pattern = re.compile(r"\b" + pattern_palavra + r"\b", re.IGNORECASE)
+                    texto = pattern.sub(lambda m: f"**{m.group(0)}**", texto)
         except Exception:
-            # Banco indisponível — usa apenas a lista hardcoded
             pass
 
-    # 7. Cleanup: remover ** duplicados
-    # Se uma palavra foi bolded duas vezes (ex: está no hardcoded E no banco):
-    # ****palavra**** → **palavra**
-    texto = re.sub(r'\*{4}(.+?)\*{4}', r'**\1**', texto)
-
+    texto = re.sub(r"\*{4}(.+?)\*{4}", r"**\1**", texto)
     return texto
 
-def _processar_voto(voto_texto, relator, regras, db_manager=None):
+def _processar_voto(voto_texto, relator, regras, db_manager_inst=None):
     """
     Pipeline completo de processamento do voto.
-    
-    Ordem CORRETA do pipeline:
-    0. Limpar cabeçalhos e rodapés
-    0.5. Corrigir hifenização de palavras quebradas
-    1. NORMALIZAR TEXTO (NOVO — deve rodar antes de tudo)
-    2. Substituições de frases e termos
-    3. Transformação de verbos (com marcador ^=)
-    4. Ofuscar CPF
-    5. Formatar numerais
-    6. Remover "e" antes de itens
-    7. Adicionar preâmbulo
-    8. Formatar como teleprompt
-    9. Aplicar negrito
-    
-    Parâmetros:
-    - voto_texto: o voto extraído do PDF (após _extrair_voto)
-    - relator: tipo do relator (GCAM, VINICIUS_FRAGOSO, OUTRO)
-    - regras: lista de regras de substituição (de regras_substituicao_nip)
-    - db_manager: instância do gerenciador de banco (opcional)
-                  Necessário para integração com tabelas:
-                  - regras_palavras_chave (verbos)
-                  - palavras_urgencia_nip (palavras de negrito)
     """
-    # 0. Limpar cabeçalhos e rodapés de páginas intermediárias
     texto = _limpar_cabecalho_rodape(voto_texto)
-
-    # 0.5. Corrigir hifenização de palavras quebradas
     texto = _corrigir_hifenizacao(texto)
-
-    # 1. NORMALIZAR TEXTO (NOVO — primeira função do pipeline de edição)
-    # Padroniza travessões, espaços, tabs, quebras de linha e pontuação
-    # DEVE rodar antes de _transformar_verbos para que o marcador ^= funcione
-    texto = _normalizar_texto(texto)
-
-    # 2. Substituições de frases e termos
+    texto = _normalizar_texto_nip(texto)
     texto = _aplicar_substituicoes(texto, regras)
-
-    # 3. Transformação de verbos (imperativo → infinitivo com marcador ^=)
-    # Passa db_manager (NÃO regras) para que a integração com o banco funcione
-    texto = _transformar_verbos(texto, db_manager)
-
-    # 4. Ofuscar CPF
+    texto = _transformar_verbos(texto, db_manager_inst)
     texto = _ofuscar_cpf(texto)
-
-    # 5. Formatar numerais
     texto = _formatar_numerais(texto)
-
-    # 6. Remover "e" antes de itens
     texto = _remover_e_antes_itens(texto)
-
-    # 7. Adicionar preâmbulo
     texto = _adicionar_preambulo(texto, relator)
-
-    # 8. Formatar como teleprompt
     texto = _formatar_teleprompt(texto)
-
-    # 9. Aplicar negrito (com integração ao banco)
-    texto = _aplicar_negrito(texto, db_manager)
-
+    texto = _aplicar_negrito(texto, db_manager_inst)
     return texto
 
 def _gerar_docx(texto_markdown: str) -> bytes:
     """
-    Gera um arquivo .docx a partir do texto com marcações markdown de negrito.
-    
-    Cria um ÚNICO parágrafo com texto contínuo (formato teleprompt).
-    Marcadores **texto** são convertidos para runs em negrito.
-    
-    Correções em relação à versão anterior:
-    1. Regex com re.DOTALL (match newlines)
-    2. Cleanup de **** (duplo negrito residual)
-    3. Garantia de texto contínuo (remove \n residuais)
-    4. Alinhamento justificado
-    5. Erros não silenciados (print para debug)
-    6. Pula partes vazias do re.split
-    
-    Parâmetros:
-    - texto_markdown: texto já processado pelo pipeline (após _aplicar_negrito)
-    
-    Retorna:
-    - bytes do arquivo .docx
-    - None se python-docx não estiver instalado
-    - None se texto_markdown for vazio/None
+    Gera um arquivo .docx a partir do texto com marcações de negrito.
     """
-    # 1. Tentar importar dependências
     try:
         from docx import Document
         from docx.enum.text import WD_ALIGN_PARAGRAPH
         from io import BytesIO
-        import re
     except ImportError:
-        # python-docx não instalado — não tem o que fazer
         return None
 
-    # 2. Validação de entrada
     if not texto_markdown:
         return None
 
     try:
-        # 3. Cleanup de **** (duplo negrito residual do _aplicar_negrito)
-        # Se uma palavra foi marcada como bold duas vezes:
-        # ****acórdão**** → **acórdão**
-        texto_markdown = re.sub(r'\*{4}(.+?)\*{4}', r'**\1**', texto_markdown)
+        texto_markdown = re.sub(r"\*{4}(.+?)\*{4}", r"**\1**", texto_markdown)
+        texto_markdown = texto_markdown.replace("\r\n", " ")
+        texto_markdown = texto_markdown.replace("\r", " ")
+        texto_markdown = texto_markdown.replace("\n", " ")
+        texto_markdown = re.sub(r" {2,}", " ", texto_markdown).strip()
 
-        # 4. Garantir texto contínuo (belt-and-suspenders)
-        # A _normalizar_texto já converte \n para espaço, mas se algo escapou:
-        texto_markdown = texto_markdown.replace('\r\n', ' ')
-        texto_markdown = texto_markdown.replace('\r', ' ')
-        texto_markdown = texto_markdown.replace('\n', ' ')
-        # Reduzir múltiplos espaços (pode acontecer ao remover \n)
-        texto_markdown = re.sub(r' {2,}', ' ', texto_markdown)
-        # Strip no final
-        texto_markdown = texto_markdown.strip()
-
-        # 5. Criar documento
         doc = Document()
-
-        # 6. Criar UM ÚNICO parágrafo (formato teleprompt)
         paragrafo = doc.add_paragraph()
-
-        # 7. Alinhamento justificado (padrão para texto jurídico)
         paragrafo.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        paragrafo.paragraph_format.space_before = None
+        paragrafo.paragraph_format.space_after = None
+        paragrafo.paragraph_format.line_spacing = 1.5
 
-        # 8. Espaçamento do parágrafo
-        # Sem espaço antes/depois (texto contínuo)
-        # Line spacing 1.5 para leitura confortável no teleprompt
-        paragrafo_format = paragrafo.paragraph_format
-        paragrafo_format.space_before = None
-        paragrafo_format.space_after = None
-        paragrafo_format.line_spacing = 1.5
+        partes = re.split(r"(\*\*.*?\*\*)", texto_markdown, flags=re.DOTALL)
 
-        # 9. Dividir texto por marcadores ** (negrito)
-        # re.DOTALL garante que .*? matche newlines também (caso ainda existam)
-        # Parênteses no regex = grupo de captura = partes aparecem na lista do split
-        partes = re.split(r'(\*\*.*?\*\*)', texto_markdown, flags=re.DOTALL)
-
-        # 10. Adicionar cada parte como run (bold ou normal)
         for parte in partes:
-            # Pular partes vazias (re.split gera strings vazias nas bordas)
             if not parte:
                 continue
 
-            # Verificar se é uma marcação de negrito: **texto**
-            # len(parte) > 4 garante que não é só "**" sem conteúdo
-            if parte.startswith('**') and parte.endswith('**') and len(parte) > 4:
-                # parte[2:-2] remove os ** do início e do fim
+            if parte.startswith("**") and parte.endswith("**") and len(parte) > 4:
                 texto_bold = parte[2:-2]
                 run = paragrafo.add_run(texto_bold)
                 run.bold = True
             else:
-                # Texto normal (sem negrito)
-                # Se a parte começa com ** mas não termina (caso patológico),
-                # ela cai aqui como texto normal — não ideal mas seguro
-                run = paragrafo.add_run(parte)
+                paragrafo.add_run(parte)
 
-        # 11. Salvar em buffer de memória e retornar bytes
         buffer = BytesIO()
         doc.save(buffer)
         return buffer.getvalue()
 
     except Exception as e:
-        # Não silenciar completamente — print para debug
-        # A versão antiga fazia "except Exception: return None"
-        # o que escondia todo erro sem feedback
         print(f"[ERRO _gerar_docx] {e}")
         return None
 
-def _renderizar_motor_nip(modo_edicao, usuario):
-    """Funcao principal do Motor NIP - Edicao Automatica de Votos."""
-    st.markdown("### Motor NIP - Edição Automática de Votos")
-    st.caption(
-        "Faça upload do PDF do relatório/voto. O sistema extrai o voto, "
-        "aplica as regras de edição e entrega o texto pronto no formato teleprompt."
-    )
-
-    st.markdown("---")
-
-    uploaded_file = st.file_uploader(
-        "📄 Upload do PDF do Relatório/Voto",
-        type=['pdf'],
-        key="motor_nip_upload"
-    )
-
-    if uploaded_file is not None:
-        with st.spinner("Processando PDF..."):
-            texto_completo = _extrair_texto_pdf(uploaded_file)
-            if not texto_completo:
-                st.error("Não foi possível extrair texto do PDF.")
-                return
-
-            numero_processo = _extrair_numero_processo(texto_completo)
-            relator_sigla = _identificar_relator_sigla(texto_completo)
-            relator_tipo = _identificar_relator(texto_completo)
-
-            relator_nome = {
-                "GCAM": "GCAM (Anilcéia Machado — Relatora)",
-                "VINICIUS_FRAGOSO": "GAVF (Vinícius Fragoso — Substituto)",
-                "OUTRO": relator_sigla,
-            }
-            st.info(f"**Relator identificado:** {relator_nome.get(relator_tipo, relator_sigla)}")
-
-            if numero_processo:
-                st.info(f"**Processo identificado:** {numero_processo}")
-            else:
-                st.warning("Número do processo não encontrado automaticamente.")
-
-            voto_extraido = _extrair_voto(texto_completo)
-            if not voto_extraido:
-                st.error("Não foi possível identificar o voto no PDF.")
-                return
-
-            try:
-                regras = db_manager.buscar_todos(
-                    "regras_substituicao_nip",
-                    filtros={"ativo": True},
-                    ordem_coluna="ordem",
-                    ordem_desc=False,
-                )
-            except Exception:
-                regras = []
-            if not regras:
-                regras = _obter_regras_padrao()
-
-            texto_editado = _processar_voto(voto_extraido, relator_tipo, regras, db_manager)
-                        # 7. Verificar urgencia e SERCON
-            palavras_urg = _obter_palavras_urgencia()
-            palavras_sercon = _obter_palavras_sercon()
-
-            is_sercon, situacao_sercon = _verificar_sercon(voto_extraido, palavras_sercon)
-
-            # Verificar se está na tab de Despachos Singulares
-            is_ds, ds_motivo = _verificar_despacho_singular_tab(numero_processo or "")
-
-            if is_sercon:
-                is_urgent = False
-                motivo_urg = ""
-                st.warning(f"⚠️ Processo identificado para **SERCON** — Situação: {situacao_sercon}")
-            elif is_ds:
-                is_urgent = True
-                motivo_urg = ds_motivo
-                st.warning(f"⚠️ Processo identificado como **URGENTE** — Motivo: {ds_motivo}")
-            else:
-                is_urgent, motivo_urg = _verificar_urgencia(voto_extraido, palavras_urg)
-                if is_urgent:
-                    st.warning(f"⚠️ Processo identificado como **URGENTE** — Motivo: {motivo_urg}")
-
-        st.markdown("---")
-        st.markdown("#### ✅ Voto Editado")
-        st.markdown(f"> {texto_editado}")
-
-        st.markdown("---")
-
-        texto_plain = texto_editado.replace("**", "")
-        st.text_area(
-            "📋 Texto para copiar (Ctrl+A, Ctrl+C):",
-            value=texto_plain,
-            height=300,
-            key="motor_nip_resultado"
-        )
-
-        docx_data = _gerar_docx(texto_editado)
-        if docx_data:
-            st.download_button(
-                label="📥 Baixar como Word (.docx) — com negrito",
-                data=docx_data,
-                file_name="voto_editado.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            )
-
-        st.markdown("---")
-        st.markdown("#### 📋 Confirmação de Edição")
-
-        col1, col2 = st.columns(2)
-        with col1:
-            proc_input = st.text_input(
-                "Número do Processo",
-                value=numero_processo or "",
-                key="motor_nip_proc"
-            )
-        with col2:
-            relator_input = st.text_input(
-                "Relator (sigla)",
-                value=relator_sigla,
-                key="motor_nip_relator"
-            )
-
-        marcar_urgente = False
-        if is_urgent and not is_sercon:
-            marcar_urgente = st.checkbox(
-                f"Marcar como urgente (motivo: {motivo_urg})",
-                value=True,
-                key="motor_nip_urgente"
-            )
-
-        if st.button("✅ Marcar como Editado", key="motor_nip_editado", type="primary"):
-            if not proc_input:
-                st.error("Informe o número do processo.")
-                return
-
-            proc_normalizado = _normalizar_numero_processo(proc_input)
-
-            try:
-                todos_pauta = db_manager.buscar_todos("pauta_seat") or []
-                processo_pauta = None
-
-                for p in todos_pauta:
-                    p_num = _normalizar_numero_processo(p.get("processo_numero", ""))
-                    if p_num == proc_normalizado:
-                        processo_pauta = p
-                        break
-
-                if processo_pauta:
-                    db_manager.atualizar("pauta_seat", processo_pauta["id"], {"editado": True})
-                    st.success("✅ Processo marcado como editado na Pauta Ativa!")
-
-                    if marcar_urgente:
-                        db_manager.inserir("processos_urgentes", {
-                            "processo_numero": proc_normalizado,
-                            "relator": relator_input,
-                            "motivo": motivo_urg,
-                            "tipo_sessao": processo_pauta.get("tipo_sessao", ""),
-                            "sessao_numero": str(processo_pauta.get("numero_sessao", "")),
-                            "dia_sessao": str(processo_pauta.get("dia_sessao", ""))[:10],
-                        })
-                        st.success("✅ Processo adicionado à lista de Urgentes!")
-
-                    if is_sercon:
-                        db_manager.inserir("processos_sercon", {
-                            "processo_numero": proc_normalizado,
-                            "relator": relator_input,
-                            "situacao": situacao_sercon,
-                        })
-                        st.success("✅ Processo enviado para o SERCON!")
-                else:
-                    nums_pauta = [_normalizar_numero_processo(p.get("processo_numero", "")) for p in todos_pauta]
-                    st.warning(
-                        f"Processo não encontrado na Pauta Ativa.\n\n"
-                        f"**Número buscado:** `{proc_normalizado}`\n\n"
-                        f"**Processos na pauta:** {', '.join(nums_pauta) if nums_pauta else 'NENHUM'}"
-                    )
-            except Exception as e:
-                st.error(f"Erro ao atualizar: {str(e)}")
-
-        with st.expander("Ver voto original extraído do PDF"):
-            st.text(voto_extraido)
-
-# ==================== URGENTES E SERCON ====================
-
-_RELATOR_SIGLA_MAP = {
-    "MÁRCIO MICHEL": "GCMM",
-    "MANOEL DE ANDRADE": "GCMA",
-    "RENATO RAINHA": "GCRR",
-    "ANILCÉIA MACHADO": "GCAM",
-    "INÁCIO MAGALHÃES FILHO": "GCIM",
-    "PAULO TADEU": "GCPT",
-    "ANDRÉ CLEMENTE": "GCAC",
-    "VINÍCIUS FRAGOSO": "GAVF",
-}
-
-def _normalizar_numero_processo(numero):
-    """Normaliza o número do processo removendo sufixos, espaços e caracteres invisíveis."""
-    if not numero:
-        return ""
-    numero = str(numero).strip()
-    numero = numero.replace(" ", "")
-    numero = numero.replace("\n", "")
-    numero = numero.replace("\r", "")
-    numero = numero.replace("\t", "")
-    if numero.endswith("-e"):
-        numero = numero[:-2]
-    if numero.endswith("-E"):
-        numero = numero[:-2]
-    numero = numero.replace("\u200b", "")
-    numero = numero.replace("\u00a0", "")
-    numero = numero.replace("\ufeff", "")
-    return numero.strip()
-
 def _extrair_numero_processo(texto):
-    """Extrai o numero do processo do cabecalho do PDF."""
-    import re
-    # Padrao: Processo nº: 00600-00009313/2025-11-e (ou sem -e)
-    padrao = r'Processo\s*n[º°.o]*\s*:?\s*\n?\s*(\d{5}-\d{8}/\d{4}-\d{2})(?:-e)?'
+    """
+    Extrai o numero do processo do cabecalho do PDF.
+    """
+    padrao = r"Processo\s*n[º°.o]*\s*:?\s*\n?\s*(\d{5}-\d{8}/\d{4}-\d{2})(?:-e)?"
     match = re.search(padrao, texto, re.IGNORECASE)
     if match:
         return _normalizar_numero_processo(match.group(1))
-    # Fallback: procurar o padrao do numero em qualquer lugar
-    padrao_fallback = r'(\d{5}-\d{8}/\d{4}-\d{2})(?:-e)?'
+
+    padrao_fallback = r"(\d{5}-\d{8}/\d{4}-\d{2})(?:-e)?"
     match = re.search(padrao_fallback, texto)
     if match:
         return _normalizar_numero_processo(match.group(1))
+
     return None
 
 def _identificar_relator_sigla(texto):
-    """Identifica o relator pelo texto e retorna a sigla."""
+    """
+    Identifica o relator pelo texto e retorna a sigla.
+    """
     texto_upper = texto.upper()
     for nome, sigla in _RELATOR_SIGLA_MAP.items():
         if nome in texto_upper:
@@ -3162,10 +2868,12 @@ def _identificar_relator_sigla(texto):
     return "N/I"
 
 def _verificar_prazo(texto):
-    """Verifica se ha prazos de 0 a 20 dias no texto."""
-    import re
-    padrao = r'\b(\d{1,2})\s*(?:\([^)]+\)\s*)?(?:dias?|dia)\b'
+    """
+    Verifica se há prazos de 0 a 20 dias no texto.
+    """
+    padrao = r"\b(\d{1,2})\s*(?:\([^)]+\)\s*)?(?:dias?|dia)\b"
     matches = re.findall(padrao, texto, re.IGNORECASE)
+
     prazos = []
     for match in matches:
         try:
@@ -3174,16 +2882,20 @@ def _verificar_prazo(texto):
                 prazos.append(f"{num} dias")
         except ValueError:
             pass
+
     return prazos
 
 def _obter_palavras_urgencia():
-    """Retorna a lista de palavras de urgencia do banco ou padrao."""
+    """
+    Retorna a lista de palavras de urgencia do banco ou padrao.
+    """
     try:
-        palavras = db_manager.buscar_todos("palavras_urgencia_nip", filtros={"ativo": True})
+        palavras = db_manager.buscar_todos("palavras_urgencia_nip", filtros={"ativo": True}) or []
         if palavras:
             return list(set([p["palavra"] for p in palavras]))
     except Exception:
         pass
+
     return [
         "urgente", "urgência", "prioritário", "prioridade", "brevidade",
         "importância", "imediato", "imediatamente", "suspender", "suspensão",
@@ -3196,13 +2908,16 @@ def _obter_palavras_urgencia():
     ]
 
 def _obter_palavras_sercon():
-    """Retorna a lista de palavras de SERCON do banco ou padrao."""
+    """
+    Retorna a lista de palavras de SERCON do banco ou padrao.
+    """
     try:
-        palavras = db_manager.buscar_todos("palavras_sercon_nip", filtros={"ativo": True})
+        palavras = db_manager.buscar_todos("palavras_sercon_nip", filtros={"ativo": True}) or []
         if palavras:
             return palavras
     except Exception:
         pass
+
     return [
         {"palavra": "acórdão", "situacao": "acórdão"},
         {"palavra": "acórdãos", "situacao": "acórdão"},
@@ -3215,7 +2930,9 @@ def _obter_palavras_sercon():
     ]
 
 def _verificar_urgencia(texto, palavras):
-    """Verifica se o texto contem palavras de urgencia. Retorna (is_urgent, motivos)."""
+    """
+    Verifica se o texto contem palavras de urgencia.
+    """
     texto_lower = texto.lower()
     motivos = []
 
@@ -3223,19 +2940,15 @@ def _verificar_urgencia(texto, palavras):
         if palavra.lower() in texto_lower:
             motivos.append(palavra)
 
-    # Verificar prazos de 0 a 20 dias
     prazos = _verificar_prazo(texto)
     motivos.extend(prazos)
 
-    # Verificar Despacho Singular e Sustentação Oral no texto
-    if "despacho singular" in texto_lower:
-        if "Despacho Singular" not in motivos:
-            motivos.append("Despacho Singular")
-    if "sustentação oral" in texto_lower or "sustentacao oral" in texto_lower:
-        if "Sustentação Oral" not in motivos:
-            motivos.append("Sustentação Oral")
+    if "despacho singular" in texto_lower and "Despacho Singular" not in motivos:
+        motivos.append("Despacho Singular")
 
-    # Deduplicar mantendo ordem
+    if ("sustentação oral" in texto_lower or "sustentacao oral" in texto_lower) and "Sustentação Oral" not in motivos:
+        motivos.append("Sustentação Oral")
+
     motivos_unicos = []
     for m in motivos:
         if m not in motivos_unicos:
@@ -3244,23 +2957,222 @@ def _verificar_urgencia(texto, palavras):
     return len(motivos_unicos) > 0, ", ".join(motivos_unicos) if motivos_unicos else ""
 
 def _verificar_sercon(texto, palavras_sercon):
-    """Verifica se o texto contem palavras de SERCON. Retorna (is_sercon, situacao)."""
+    """
+    Verifica se o texto contem palavras de SERCON.
+    """
     texto_lower = texto.lower()
+
     for item in palavras_sercon:
         palavra = item.get("palavra", "").lower()
         situacao = item.get("situacao", "")
         if palavra and palavra in texto_lower:
             return True, situacao
+
     return False, ""
 
+def _renderizar_motor_nip(modo_edicao, usuario):
+    """
+    Função principal do Motor NIP.
+    """
+    st.markdown("### Motor NIP - Edição Automática de Votos")
+    st.caption(
+        "Faça upload do PDF do relatório/voto. O sistema extrai o voto, "
+        "aplica as regras de edição e entrega o texto pronto no formato teleprompt."
+    )
+
+    st.markdown("---")
+
+    uploaded_file = st.file_uploader(
+        "📄 Upload do PDF do Relatório/Voto",
+        type=["pdf"],
+        key="motor_nip_upload",
+    )
+
+    if uploaded_file is None:
+        return
+
+    with st.spinner("Processando PDF..."):
+        texto_completo = _extrair_texto_pdf(uploaded_file)
+        if not texto_completo:
+            st.error("Não foi possível extrair texto do PDF.")
+            return
+
+        numero_processo = _extrair_numero_processo(texto_completo)
+        relator_sigla = _identificar_relator_sigla(texto_completo)
+        relator_tipo = _identificar_relator(texto_completo)
+
+        relator_nome = {
+            "GCAM": "GCAM (Anilcéia Machado — Relatora)",
+            "VINICIUS_FRAGOSO": "GAVF (Vinícius Fragoso — Substituto)",
+            "OUTRO": relator_sigla,
+        }
+
+        st.info(f"**Relator identificado:** {relator_nome.get(relator_tipo, relator_sigla)}")
+
+        if numero_processo:
+            st.info(f"**Processo identificado:** {numero_processo}")
+        else:
+            st.warning("Número do processo não encontrado automaticamente.")
+
+        voto_extraido = _extrair_voto(texto_completo)
+        if not voto_extraido:
+            st.error("Não foi possível identificar o voto no PDF.")
+            return
+
+        try:
+            regras = db_manager.buscar_todos(
+                "regras_substituicao_nip",
+                filtros={"ativo": True},
+                ordem_coluna="ordem",
+                ordem_desc=False,
+            ) or []
+        except Exception:
+            regras = []
+
+        if not regras:
+            regras = _obter_regras_padrao()
+
+        texto_editado = _processar_voto(voto_extraido, relator_tipo, regras, db_manager)
+
+        palavras_urg = _obter_palavras_urgencia()
+        palavras_sercon = _obter_palavras_sercon()
+        is_sercon, situacao_sercon = _verificar_sercon(voto_extraido, palavras_sercon)
+        is_ds, ds_motivo = _verificar_despacho_singular_tab(numero_processo or "")
+
+        if is_sercon:
+            is_urgent = False
+            motivo_urg = ""
+            st.warning(f"⚠️ Processo identificado para **SERCON** — Situação: {situacao_sercon}")
+        elif is_ds:
+            is_urgent = True
+            motivo_urg = ds_motivo
+            st.warning(f"⚠️ Processo identificado como **URGENTE** — Motivo: {ds_motivo}")
+        else:
+            is_urgent, motivo_urg = _verificar_urgencia(voto_extraido, palavras_urg)
+            if is_urgent:
+                st.warning(f"⚠️ Processo identificado como **URGENTE** — Motivo: {motivo_urg}")
+
+    st.markdown("---")
+    st.markdown("#### ✅ Voto Editado")
+    st.markdown(f"> {texto_editado}")
+
+    st.markdown("---")
+
+    texto_plain = texto_editado.replace("**", "")
+    st.text_area(
+        "📋 Texto para copiar (Ctrl+A, Ctrl+C):",
+        value=texto_plain,
+        height=300,
+        key="motor_nip_resultado",
+    )
+
+    docx_data = _gerar_docx(texto_editado)
+    if docx_data:
+        st.download_button(
+            label="📥 Baixar como Word (.docx) — com negrito",
+            data=docx_data,
+            file_name="voto_editado.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
+    st.markdown("---")
+    st.markdown("#### 📋 Confirmação de Edição")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        proc_input = st.text_input(
+            "Número do Processo",
+            value=numero_processo or "",
+            key="motor_nip_proc",
+        )
+
+    with col2:
+        relator_input = st.text_input(
+            "Relator (sigla)",
+            value=relator_sigla,
+            key="motor_nip_relator",
+        )
+
+    marcar_urgente = False
+    if is_urgent and not is_sercon:
+        marcar_urgente = st.checkbox(
+            f"Marcar como urgente (motivo: {motivo_urg})",
+            value=True,
+            key="motor_nip_urgente",
+        )
+
+    if st.button("✅ Marcar como Editado", key="motor_nip_editado", type="primary"):
+        if not proc_input:
+            st.error("Informe o número do processo.")
+            return
+
+        proc_normalizado = _normalizar_numero_processo(proc_input)
+
+        try:
+            todos_pauta = db_manager.buscar_todos("pauta_seat") or []
+            processo_pauta = None
+
+            for p in todos_pauta:
+                p_num = _normalizar_numero_processo(p.get("processo_numero", ""))
+                if p_num == proc_normalizado:
+                    processo_pauta = p
+                    break
+
+            if processo_pauta:
+                db_manager.atualizar("pauta_seat", processo_pauta["id"], {"editado": True})
+                st.success("✅ Processo marcado como editado na Pauta Ativa.")
+
+                if marcar_urgente:
+                    db_manager.inserir(
+                        "processos_urgentes",
+                        {
+                            "processo_numero": proc_normalizado,
+                            "relator": relator_input,
+                            "motivo": motivo_urg,
+                            "tipo_sessao": processo_pauta.get("tipo_sessao", ""),
+                            "sessao_numero": str(processo_pauta.get("numero_sessao", "")),
+                            "dia_sessao": str(processo_pauta.get("dia_sessao", ""))[:10],
+                        },
+                    )
+                    st.success("✅ Processo adicionado à lista de Urgentes.")
+
+                if is_sercon:
+                    db_manager.inserir(
+                        "processos_sercon",
+                        {
+                            "processo_numero": proc_normalizado,
+                            "relator": relator_input,
+                            "situacao": situacao_sercon,
+                        },
+                    )
+                    st.success("✅ Processo enviado para o SERCON.")
+            else:
+                nums_pauta = [_normalizar_numero_processo(p.get("processo_numero", "")) for p in todos_pauta]
+                st.warning(
+                    f"Processo não encontrado na Pauta Ativa.\n\n"
+                    f"**Número buscado:** `{proc_normalizado}`\n\n"
+                    f"**Processos na pauta:** {', '.join(nums_pauta) if nums_pauta else 'NENHUM'}"
+                )
+        except Exception as e:
+            st.error(f"Erro ao atualizar: {str(e)}")
+
+    with st.expander("Ver voto original extraído do PDF"):
+        st.text(voto_extraido)
+
+# ============================================================
+# URGENTES E SERCON
+# ============================================================
+
 def _renderizar_urgentes(modo_edicao, usuario):
-    """Renderiza a tab de Urgentes com 4 tabelas por tipo de sessao."""
+    """
+    Renderiza a tab de Urgentes.
+    """
     st.markdown("### Processos Urgentes")
     st.caption("Processos identificados como urgentes, organizados por tipo de sessao.")
 
-    # Buscar processos urgentes
     try:
-        urgentes = db_manager.buscar_todos("processos_urgentes")
+        urgentes = db_manager.buscar_todos("processos_urgentes") or []
     except Exception:
         urgentes = []
 
@@ -3268,9 +3180,9 @@ def _renderizar_urgentes(modo_edicao, usuario):
         st.info("Nenhum processo urgente cadastrado ainda.")
         return
 
-    # Buscar datas das ultimas sessoes de cada tipo
     todos_processos = db_manager.buscar_todos("pauta_seat") or []
     datas_recentes = {}
+
     for p in todos_processos:
         tipo = p.get("tipo_sessao", "")
         dia = p.get("dia_sessao")
@@ -3278,12 +3190,13 @@ def _renderizar_urgentes(modo_edicao, usuario):
             continue
         if "urgente" in _normalizar_texto(tipo):
             continue
+
         dia_str = str(dia)[:10]
         tipo_key = _normalizar_texto(tipo)
+
         if tipo_key not in datas_recentes or dia_str > datas_recentes[tipo_key]:
             datas_recentes[tipo_key] = dia_str
 
-    # Filtrar urgentes apenas das ultimas sessoes
     urgentes_filtrados = []
     for u in urgentes:
         dia_u = str(u.get("dia_sessao", ""))[:10]
@@ -3291,12 +3204,11 @@ def _renderizar_urgentes(modo_edicao, usuario):
         if tipo_u in datas_recentes and dia_u == datas_recentes[tipo_u]:
             urgentes_filtrados.append(u)
 
-    # Agrupar por tipo de sessao
     tipos_sessao = {
-        "sessao ordinaria": "Sessão Ordinária",
-        "sessao reservada": "Sessão Reservada",
-        "sessao administrativa": "Sessão Administrativa",
-        "sessao ordinaria virtual": "Sessão Ordinária Virtual",
+        "ordinaria": "Sessão Ordinária",
+        "ordinaria virtual": "Sessão Ordinária Virtual",
+        "reservada": "Sessão Reservada",
+        "administrativa": "Sessão Administrativa",
     }
 
     for tipo_key, tipo_label in tipos_sessao.items():
@@ -3306,40 +3218,44 @@ def _renderizar_urgentes(modo_edicao, usuario):
         ]
 
         st.markdown(f"#### {tipo_label}")
+
         if processos_tipo:
-            import pandas as pd
             dados = []
             for u in processos_tipo:
-                dados.append({
-                    "Processo": u.get("processo_numero", ""),
-                    "Relator": u.get("relator", ""),
-                    "Motivo": u.get("motivo", ""),
-                })
+                dados.append(
+                    {
+                        "Processo": u.get("processo_numero", ""),
+                        "Relator": u.get("relator", ""),
+                        "Motivo": u.get("motivo", ""),
+                    }
+                )
+
             df = pd.DataFrame(dados)
             st.dataframe(df, hide_index=True, use_container_width=True, height=len(df) * 35 + 40)
         else:
             st.caption("Nenhum processo urgente nesta sessão.")
+
         st.markdown("---")
 
 def _renderizar_sidebar_urgentes(usuario):
-    """Mostra a tabela de urgentes na sidebar, abaixo dos Despachos Singulares."""
-    import pandas as pd
-
+    """
+    Mostra a tabela de urgentes na sidebar.
+    """
     cargo = usuario.get("cargo", "operacional")
     if cargo not in ("criador", "raiz", "gerente"):
         return
 
     try:
-        urgentes = db_manager.buscar_todos("processos_urgentes")
+        urgentes = db_manager.buscar_todos("processos_urgentes") or []
     except Exception:
         urgentes = []
 
     if not urgentes:
         return
 
-    # Filtrar apenas das ultimas sessoes
     todos_processos = db_manager.buscar_todos("pauta_seat") or []
     datas_recentes = {}
+
     for p in todos_processos:
         tipo = p.get("tipo_sessao", "")
         dia = p.get("dia_sessao")
@@ -3347,8 +3263,10 @@ def _renderizar_sidebar_urgentes(usuario):
             continue
         if "urgente" in _normalizar_texto(tipo):
             continue
+
         dia_str = str(dia)[:10]
         tipo_key = _normalizar_texto(tipo)
+
         if tipo_key not in datas_recentes or dia_str > datas_recentes[tipo_key]:
             datas_recentes[tipo_key] = dia_str
 
@@ -3365,26 +3283,28 @@ def _renderizar_sidebar_urgentes(usuario):
     with st.sidebar:
         st.markdown("---")
         st.markdown("##### Urgentes (Recentes)")
+
         dados = []
         for u in urgentes_filtrados:
-            dados.append({
-                "Processo": u.get("processo_numero", ""),
-                "Relator": u.get("relator", ""),
-                "Motivo": u.get("motivo", ""),
-            })
-        df = pd.DataFrame(dados)
-        st.dataframe(
-            df,
-            hide_index=True,
-            use_container_width=True,
-            height=len(df) * 35 + 40,
-        )
+            dados.append(
+                {
+                    "Processo": u.get("processo_numero", ""),
+                    "Relator": u.get("relator", ""),
+                    "Motivo": u.get("motivo", ""),
+                }
+            )
 
-# ==================== ESCALA DOE ====================
+        df = pd.DataFrame(dados)
+        st.dataframe(df, hide_index=True, use_container_width=True, height=len(df) * 35 + 40)
+
+# ============================================================
+# ESCALA DOE
+# ============================================================
 
 def _obter_config_doe():
-    """Obtém a data de início da rotação do DOE."""
-    from datetime import date, timedelta
+    """
+    Obtém a data de início da rotação do DOE.
+    """
     try:
         config = db_manager.buscar_todos("config_doe") or []
         if config:
@@ -3393,27 +3313,34 @@ def _obter_config_doe():
                 return date.fromisoformat(str(data_str)[:10])
     except Exception:
         pass
-    # Default: segunda-feira da semana atual
+
     hoje = date.today()
     return hoje - timedelta(days=hoje.weekday())
 
 def _salvar_config_doe(data_inicio):
-    """Salva a data de início da rotação."""
+    """
+    Salva a data de início da rotação.
+    """
     try:
         config = db_manager.buscar_todos("config_doe") or []
         if config:
-            db_manager.atualizar("config_doe", config[0]["id"], {
-                "data_inicio_rotacao": str(data_inicio),
-            })
+            db_manager.atualizar(
+                "config_doe",
+                config[0]["id"],
+                {"data_inicio_rotacao": str(data_inicio)},
+            )
         else:
-            db_manager.inserir("config_doe", {
-                "data_inicio_rotacao": str(data_inicio),
-            })
+            db_manager.inserir(
+                "config_doe",
+                {"data_inicio_rotacao": str(data_inicio)},
+            )
     except Exception:
         pass
 
 def _obter_duplas_doe():
-    """Retorna todas as duplas ativas ordenadas."""
+    """
+    Retorna todas as duplas ativas ordenadas.
+    """
     try:
         return db_manager.buscar_todos(
             "duplas_doe",
@@ -3425,48 +3352,59 @@ def _obter_duplas_doe():
         return []
 
 def _obter_semana_atual():
-    """Retorna (segunda, sexta) da semana atual."""
-    from datetime import date, timedelta
+    """
+    Retorna (segunda, sexta) da semana atual.
+    """
     hoje = date.today()
     segunda = hoje - timedelta(days=hoje.weekday())
     sexta = segunda + timedelta(days=4)
     return segunda, sexta
 
 def _obter_dupla_semana(data_referencia, duplas):
-    """Retorna qual dupla está escalada para a semana da data_referencia."""
-    from datetime import date, timedelta
+    """
+    Retorna qual dupla está escalada para a semana da data_referencia.
+    """
     if not duplas:
         return None
+
     data_inicio = _obter_config_doe()
-    dias_desde_segunda = data_inicio.weekday()
-    segunda_inicio = data_inicio - timedelta(days=dias_desde_segunda)
+    segunda_inicio = data_inicio - timedelta(days=data_inicio.weekday())
     dias_diff = (data_referencia - segunda_inicio).days
+
     if dias_diff < 0:
         return None
+
     semanas_diff = dias_diff // 7
     indice = semanas_diff % len(duplas)
     return duplas[indice]
 
 def _gerar_calendario_doe(duplas, num_semanas=8):
-    """Gera o calendário de DOE para as próximas N semanas."""
-    from datetime import date, timedelta
+    """
+    Gera o calendário de DOE para as próximas N semanas.
+    """
     calendario = []
     segunda_atual, _ = _obter_semana_atual()
+
     for i in range(num_semanas):
         segunda = segunda_atual + timedelta(weeks=i)
         sexta = segunda + timedelta(days=4)
         dupla = _obter_dupla_semana(segunda, duplas)
-        calendario.append({
-            "semana_inicio": segunda,
-            "semana_fim": sexta,
-            "dupla": dupla,
-        })
+        calendario.append(
+            {
+                "semana_inicio": segunda,
+                "semana_fim": sexta,
+                "dupla": dupla,
+            }
+        )
+
     return calendario
 
 def _verificar_conflitos_ferias():
-    """Verifica todos os conflitos entre férias aprovadas e escala DOE."""
-    from datetime import date, timedelta
+    """
+    Verifica todos os conflitos entre férias aprovadas e escala DOE.
+    """
     conflitos = []
+
     try:
         duplas = _obter_duplas_doe()
         if not duplas:
@@ -3491,24 +3429,27 @@ def _verificar_conflitos_ferias():
                 if segunda <= data_fim and sexta >= data_ini:
                     dupla = _obter_dupla_semana(segunda, duplas)
                     if dupla and colaborador in [dupla.get("membro1"), dupla.get("membro2")]:
-                        substituto = ferias.get("substituto", "")
-                        conflitos.append({
-                            "colaborador": colaborador,
-                            "semana_inicio": segunda,
-                            "semana_fim": sexta,
-                            "dupla": dupla,
-                            "ferias_inicio": data_ini,
-                            "ferias_fim": data_fim,
-                            "substituto": substituto,
-                            "ferias_id": ferias.get("id"),
-                        })
+                        conflitos.append(
+                            {
+                                "colaborador": colaborador,
+                                "semana_inicio": segunda,
+                                "semana_fim": sexta,
+                                "dupla": dupla,
+                                "ferias_inicio": data_ini,
+                                "ferias_fim": data_fim,
+                                "substituto": ferias.get("substituto", ""),
+                                "ferias_id": ferias.get("id"),
+                            }
+                        )
     except Exception:
         pass
+
     return conflitos
 
 def _renderizar_sidebar_doe(usuario):
-    """Mostra a dupla escalada na semana atual na barra lateral."""
-    from datetime import date, timedelta
+    """
+    Mostra a dupla escalada na semana atual na barra lateral.
+    """
     cargo = usuario.get("cargo", "operacional")
     setor = usuario.get("setor", "")
 
@@ -3529,7 +3470,6 @@ def _renderizar_sidebar_doe(usuario):
         st.markdown("##### 📰 Escala DOE (Esta Semana)")
         st.write(f"**Período:** {segunda.strftime('%d/%m')} a {sexta.strftime('%d/%m')}")
 
-        # Verificar substitutos
         membro1 = dupla_atual.get("membro1", "")
         membro2 = dupla_atual.get("membro2", "")
 
@@ -3546,27 +3486,24 @@ def _renderizar_sidebar_doe(usuario):
         st.write(f"• {membro1}")
         st.write(f"• {membro2}")
 
-        # Alertas de férias sem substituto
         for c in conflitos_semana:
             if not c.get("substituto"):
                 st.warning(
                     f"⚠️ **{c['colaborador']}** está de férias "
                     f"({c['ferias_inicio'].strftime('%d/%m')} a {c['ferias_fim'].strftime('%d/%m')}). "
-                    f"Sem substituto designado!"
+                    f"Sem substituto designado."
                 )
 
 def _renderizar_escala_doe(modo_edicao, usuario):
-    """Renderiza a aba de Escala DOE em modo visualização limpa."""
-    from datetime import date, timedelta
-    import pandas as pd
-
+    """
+    Renderiza a aba de Escala DOE.
+    """
     st.markdown("### 📰 Escala DOE — Diário Oficial do Tribunal")
     st.caption(
         "Visualização do rodízio de duplas para a publicação do DOE. "
         "A gestão de duplas, regras de rodízio e atribuição de substitutos são administradas pelo Gabinete."
     )
 
-    # === Seção 1: Semana atual ===
     st.markdown("---")
     st.markdown("#### 📌 Semana Atual")
 
@@ -3579,6 +3516,7 @@ def _renderizar_escala_doe(modo_edicao, usuario):
         dupla_atual = _obter_dupla_semana(segunda, duplas)
         if dupla_atual:
             col1, col2, col3 = st.columns(3)
+
             with col1:
                 st.metric("Período", f"{segunda.strftime('%d/%m/%Y')} a {sexta.strftime('%d/%m/%Y')}")
             with col2:
@@ -3586,9 +3524,9 @@ def _renderizar_escala_doe(modo_edicao, usuario):
             with col3:
                 st.metric("Membros Titulares", f"{dupla_atual.get('membro1', '')} / {dupla_atual.get('membro2', '')}")
 
-            # Verificar ausências (férias aprovadas ou atestados) na semana atual
             conflitos = _verificar_conflitos_ferias()
             conflitos_semana = [c for c in conflitos if c["semana_inicio"] == segunda]
+
             for c in conflitos_semana:
                 if c.get("substituto"):
                     st.info(
@@ -3604,96 +3542,105 @@ def _renderizar_escala_doe(modo_edicao, usuario):
         else:
             st.warning("Não foi possível determinar a dupla da semana atual.")
 
-    # === Seção 2: Próximas semanas ===
     st.markdown("---")
     st.markdown("#### 📅 Próximas Semanas")
 
     if duplas:
         calendario = _gerar_calendario_doe(duplas, num_semanas=8)
         dados_cal = []
+
         for item in calendario:
             dupla = item["dupla"]
-            dados_cal.append({
-                "Semana": f"{item['semana_inicio'].strftime('%d/%m')} a {item['semana_fim'].strftime('%d/%m')}",
-                "Dupla": dupla.get("nome_dupla", "N/I") if dupla else "—",
-                "Membro 1": dupla.get("membro1", "") if dupla else "—",
-                "Membro 2": dupla.get("membro2", "") if dupla else "—",
-            })
+            dados_cal.append(
+                {
+                    "Semana": f"{item['semana_inicio'].strftime('%d/%m')} a {item['semana_fim'].strftime('%d/%m')}",
+                    "Dupla": dupla.get("nome_dupla", "N/I") if dupla else "—",
+                    "Membro 1": dupla.get("membro1", "") if dupla else "—",
+                    "Membro 2": dupla.get("membro2", "") if dupla else "—",
+                }
+            )
+
         df_cal = pd.DataFrame(dados_cal)
         st.dataframe(df_cal, hide_index=True, use_container_width=True)
 
 # ============================================================
-# SUBMÓDULO: FÉRIAS E AFASTAMENTOS (SEAT)
+# FÉRIAS E AFASTAMENTOS
 # ============================================================
 
 def _verificar_radar_choques(data_ini, data_fim, id_ignorar=None):
     """
-    Radar de Choques: verifica se há outros colaboradores da SEAT ausentes no mesmo período.
-    Retorna lista de colisões encontradas.
+    Radar de choques genérico.
     """
-    from datetime import date
     try:
         solicitacoes = db_manager.buscar_todos("solicitacoes_ausencia") or []
     except Exception:
         return []
 
     choques = []
+
     for s in solicitacoes:
         if id_ignorar and str(s.get("id")) == str(id_ignorar):
             continue
-        # Considera apenas pedidos aprovados ou atestados notificados
+
         if s.get("status") not in ("APROVADA", "NOTIFICADO"):
             continue
 
         s_ini = date.fromisoformat(str(s.get("data_inicio"))[:10])
         s_fim = date.fromisoformat(str(s.get("data_fim"))[:10])
 
-        # Verifica intersecção de datas
         if data_ini <= s_fim and data_fim >= s_ini:
-            choques.append({
-                "colaborador": s.get("colaborador_nome", "Colaborador"),
-                "tipo": s.get("tipo", "AUSENCIA"),
-                "inicio": s_ini.strftime("%d/%m/%Y"),
-                "fim": s_fim.strftime("%d/%m/%Y"),
-            })
+            choques.append(
+                {
+                    "colaborador": s.get("colaborador_nome", "Colaborador"),
+                    "tipo": s.get("tipo", "AUSENCIA"),
+                    "inicio": s_ini.strftime("%d/%m/%Y"),
+                    "fim": s_fim.strftime("%d/%m/%Y"),
+                }
+            )
+
     return choques
 
 def _verificar_radar_choques_seat(data_ini, data_fim, id_ignorar=None):
     """
-    Radar de Choques: verifica se há outros colaboradores da SEAT ausentes no mesmo período.
-    Retorna lista de colisões encontradas.
+    Radar de choques específico da SEAT.
     """
-    from datetime import date
     try:
         solicitacoes = db_manager.buscar_todos("solicitacoes_ausencia") or []
     except Exception:
         return []
+
     choques = []
+
     for s in solicitacoes:
         if id_ignorar and str(s.get("id")) == str(id_ignorar):
             continue
+
         if s.get("status") not in ("APROVADA", "NOTIFICADO"):
             continue
+
         if s.get("setor", "").upper() != "SEAT":
             continue
+
         s_ini = date.fromisoformat(str(s.get("data_inicio"))[:10])
         s_fim = date.fromisoformat(str(s.get("data_fim"))[:10])
+
         if data_ini <= s_fim and data_fim >= s_ini:
             tipo_label = "Férias" if s.get("tipo") == "FERIAS" else ("Atestado" if s.get("tipo") == "ATESTADO" else "Abono")
-            choques.append({
-                "colaborador": s.get("colaborador_nome", "Colaborador"),
-                "tipo": tipo_label,
-                "inicio": s_ini.strftime("%d/%m/%Y"),
-                "fim": s_fim.strftime("%d/%m/%Y"),
-            })
+            choques.append(
+                {
+                    "colaborador": s.get("colaborador_nome", "Colaborador"),
+                    "tipo": tipo_label,
+                    "inicio": s_ini.strftime("%d/%m/%Y"),
+                    "fim": s_fim.strftime("%d/%m/%Y"),
+                }
+            )
+
     return choques
 
 def _renderizar_ausencias_seat(modo_edicao: bool, usuario: dict):
-    """Renderiza a aba de Férias, Atestados e Abono da SEAT."""
-    from datetime import date
-    import pandas as pd
-
-    # Proteção contra usuario None
+    """
+    Renderiza a aba de Férias, Atestados e Abono da SEAT.
+    """
     if not usuario or not isinstance(usuario, dict):
         st.warning("Não foi possível carregar os dados do usuário logado.")
         return
@@ -3705,16 +3652,13 @@ def _renderizar_ausencias_seat(modo_edicao: bool, usuario: dict):
         "Atestados médicos são notificados automaticamente."
     )
 
-    # Identificação automática pelo login
     nome_usuario = usuario.get("nome", "Colaborador")
     matricula_usuario = str(usuario.get("matricula", ""))
 
-    tab_solicitar, tab_quadro = st.tabs([
-        "➕ Nova Solicitação",
-        "📅 Quadro Público de Ausências",
-    ])
+    tab_solicitar, tab_quadro = st.tabs(
+        ["➕ Nova Solicitação", "📅 Quadro Público de Ausências"]
+    )
 
-    # --- ABA 1: NOVA SOLICITAÇÃO ---
     with tab_solicitar:
         st.markdown(f"**Colaborador Solicitante:** `{nome_usuario}` (Matrícula: `{matricula_usuario}`)")
         st.info("O sistema identifica seu perfil automaticamente. Selecione o tipo de registro abaixo.")
@@ -3723,13 +3667,15 @@ def _renderizar_ausencias_seat(modo_edicao: bool, usuario: dict):
             "Tipo de Registro",
             ["Férias", "Atestado Médico", "Abono"],
             horizontal=True,
-            key="tipo_registro_seat"
+            key="tipo_registro_seat",
         )
 
         with st.form("form_registro_ausencia_seat"):
             col1, col2 = st.columns(2)
+
             with col1:
                 data_ini = st.date_input("Data de Início *", value=date.today(), key="dt_ini_seat")
+
             with col2:
                 data_fim = st.date_input("Data de Retorno / Fim *", value=date.today(), key="dt_fim_seat")
 
@@ -3737,7 +3683,7 @@ def _renderizar_ausencias_seat(modo_edicao: bool, usuario: dict):
                 "Observações / Motivo",
                 placeholder="Informações adicionais para a chefia ou equipe...",
                 height=70,
-                key="obs_ausencia_seat"
+                key="obs_ausencia_seat",
             )
 
             submit_ausencia = st.form_submit_button("Registrar no Sistema", type="primary", use_container_width=True)
@@ -3748,18 +3694,16 @@ def _renderizar_ausencias_seat(modo_edicao: bool, usuario: dict):
                 else:
                     dias_total = (data_fim - data_ini).days + 1
 
-                    # Definir tipo e status conforme o registro
                     if tipo_registro == "Férias":
                         tipo_db = "FERIAS"
                         status_inicial = "PENDENTE"
                     elif tipo_registro == "Atestado Médico":
                         tipo_db = "ATESTADO"
                         status_inicial = "NOTIFICADO"
-                    else:  # Abono
+                    else:
                         tipo_db = "ABONO"
                         status_inicial = "PENDENTE"
 
-                    # Radar de choques — verifica sobreposição com outros colaboradores
                     choques = _verificar_radar_choques_seat(data_ini, data_fim)
 
                     dados_ausencia = {
@@ -3780,14 +3724,14 @@ def _renderizar_ausencias_seat(modo_edicao: bool, usuario: dict):
                         if tipo_db == "FERIAS":
                             msg = f"✅ Solicitação de férias ({dias_total} dias) enviada para análise da chefia no Gabinete."
                         elif tipo_db == "ATESTADO":
-                            msg = f"✅ Atestado médico ({dias_total} dias) notificado com sucesso e publicado no quadro!"
+                            msg = f"✅ Atestado médico ({dias_total} dias) notificado com sucesso e publicado no quadro."
                         else:
                             msg = f"✅ Pedido de abono ({dias_total} dias) enviado para análise da chefia no Gabinete."
+
                         st.success(msg)
 
-                        # Alertar sobre choques detectados
                         if choques:
-                            st.warning(f"⚠️ **Atenção:** {len(choques)} colaborador(es) da SEAT já tem ausência programada neste período:")
+                            st.warning(f"⚠️ Atenção: {len(choques)} colaborador(es) da SEAT já tem ausência programada neste período:")
                             for c in choques:
                                 st.write(f"- **{c['colaborador']}** — {c['tipo']} de {c['inicio']} a {c['fim']}")
 
@@ -3795,7 +3739,6 @@ def _renderizar_ausencias_seat(modo_edicao: bool, usuario: dict):
                     else:
                         st.error("Erro ao registrar no banco de dados.")
 
-    # --- ABA 2: QUADRO PÚBLICO ---
     with tab_quadro:
         st.markdown("#### Ausências Programadas, Atestados e Abonos (SEAT)")
         st.caption("Consulte este quadro antes de solicitar férias ou abono para evitar sobreposição de datas na equipe.")
@@ -3810,13 +3753,13 @@ def _renderizar_ausencias_seat(modo_edicao: bool, usuario: dict):
         except Exception:
             todas_ausencias = []
 
-        # Exibe apenas aprovados e atestados no quadro geral do setor
         publicas = [a for a in todas_ausencias if a.get("status") in ("APROVADA", "NOTIFICADO")]
 
         if not publicas:
             st.info("Nenhuma ausência ou afastamento programado no momento.")
         else:
             dados_quadro = []
+
             for a in publicas:
                 tipo_raw = a.get("tipo", "AUSENCIA")
                 if tipo_raw == "FERIAS":
@@ -3830,13 +3773,17 @@ def _renderizar_ausencias_seat(modo_edicao: bool, usuario: dict):
 
                 ini_str = _formatar_data_curta(a.get("data_inicio"))
                 fim_str = _formatar_data_curta(a.get("data_fim"))
-                dados_quadro.append({
-                    "Colaborador": a.get("colaborador_nome", ""),
-                    "Tipo": tipo_lbl,
-                    "Período": f"{ini_str} a {fim_str}",
-                    "Dias": f"{a.get('dias_afastado', '-')} dia(s)",
-                    "Observação": a.get("observacoes", "") or "—",
-                })
+
+                dados_quadro.append(
+                    {
+                        "Colaborador": a.get("colaborador_nome", ""),
+                        "Tipo": tipo_lbl,
+                        "Período": f"{ini_str} a {fim_str}",
+                        "Dias": f"{a.get('dias_afastado', '-')} dia(s)",
+                        "Observação": a.get("observacoes", "") or "—",
+                    }
+                )
+
             df_quadro = pd.DataFrame(dados_quadro)
             st.dataframe(df_quadro, hide_index=True, use_container_width=True)
 
@@ -3845,9 +3792,9 @@ def _renderizar_ausencias_seat(modo_edicao: bool, usuario: dict):
 # ============================================================
 
 def renderizar(usuario: dict, modo_edicao: bool = False):
-    """Funcao principal do modulo SEAT."""
-    import db_manager
-
+    """
+    Funcao principal do modulo SEAT.
+    """
     nome = usuario.get("nome", "Usuario")
     cargo = usuario.get("cargo", "operacional")
     setor = usuario.get("setor", "SEAT")
@@ -3859,88 +3806,57 @@ def renderizar(usuario: dict, modo_edicao: bool = False):
 
     st.markdown("---")
 
-    # Mover Despachos Singulares para Urgentes automaticamente
     _mover_despacho_singular_para_urgentes()
 
-    # Verificar se a sessao foi finalizada
     try:
         todos_processos = db_manager.buscar_todos("pauta_seat") or []
         sessao_finalizada = any(p.get("sessao_finalizada") for p in todos_processos)
     except Exception:
         sessao_finalizada = False
 
-    # Sidebars
-    # Despachos Singulares: SEMPRE visivel
     _renderizar_sidebar_ds(usuario)
 
-    # Edicao, Revisao e Urgentes: ocultos quando sessao finalizada
     if not sessao_finalizada:
+        renderizar_sidebar(usuario, modo_edicao)
         _renderizar_sidebar_urgentes(usuario)
 
-    # Escala DOE: SEMPRE visivel
     _renderizar_sidebar_doe(usuario)
 
-    tab_pauta, tab_distribuicao, tab_ds, tab_urgentes, tab_motor, tab_doe, tab_ausencias, tab_gerenciar = st.tabs([
-        "Pauta Ativa",
-        "Distribuicao",
-        "Despachos Singulares",
-        "Urgentes",
-        "Motor NIP",
-        "Escala DOE",
-        "Férias e Afastamentos",
-        "🗑️ Gerenciar Dados",
-    ])
+    tab_pauta, tab_distribuicao, tab_ds, tab_urgentes, tab_motor, tab_doe, tab_ausencias, tab_gerenciar = st.tabs(
+        [
+            "Pauta Ativa",
+            "Distribuicao",
+            "Despachos Singulares",
+            "Urgentes",
+            "Motor NIP",
+            "Escala DOE",
+            "Férias e Afastamentos",
+            "🗑️ Gerenciar Dados",
+        ]
+    )
+
     with tab_pauta:
         _renderizar_pauta_ativa(modo_edicao, usuario)
+
     with tab_distribuicao:
         _renderizar_distribuicao(modo_edicao, usuario)
+
     with tab_ds:
         _renderizar_despachos_singulares(modo_edicao, usuario)
+
     with tab_urgentes:
         _renderizar_urgentes(modo_edicao, usuario)
+
     with tab_motor:
         _renderizar_motor_nip(modo_edicao, usuario)
+
     with tab_doe:
         _renderizar_escala_doe(modo_edicao, usuario)
+
     with tab_ausencias:
         _renderizar_ausencias_seat(modo_edicao, usuario)
+
     with tab_gerenciar:
         _renderizar_gerenciar_dados(usuario, "SEAT")
 
-def _renderizar_despachos_singulares(modo_edicao, usuario):
-    """Renderiza a tab de Despachos Singulares."""
-    st.markdown("### Despachos Singulares")
-    st.caption("Processos com despacho singular da sessão atual.")
 
-    try:
-        todos_processos = db_manager.buscar_todos("pauta_seat") or []
-    except Exception:
-        todos_processos = []
-
-    despachos = [
-        p for p in todos_processos
-        if not p.get("sessao_finalizada", False)
-        and not p.get("removido_pauta", False)
-        and (
-            "despacho singular" in _normalizar_texto(p.get("tipo_sessao", ""))
-            or p.get("despacho_singular", False)
-        )
-    ]
-
-    if not despachos:
-        st.info("Nenhum despacho singular na pauta atual.")
-        return
-
-    dados = []
-    for p in despachos:
-        dados.append({
-            "Processo": p.get("processo_numero", "—"),
-            "Relator": p.get("relator", "—"),
-            "Sessão": p.get("numero_sessao", "—"),
-            "Dia": str(p.get("dia_sessao", "—"))[:10],
-            "Editor": p.get("editor", "—"),
-            "Status": "Editado" if p.get("editado") else "Pendente",
-        })
-
-    df = pd.DataFrame(dados)
-    st.dataframe(df, hide_index=True, use_container_width=True)
