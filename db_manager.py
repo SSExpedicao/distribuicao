@@ -452,38 +452,121 @@ def listar_usuarios_acesso_canonicos(
     """
     import unicodedata
 
-    def _normalizar_texto(valor: Any) -> str:
-        """
-        Normaliza texto para comparação segura.
-        Remove acentos, converte para minúsculas e elimina espaços extras.
-        """
-        if valor is None:
-            return ""
+def listar_colaboradores_elegiveis_distribuicao(
+    setor: str,
+    tipo_sessao: Optional[str] = None,
+    incluir_contas_tecnicas: bool = False,
+) -> List[Dict[str, Any]]:
+    """
+    Retorna os colaboradores elegíveis para o sorteio automático de distribuição,
+    com base na tabela canônica usuarios_acesso e nas regras operacionais reais
+    de cada setor.
 
-        texto = str(valor).strip().lower()
-        texto = unicodedata.normalize("NFKD", texto)
-        texto = "".join(
-            caractere
-            for caractere in texto
-            if not unicodedata.combining(caractere)
-        )
-        return " ".join(texto.split())
+    Esta função decide apenas quem entra no sorteio automático.
+    Ela NÃO trata:
+    - edição manual posterior da distribuição pela chefia
+    - redistribuição manual
+    - inclusão manual de exceções após o sorteio
 
+    Regras implementadas:
+
+    SEAT:
+    - entram automaticamente assessores da SEAT
+    - entra automaticamente Matheus Guimarães De Sousa Coelho
+    - ficam fora automaticamente Luis Felipe Coelho Medina, Thaís,
+      demais gerentes, estagiários e contas técnicas
+
+    SEXP:
+    - Sessão Ordinária, Sessão Ordinária Virtual e Urgentes:
+      entram assessores e estagiários, gerente fica fora
+    - Sessão Reservada:
+      entram apenas assessores
+    - Sessão Administrativa:
+      entra apenas o gerente
+
+    Args:
+        setor: Setor da distribuição, por exemplo "SEAT" ou "SEXP".
+        tipo_sessao: Tipo da sessão, obrigatório para aplicar regras da SEXP.
+        incluir_contas_tecnicas: Quando False, exclui contas técnicas do sorteio.
+
+    Returns:
+        Lista de usuários já normalizados e elegíveis para o sorteio automático.
+
+    Raises:
+        Não propaga exceções para a camada superior. Em caso de erro, retorna [].
+    """
+    import unicodedata
+
+def _normalizar_texto_canonico(valor: Any) -> str:
+    """
+    Normaliza texto para comparação segura no backend.
+    Remove acentos, converte para minúsculas e elimina espaços extras.
+    """
+    import unicodedata
+
+    if valor is None:
+        return ""
+
+    texto = str(valor).strip().lower()
+    texto = unicodedata.normalize("NFKD", texto)
+    texto = "".join(
+        caractere
+        for caractere in texto
+        if not unicodedata.combining(caractere)
+    )
+    return " ".join(texto.split())
+
+def listar_usuarios_acesso_canonicos(
+    setor: Optional[str] = None,
+    apenas_ativos: bool = True,
+    incluir_contas_tecnicas: bool = False,
+    niveis_acesso: Optional[List[str]] = None,
+    cargos: Optional[List[str]] = None,
+    vinculos: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Retorna usuários da tabela usuarios_acesso já normalizados e prontos
+    para consumo operacional pelos módulos do sistema.
+
+    Esta função é a camada canônica de leitura de colaboradores.
+    Ela não decide, sozinha, elegibilidade final de distribuição por setor
+    e tipo de sessão. Ela entrega a base saneada para que SEAT, SEXP e GAB
+    apliquem suas regras específicas sem ler usuarios_acesso de forma crua.
+
+    Args:
+        setor: Filtra usuários por setor, com normalização textual.
+        apenas_ativos: Quando True, retorna apenas registros com ativo=True.
+        incluir_contas_tecnicas: Quando False, exclui contas técnicas, como
+            SUPER_ADMIN_CRIADOR e cargo Desenvolvedor.
+        niveis_acesso: Lista opcional de níveis de acesso permitidos.
+        cargos: Lista opcional de cargos permitidos.
+        vinculos: Lista opcional de vínculos permitidos.
+
+    Returns:
+        Lista de dicionários contendo os dados originais do usuário e campos
+        derivados de normalização para uso seguro nos módulos.
+    """
     try:
         usuarios = buscar_todos("usuarios_acesso") or []
     except Exception as e:
         print(f"[DB ERROR] listar_usuarios_acesso_canonicos: {e}")
         return []
 
-    setor_normalizado = _normalizar_texto(setor) if setor else ""
+    setor_normalizado = _normalizar_texto_canonico(setor) if setor else ""
     niveis_permitidos = {
-        _normalizar_texto(valor) for valor in (niveis_acesso or []) if valor
+        _normalizar_texto_canonico(valor)
+        for valor in (niveis_acesso or [])
+        if valor
     }
     cargos_permitidos = {
-        _normalizar_texto(valor) for valor in (cargos or []) if valor
+        _normalizar_texto_canonico(valor)
+        for valor in (cargos or [])
+        if valor
     }
     vinculos_permitidos = {
-        _normalizar_texto(valor) for valor in (vinculos or []) if valor
+        _normalizar_texto_canonico(valor)
+        for valor in (vinculos or [])
+        if valor
     }
 
     resultado: List[Dict[str, Any]] = []
@@ -499,12 +582,12 @@ def listar_usuarios_acesso_canonicos(
         vinculo_usuario = str(usuario.get("vinculo", "") or "").strip()
         nivel_acesso_usuario = str(usuario.get("nivel_acesso", "") or "").strip()
 
-        nome_normalizado = _normalizar_texto(nome)
-        nome_guerra_normalizado = _normalizar_texto(nome_guerra)
-        setor_usuario_normalizado = _normalizar_texto(setor_usuario)
-        cargo_usuario_normalizado = _normalizar_texto(cargo_usuario)
-        vinculo_usuario_normalizado = _normalizar_texto(vinculo_usuario)
-        nivel_acesso_normalizado = _normalizar_texto(nivel_acesso_usuario)
+        nome_normalizado = _normalizar_texto_canonico(nome)
+        nome_guerra_normalizado = _normalizar_texto_canonico(nome_guerra)
+        setor_usuario_normalizado = _normalizar_texto_canonico(setor_usuario)
+        cargo_usuario_normalizado = _normalizar_texto_canonico(cargo_usuario)
+        vinculo_usuario_normalizado = _normalizar_texto_canonico(vinculo_usuario)
+        nivel_acesso_normalizado = _normalizar_texto_canonico(nivel_acesso_usuario)
 
         nome_exibicao = nome_guerra if nome_guerra else nome
 
@@ -548,12 +631,164 @@ def listar_usuarios_acesso_canonicos(
 
     resultado.sort(
         key=lambda item: (
-            _normalizar_texto(item.get("nome_exibicao", "")),
-            _normalizar_texto(item.get("matricula", "")),
+            _normalizar_texto_canonico(item.get("nome_exibicao", "")),
+            _normalizar_texto_canonico(item.get("matricula", "")),
         )
     )
 
     return resultado
+
+def listar_colaboradores_elegiveis_distribuicao(
+    setor: str,
+    tipo_sessao: Optional[str] = None,
+    incluir_contas_tecnicas: bool = False,
+) -> List[Dict[str, Any]]:
+    """
+    Retorna os colaboradores elegíveis para o sorteio automático de distribuição,
+    com base na tabela canônica usuarios_acesso e nas regras operacionais reais
+    de cada setor.
+
+    Esta função decide apenas quem entra no sorteio automático.
+    Ela não trata:
+    - edição manual posterior da distribuição pela chefia
+    - redistribuição manual
+    - inclusão manual de exceções após o sorteio
+
+    Regras implementadas:
+
+    SEAT:
+    - entram automaticamente assessores da SEAT
+    - entra automaticamente Matheus Guimarães De Sousa Coelho
+    - ficam fora automaticamente Luis Felipe Coelho Medina, Thaís,
+      demais gerentes, estagiários e contas técnicas
+
+    SEXP:
+    - Sessão Ordinária, Sessão Ordinária Virtual e Urgentes:
+      entram assessores e estagiários, gerente fica fora
+    - Sessão Reservada:
+      entram apenas assessores
+    - Sessão Administrativa:
+      entra apenas o gerente
+
+    Args:
+        setor: Setor da distribuição, por exemplo "SEAT" ou "SEXP".
+        tipo_sessao: Tipo da sessão, obrigatório para aplicar regras da SEXP.
+        incluir_contas_tecnicas: Quando False, exclui contas técnicas do sorteio.
+
+    Returns:
+        Lista de usuários já normalizados e elegíveis para o sorteio automático.
+    """
+    try:
+        setor_norm = _normalizar_texto_canonico(setor)
+        tipo_sessao_norm = _normalizar_texto_canonico(tipo_sessao) if tipo_sessao else ""
+
+        colaboradores = listar_usuarios_acesso_canonicos(
+            setor=setor,
+            apenas_ativos=True,
+            incluir_contas_tecnicas=incluir_contas_tecnicas,
+        ) or []
+
+        elegiveis: List[Dict[str, Any]] = []
+
+        for colaborador in colaboradores:
+            if not isinstance(colaborador, dict):
+                continue
+
+            if colaborador.get("conta_tecnica", False) and not incluir_contas_tecnicas:
+                continue
+
+            nome_norm = str(colaborador.get("nome_normalizado", "") or "").strip()
+            nome_guerra_norm = str(colaborador.get("nome_guerra_normalizado", "") or "").strip()
+            cargo_norm = str(colaborador.get("cargo_normalizado", "") or "").strip()
+            vinculo_norm = str(colaborador.get("vinculo_normalizado", "") or "").strip()
+            nivel_norm = str(colaborador.get("nivel_acesso_normalizado", "") or "").strip()
+            setor_colab_norm = str(colaborador.get("setor_normalizado", "") or "").strip()
+
+            if setor_colab_norm != setor_norm:
+                continue
+
+            is_gerente = (
+                nivel_norm == "gestor_setorial"
+                or "gerente" in cargo_norm
+                or "chefe" in cargo_norm
+            )
+
+            is_assessor = "assessor" in cargo_norm
+            is_estagiario = "estagi" in cargo_norm or "estagi" in vinculo_norm
+
+            is_matheus_seat = (
+                nome_norm == "matheus guimaraes de sousa coelho"
+                or nome_guerra_norm == "matheus"
+            )
+
+            is_luis_felipe_seat = (
+                nome_norm == "luis felipe coelho medina"
+                or nome_guerra_norm == "luis felipe"
+                or nome_guerra_norm == "luis"
+            )
+
+            is_thais_seat = (
+                nome_norm == "thais"
+                or nome_norm.startswith("thais ")
+                or nome_guerra_norm == "thais"
+            )
+
+            if setor_norm == "seat":
+                if is_luis_felipe_seat:
+                    continue
+
+                if is_thais_seat:
+                    continue
+
+                if is_matheus_seat:
+                    elegiveis.append(colaborador)
+                    continue
+
+                if is_assessor and not is_gerente and not is_estagiario:
+                    elegiveis.append(colaborador)
+                    continue
+
+                continue
+
+            if setor_norm == "sexp":
+                if "administrativa" in tipo_sessao_norm:
+                    if is_gerente:
+                        elegiveis.append(colaborador)
+                    continue
+
+                if "reservada" in tipo_sessao_norm:
+                    if is_assessor and not is_gerente:
+                        elegiveis.append(colaborador)
+                    continue
+
+                if (
+                    "ordinaria" in tipo_sessao_norm
+                    or "virtual" in tipo_sessao_norm
+                    or "urgente" in tipo_sessao_norm
+                ):
+                    if not is_gerente and (is_assessor or is_estagiario):
+                        elegiveis.append(colaborador)
+                    continue
+
+                if not is_gerente and (is_assessor or is_estagiario):
+                    elegiveis.append(colaborador)
+                continue
+
+            if not is_gerente:
+                elegiveis.append(colaborador)
+
+        elegiveis.sort(
+            key=lambda item: (
+                _normalizar_texto_canonico(item.get("nome_exibicao", "")),
+                _normalizar_texto_canonico(item.get("matricula", "")),
+            )
+        )
+
+        return elegiveis
+
+    except Exception as e:
+        print(f"[DB ERROR] listar_colaboradores_elegiveis_distribuicao: {e}")
+        return []
         
 # ============================================================
 # OPERACOES ESPECIFICAS: EQUIPE (FONTE ÚNICA: usuarios_acesso)
