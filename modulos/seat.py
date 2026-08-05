@@ -1041,6 +1041,63 @@ def _renderizar_card_processo(processo: dict, modo_edicao: bool):
 
         st.markdown("---")
 
+def _enviar_processo_para_sexp(processo: dict) -> bool:
+    """
+    Sincroniza um processo finalizado da SEAT para a fila da SEXP.
+    Evita duplicidade por processo + sessão + data.
+    """
+    if not processo:
+        return False
+
+    processo_numero = str(processo.get("processo_numero", "") or "").strip()
+    numero_sessao = str(processo.get("numero_sessao", "") or "").strip()
+    dia_sessao = str(processo.get("dia_sessao", "") or "").strip()
+    tipo_sessao = str(processo.get("tipo_sessao", "") or "").strip()
+    relator = str(processo.get("relator", "") or "").strip()
+
+    if not processo_numero:
+        return False
+
+    existentes = db_manager.buscar_todos(
+        "distribuicao_sexp",
+        filtros={
+            "processo_numero": processo_numero,
+            "numero_sessao": numero_sessao,
+            "dia_sessao": dia_sessao,
+        },
+    ) or []
+
+    payload = {
+        "processo_numero": processo_numero,
+        "numero_sessao": numero_sessao,
+        "dia_sessao": dia_sessao,
+        "tipo_sessao": tipo_sessao,
+        "relator": relator,
+        "distribuido": False,
+        "expedido": False,
+        "revisado": False,
+        "sessao_finalizada": False,
+        "editor": None,
+        "revisor": None,
+        "comentario": processo.get("comentario", "") or "",
+    }
+
+    if existentes:
+        registro = existentes[0]
+        registro_id = registro.get("id")
+        if not registro_id:
+            return False
+
+        resultado = db_manager.atualizar(
+            "distribuicao_sexp",
+            registro_id,
+            payload,
+        )
+        return bool(resultado)
+
+    resultado = db_manager.inserir("distribuicao_sexp", payload)
+    return bool(resultado)
+    
 def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
     """
     Renderiza a aba de Pauta Ativa sem listar processos.
@@ -1054,33 +1111,18 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
     nome_usuario = usuario.get("nome", "") if usuario else ""
     filtrar_por_usuario = cargo_usuario == "operacional" and bool(nome_usuario)
 
-    col_f1, col_f2, col_f3 = st.columns(3)
-
-    with col_f1:
-        busca = st.text_input(
-            "Buscar por numero do processo",
-            placeholder="Digite o numero...",
-            key="busca_pauta_seat",
-        )
-
-    with col_f2:
-        status_opcoes = ["todos"] + list(STATUS_FLOW.keys())
-        status_labels = {"todos": "Todos os Status"}
-        status_labels.update({k: v["label"] for k, v in STATUS_FLOW.items()})
-
-        filtro_status = st.selectbox(
-            "Filtrar por status",
-            options=status_opcoes,
-            format_func=lambda x: status_labels[x],
-            key="filtro_status_seat",
-        )
-
-    with col_f3:
-        filtro_tipo = st.selectbox(
-            "Filtrar por tipo de sessao",
-            options=["todos"] + TIPOS_SESSAO,
-            key="filtro_tipo_seat",
-        )
+    col_f1, cdef _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
+    """
+    Renderiza a aba de Pauta Ativa sem listar processos.
+    Nesta tela ficam apenas:
+    - inclusao manual
+    - inclusao em lote
+    - finalizacao da sessao
+    A operacao de editar/revisar fica exclusivamente na aba Distribuicao.
+    """
+    cargo_usuario = usuario.get("cargo", "operacional") if usuario else "operacional"
+    nome_usuario = usuario.get("nome", "") if usuario else ""
+    filtrar_por_usuario = cargo_usuario == "operacional" and bool(nome_usuario)
 
     if modo_edicao:
         tab_manual, tab_lote = st.tabs(["Inclusao Manual", "Inclusao em Lote (CSV)"])
@@ -1090,28 +1132,20 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
 
         with tab_lote:
             _incluir_processo_lote(modo_edicao)
+    else:
+        st.info(
+            "Modo visualizacao. Nesta aba, apenas usuarios com permissao de edicao "
+            "podem incluir processos ou finalizar a sessao."
+        )
 
-    filtros = {}
-
-    if filtro_status != "todos":
-        filtros["status"] = filtro_status
-
-    if filtro_tipo != "todos":
-        filtros["tipo_sessao"] = filtro_tipo
+    st.markdown("---")
+    st.markdown("### Finalizar Sessao e Enviar para SEXP")
 
     processos = db_manager.buscar_todos(
         "pauta_seat",
-        filtros=filtros if filtros else None,
         ordem_coluna="created_at",
         ordem_desc=True,
     ) or []
-
-    if busca.strip():
-        busca_lower = busca.strip().lower()
-        processos = [
-            p for p in processos
-            if busca_lower in (p.get("processo_numero", "") or "").lower()
-        ]
 
     if filtrar_por_usuario:
         nome_norm = _normalizar_texto(nome_usuario)
@@ -1126,122 +1160,115 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
         if p.get("status") == "encaminhado"
     ]
 
-    pendentes_inclusao = [
-        p for p in processos
-        if p.get("status") == "inclusao"
-    ]
+    pendentes = len(processos) - len(encaminhados)
 
-    pendentes_edicao = [
-        p for p in processos
-        if p.get("status") == "em_edicao"
-    ]
+    col1, col2, col3 = st.columns(3)
 
-    pendentes_revisao = [
-        p for p in processos
-        if p.get("status") == "em_revisao"
-    ]
+    with col1:
+        st.metric("Total da Sessao", len(processos))
 
-    col_c1, col_c2, col_c3, col_c4, col_c5 = st.columns(5)
+    with col2:
+        st.metric("Prontos para Envio", len(encaminhados))
 
-    with col_c1:
-        st.metric("Total", len(processos))
+    with col3:
+        st.metric("Pendentes", pendentes)
 
-    with col_c2:
-        st.metric("Inclusao", len(pendentes_inclusao))
+    if not processos:
+        st.info("Nao ha processos cadastrados para esta sessao.")
+        return
 
-    with col_c3:
-        st.metric("Em Edicao", len(pendentes_edicao))
+    if pendentes == 0:
+        st.success(
+            f"Todos os {len(encaminhados)} processo(s) estao prontos para envio."
+        )
+    else:
+        st.warning(
+            f"Ainda ha {pendentes} processo(s) sem revisao final. "
+            f"Se voce finalizar agora, apenas os {len(encaminhados)} processo(s) "
+            "revisado(s) serao enviados para a SEXP."
+        )
 
-    with col_c4:
-        st.metric("Em Revisao", len(pendentes_revisao))
+    confirmar_envio = True
 
-    with col_c5:
-        st.metric("Encaminhados", len(encaminhados))
+    if pendentes > 0:
+        confirmar_envio = st.checkbox(
+            f"Estou ciente das pendencias e desejo enviar apenas os "
+            f"{len(encaminhados)} processo(s) revisado(s) para a SEXP.",
+            key="chk_confirmar_finalizacao_seat",
+        )
 
-    st.markdown("---")
-
-    if processos and modo_edicao:
-        pendentes = len(processos) - len(encaminhados)
-
-        if pendentes == 0:
-            st.success(
-                f"🎉 Todos os {len(encaminhados)} processos foram revisados. "
-                "A sessão está pronta para envio."
+    if st.button(
+        "Finalizar Sessao e Enviar para SEXP",
+        type="primary",
+        use_container_width=True,
+        disabled=(not modo_edicao) or (not confirmar_envio),
+        key="btn_finalizar_sessao_geral",
+    ):
+        if len(encaminhados) == 0:
+            st.error(
+                "Nenhum processo foi revisado ainda. Impossivel enviar sessao vazia para a SEXP."
             )
         else:
-            st.warning(
-                f"⚠️ Ainda há {pendentes} processo(s) sem revisão final nesta pauta.\n\n"
-                f"Se você finalizar agora, apenas os {len(encaminhados)} processos "
-                "já revisados serão enviados para a SEXP."
-            )
+            with st.spinner("Enviando processos para a SEXP..."):
+                enviados_sexp = 0
+                finalizados_seat = 0
+                ignorados = 0
+                falhas_sexp = 0
 
-        confirmar_envio = True
+                for p in encaminhados:
+                    proc_atual = db_manager.buscar_por_id("pauta_seat", p["id"])
 
-        if pendentes > 0:
-            confirmar_envio = st.checkbox(
-                f"Estou ciente das pendências e desejo finalizar a sessão "
-                f"enviando apenas os {len(encaminhados)} processos revisados para a SEXP.",
-                key="chk_confirmar_finalizacao_seat",
-            )
+                    if not proc_atual:
+                        continue
 
-        if st.button(
-            "📋 Finalizar Sessão e Enviar para SEXP",
-            type="primary",
-            use_container_width=True,
-            disabled=not confirmar_envio,
-            key="btn_finalizar_sessao_geral",
-        ):
-            if len(encaminhados) == 0:
-                st.error(
-                    "Nenhum processo foi revisado ainda. Impossível enviar sessão vazia para a SEXP."
+                    if proc_atual.get("sessao_finalizada"):
+                        ignorados += 1
+                        continue
+
+                    enviado_ok = _enviar_processo_para_sexp(proc_atual)
+
+                    if not enviado_ok:
+                        falhas_sexp += 1
+                        continue
+
+                    res = db_manager.atualizar(
+                        "pauta_seat",
+                        p["id"],
+                        {
+                            "sessao_finalizada": True,
+                            "status": "encaminhado",
+                        },
+                    )
+
+                    if res:
+                        enviados_sexp += 1
+                        finalizados_seat += 1
+
+            if ignorados > 0:
+                st.warning(
+                    f"{ignorados} processo(s) ignorado(s), pois ja haviam sido enviados anteriormente."
                 )
-            else:
-                with st.spinner("Enviando processos para a SEXP..."):
-                    salvos = 0
-                    ignorados = 0
 
-                    for p in encaminhados:
-                        proc_atual = db_manager.buscar_por_id("pauta_seat", p["id"])
+            if falhas_sexp > 0:
+                st.error(
+                    f"Falha ao sincronizar {falhas_sexp} processo(s) para a fila da SEXP."
+                )
 
-                        if proc_atual and proc_atual.get("sessao_finalizada"):
-                            ignorados += 1
-                            continue
+            if enviados_sexp > 0:
+                st.success(
+                    f"Sessao finalizada com sucesso. "
+                    f"{finalizados_seat} processo(s) finalizado(s) na SEAT e "
+                    f"{enviados_sexp} enviado(s) para a fila da SEXP."
+                )
+            elif falhas_sexp == 0 and ignorados > 0:
+                st.info("Nenhum novo processo precisou ser enviado para a SEXP.")
 
-                        res = db_manager.atualizar(
-                            "pauta_seat",
-                            p["id"],
-                            {
-                                "sessao_finalizada": True,
-                                "status": "encaminhado",
-                            },
-                        )
+            st.rerun()
 
-                        if res:
-                            salvos += 1
-
-                if ignorados > 0:
-                    st.warning(
-                        f"⚠️ {ignorados} processo(s) ignorado(s), pois já haviam sido enviados por outro gerente."
-                    )
-
-                if salvos > 0:
-                    st.success(
-                        f"✅ Sessão finalizada com sucesso. {salvos} processo(s) enviado(s) para a SEXP."
-                    )
-
-                st.rerun()
-
-        st.caption(
-            "Os processos são operados exclusivamente na aba Distribuição. "
-            "Nesta tela, use apenas inclusão e finalização da sessão."
-        )
-
-    elif not processos:
-        st.info("Nenhum processo encontrado com os filtros atuais.")
-    else:
-        st.info(
-            "Os processos desta sessão são operados exclusivamente na aba Distribuição."
-        )
+    st.caption(
+        "Os processos sao operados exclusivamente na aba Distribuicao. "
+        "Nesta tela, use apenas inclusao e finalizacao da sessao."
+    )
 
  # ============================================================
 # SIDEBARS
