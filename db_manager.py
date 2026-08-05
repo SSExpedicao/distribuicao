@@ -794,16 +794,83 @@ def listar_colaboradores_elegiveis_distribuicao(
 # OPERACOES ESPECIFICAS: EQUIPE (FONTE ÚNICA: usuarios_acesso)
 # ============================================================
 
-def listar_equipe(setor: Optional[str] = None, apenas_ativos: bool = True) -> List[Dict[str, Any]]:
-    """Lista membros da equipe lendo da Fonte Única da Verdade (usuarios_acesso)."""
-    filtros = {}
-    if setor:
-        filtros["setor"] = setor
-    if apenas_ativos:
-        filtros["ativo"] = True
+def listar_equipe(
+    setor: Optional[str] = None,
+    incluir_inativos: bool = False,
+    incluir_contas_tecnicas: bool = False,
+    niveis_acesso: Optional[List[str]] = None,
+    cargos: Optional[List[str]] = None,
+    vinculos: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Lista colaboradores a partir da tabela canônica usuarios_acesso.
 
-    # Lê de usuarios_acesso e prioriza ordenação pelo nome de guerra
-    return buscar_todos("usuarios_acesso", filtros=filtros, ordem_coluna="nome_guerra")
+    Esta função passa a ser uma camada de compatibilidade para o restante
+    do sistema. Em vez de consultar a tabela de forma crua, ela delega
+    para listar_usuarios_acesso_canonicos(), garantindo leitura uniforme,
+    segura e coerente com a arquitetura atual do Hub SS.
+
+    Args:
+        setor: Filtra por setor, por exemplo "SEAT", "SEXP" ou "GAB".
+        incluir_inativos: Quando True, inclui usuários com ativo=False.
+        incluir_contas_tecnicas: Quando True, inclui contas técnicas,
+            como SUPER_ADMIN_CRIADOR e cargo Desenvolvedor.
+        niveis_acesso: Lista opcional de níveis de acesso permitidos.
+        cargos: Lista opcional de cargos permitidos.
+        vinculos: Lista opcional de vínculos permitidos.
+
+    Returns:
+        Lista de colaboradores normalizados, com os campos originais do
+        banco e os campos derivados da camada canônica.
+
+    Raises:
+        Não propaga exceções para a camada superior. Em caso de erro,
+        retorna lista vazia.
+    """
+    try:
+        colaboradores = listar_usuarios_acesso_canonicos(
+            setor=setor,
+            apenas_ativos=not incluir_inativos,
+            incluir_contas_tecnicas=incluir_contas_tecnicas,
+            niveis_acesso=niveis_acesso,
+            cargos=cargos,
+            vinculos=vinculos,
+        ) or []
+
+        resultado: List[Dict[str, Any]] = []
+
+        for colaborador in colaboradores:
+            if not isinstance(colaborador, dict):
+                continue
+
+            nome = str(colaborador.get("nome", "") or "").strip()
+            matricula = str(colaborador.get("matricula", "") or "").strip()
+            setor_colaborador = str(colaborador.get("setor", "") or "").strip()
+
+            if not nome:
+                continue
+
+            if not matricula:
+                continue
+
+            if not setor_colaborador:
+                continue
+
+            resultado.append(colaborador)
+
+        resultado.sort(
+            key=lambda item: (
+                _normalizar_texto_canonico(item.get("setor", "")),
+                _normalizar_texto_canonico(item.get("nome_exibicao", "")),
+                _normalizar_texto_canonico(item.get("matricula", "")),
+            )
+        )
+
+        return resultado
+
+    except Exception as e:
+        print(f"[DB ERROR] listar_equipe: {e}")
+        return []
 
 def adicionar_membro_equipe(nome: str, cargo: str, setor: str, vinculo: str = "servidor", nome_guerra: str = "") -> Optional[Dict[str, Any]]:
     """Adiciona um novo colaborador diretamente em usuarios_acesso."""
