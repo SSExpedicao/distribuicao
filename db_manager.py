@@ -872,19 +872,157 @@ def listar_equipe(
         print(f"[DB ERROR] listar_equipe: {e}")
         return []
 
-def adicionar_membro_equipe(nome: str, cargo: str, setor: str, vinculo: str = "servidor", nome_guerra: str = "") -> Optional[Dict[str, Any]]:
-    """Adiciona um novo colaborador diretamente em usuarios_acesso."""
-    matricula_gerada = f"E{random.randint(10000, 99999)}"
-    return inserir("usuarios_acesso", {
-        "matricula": matricula_gerada,
-        "nome": nome,
-        "nome_guerra": nome_guerra or nome.split()[0],
-        "senha": "tcdf.2026",
-        "cargo": cargo,
-        "setor": setor,
-        "vinculo": vinculo,
-        "ativo": True,
-    })
+def adicionar_membro_equipe(
+    nome: str,
+    matricula: str,
+    setor: str,
+    cargo: str,
+    vinculo: str,
+    nivel_acesso: str,
+    senha: str,
+    nome_guerra: Optional[str] = None,
+    ativo: bool = True,
+) -> Tuple[bool, str]:
+    """
+    Cadastra ou reativa um colaborador na tabela usuarios_acesso.
+
+    Regras desta versão:
+    - usuarios_acesso é a fonte única de verdade
+    - não gera matrícula aleatória
+    - não usa senha padrão fixa
+    - não cria duplicidade por matrícula
+    - se a matrícula já existir inativa, reativa e atualiza os dados
+    - preserva suporte à conta técnica, sem misturar com a conta funcional
+
+    Args:
+        nome: Nome completo do colaborador.
+        matricula: Matrícula real do colaborador.
+        setor: Setor do colaborador, ex.: GAB, SEAT, SEXP.
+        cargo: Cargo funcional, ex.: Assessor, Gerente, Desenvolvedor.
+        vinculo: Vínculo funcional, ex.: efetivo, comissionado, estagiário.
+        nivel_acesso: Nível de acesso sistêmico.
+        senha: Senha atual exigida pelo sistema legado.
+        nome_guerra: Nome curto de exibição. Se ausente, usa o nome completo.
+        ativo: Situação do cadastro.
+
+    Returns:
+        Tupla (sucesso, mensagem).
+    """
+    try:
+        supabase = get_supabase()
+
+        nome = str(nome or "").strip()
+        matricula = str(matricula or "").strip()
+        setor = str(setor or "").strip()
+        cargo = str(cargo or "").strip()
+        vinculo = str(vinculo or "").strip()
+        nivel_acesso = str(nivel_acesso or "").strip()
+        senha = str(senha or "").strip()
+        nome_guerra = str(nome_guerra or "").strip()
+
+        if not nome:
+            return False, "O nome do colaborador é obrigatório."
+
+        if not matricula:
+            return False, "A matrícula do colaborador é obrigatória."
+
+        if not setor:
+            return False, "O setor do colaborador é obrigatório."
+
+        if not cargo:
+            return False, "O cargo do colaborador é obrigatório."
+
+        if not vinculo:
+            return False, "O vínculo do colaborador é obrigatório."
+
+        if not nivel_acesso:
+            return False, "O nível de acesso do colaborador é obrigatório."
+
+        if not senha:
+            return False, "A senha do colaborador é obrigatória."
+
+        if not nome_guerra:
+            nome_guerra = nome
+
+        matricula_norm = _normalizar_texto_canonico(matricula)
+        nome_norm = _normalizar_texto_canonico(nome)
+        nome_guerra_norm = _normalizar_texto_canonico(nome_guerra)
+
+        # Proteção mínima contra dados obviamente inconsistentes
+        if not matricula_norm:
+            return False, "A matrícula informada é inválida."
+
+        if not nome_norm:
+            return False, "O nome informado é inválido."
+
+        registro_existente_resp = (
+            supabase.table("usuarios_acesso")
+            .select("*")
+            .eq("matricula", matricula)
+            .limit(1)
+            .execute()
+        )
+
+        registros_existentes = registro_existente_resp.data or []
+
+        payload = {
+            "nome": nome,
+            "matricula": matricula,
+            "setor": setor,
+            "cargo": cargo,
+            "vinculo": vinculo,
+            "nivel_acesso": nivel_acesso,
+            "senha": senha,
+            "nome_guerra": nome_guerra,
+            "ativo": bool(ativo),
+        }
+
+        if registros_existentes:
+            registro_existente = registros_existentes[0]
+            registro_id = registro_existente.get("id")
+
+            if not registro_id:
+                return False, "Não foi possível identificar o registro existente para atualização."
+
+            nome_existente_norm = _normalizar_texto_canonico(registro_existente.get("nome", ""))
+            nome_guerra_existente_norm = _normalizar_texto_canonico(registro_existente.get("nome_guerra", ""))
+
+            # Se já existe a mesma matrícula ativa, trata como duplicidade
+            if bool(registro_existente.get("ativo", False)):
+                if (
+                    nome_existente_norm == nome_norm
+                    or nome_guerra_existente_norm == nome_guerra_norm
+                ):
+                    return False, f"Já existe um colaborador ativo com a matrícula {matricula}."
+                return False, f"A matrícula {matricula} já está vinculada a outro cadastro ativo."
+
+            # Se existe inativo, reativa e atualiza
+            update_resp = (
+                supabase.table("usuarios_acesso")
+                .update(payload)
+                .eq("id", registro_id)
+                .execute()
+            )
+
+            if update_resp.data is None:
+                return False, "Não foi possível reativar o colaborador."
+
+            return True, f"Colaborador reativado com sucesso: {nome}."
+
+        insert_resp = (
+            supabase.table("usuarios_acesso")
+            .insert(payload)
+            .execute()
+        )
+
+        if insert_resp.data is None:
+            return False, "Não foi possível cadastrar o colaborador."
+
+        return True, f"Colaborador cadastrado com sucesso: {nome}."
+
+    except Exception as e:
+        print(f"[DB ERROR] adicionar_membro_equipe: {e}")
+        return False, f"Erro ao cadastrar colaborador: {e}"
 
 def atualizar_membro_equipe(id_membro: int, dados: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Atualiza dados de um colaborador na tabela de acesso."""
