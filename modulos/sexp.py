@@ -142,96 +142,58 @@ def _obter_colaboradores():
 
 def _obter_colaboradores_por_cargo(tipo_sessao):
     """
-    Retorna os colaboradores elegíveis para o sorteio automático da SEXP,
-    obedecendo rigorosamente a regra operacional definida para cada tipo
-    de sessão.
+    Retorna os colaboradores elegíveis para o sorteio automático da SEXP
+    com base na política centralizada do backend.
 
-    Regras aplicadas:
-    1. Sessão Ordinária, Sessão Ordinária Virtual e Urgentes:
-       - entram assessores
-       - entram estagiários
-       - gerente fica fora do sorteio automático
+    Regras aplicadas no backend:
+    - Sessão Ordinária, Sessão Ordinária Virtual e Urgentes:
+      entram assessores e estagiários, gerente fica fora
+    - Sessão Reservada:
+      entram apenas assessores
+    - Sessão Administrativa:
+      entra apenas o gerente
+    - Conta técnica do desenvolvedor fica fora da distribuição automática
 
-    2. Sessão Reservada:
-       - entram apenas assessores
-       - estagiários ficam fora
-       - gerente fica fora do sorteio automático
-
-    3. Sessão Administrativa:
-       - distribuição exclusiva do gerente da SEXP
-
-    Observação importante:
-    Esta função decide apenas a elegibilidade do sorteio automático.
-    O poder posterior de o gerente editar a tabela e ajustar nomes
-    permanece em outra camada da aplicação.
+    Esta função não decide mais a regra localmente.
+    Ela apenas delega ao db_manager, mantendo a SEXP alinhada com a
+    fonte única de verdade do sistema.
     """
     try:
-        colaboradores = _obter_colaboradores() or []
-        tipo_norm = _normalizar_texto(tipo_sessao)
+        colaboradores = db_manager.listar_colaboradores_elegiveis_distribuicao(
+            setor="SEXP",
+            tipo_sessao=tipo_sessao,
+            incluir_contas_tecnicas=False,
+        ) or []
 
-        elegiveis = []
+        resultado = []
 
         for colaborador in colaboradores:
             if not isinstance(colaborador, dict):
                 continue
 
-            if colaborador.get("conta_tecnica", False):
+            nome = str(colaborador.get("nome", "") or "").strip()
+            matricula = str(colaborador.get("matricula", "") or "").strip()
+            setor = str(colaborador.get("setor", "") or "").strip()
+
+            if not nome:
                 continue
 
-            setor_norm = str(colaborador.get("setor_normalizado", "") or "").strip()
-            cargo_norm = str(colaborador.get("cargo_normalizado", "") or "").strip()
-            vinculo_norm = str(colaborador.get("vinculo_normalizado", "") or "").strip()
-            nivel_norm = str(colaborador.get("nivel_acesso_normalizado", "") or "").strip()
-
-            if setor_norm != "sexp":
+            if not matricula:
                 continue
 
-            is_gerente = (
-                nivel_norm == "gestor_setorial"
-                or "gerente" in cargo_norm
-                or "chefe" in cargo_norm
-            )
-
-            is_estagiario = (
-                "estagi" in cargo_norm
-                or "estagi" in vinculo_norm
-            )
-
-            is_assessor = "assessor" in cargo_norm
-
-            # Sessão Administrativa, exclusiva do gerente
-            if "administrativa" in tipo_norm:
-                if is_gerente:
-                    elegiveis.append(colaborador)
+            if not setor:
                 continue
 
-            # Sessão Reservada, apenas assessores
-            if "reservada" in tipo_norm:
-                if is_assessor:
-                    elegiveis.append(colaborador)
-                continue
+            resultado.append(colaborador)
 
-            # Sessão Ordinária, Ordinária Virtual e Urgentes
-            # entram assessores e estagiários, gerente fica fora
-            if "ordinaria" in tipo_norm or "virtual" in tipo_norm or "urgente" in tipo_norm:
-                if not is_gerente and (is_assessor or is_estagiario):
-                    elegiveis.append(colaborador)
-                continue
-
-            # Fallback conservador:
-            # se surgir tipo novo não mapeado, não inclui gerente
-            # e mantém apenas perfis operacionais previstos
-            if not is_gerente and (is_assessor or is_estagiario):
-                elegiveis.append(colaborador)
-
-        elegiveis.sort(
+        resultado.sort(
             key=lambda item: (
                 str(item.get("nome_exibicao", "") or "").strip().lower(),
                 str(item.get("matricula", "") or "").strip(),
             )
         )
 
-        return elegiveis
+        return resultado
 
     except Exception as e:
         print(f"[ERRO SEXP _obter_colaboradores_por_cargo] {e}")
