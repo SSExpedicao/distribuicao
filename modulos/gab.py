@@ -1,1573 +1,1355 @@
 """
-GAB — Torre de Controle (Gabinete)
-Módulo principal do Gabinete com Dashboard Geral, tabs por setor,
-escala do plenário, controle de férias, agenda, diários e auditoria.
+modulos/gab.py - Gabinete
+Secretaria das Sessoes - TCDF
+
+Responsabilidades:
+- Visão gerencial consolidada
+- Gestão de colaboradores
+- Aprovação de ausências
+- Escala do Plenário
+- Agenda do Secretário
+- Auditoria e configurações
 """
 
+from __future__ import annotations
+
+import re
+import unicodedata
+from datetime import date, datetime, timedelta
+from typing import Any, Dict, List, Optional
+
 import streamlit as st
-import pandas as pd
-from datetime import datetime, timedelta, date
+
 import db_manager
-from modulos.busca_diarios import _renderizar_busca_diarios
-from modulos.gerenciar_dados import _tem_permissao_gestao
+from modulos.gerenciar_dados import _renderizar_gerenciar_dados
+
+try:
+    import pandas as pd
+    PANDAS_OK = True
+except ImportError:
+    PANDAS_OK = False
 
 # ============================================================
-# FUNÇÃO DE SIDEBAR
+# CONSTANTES
 # ============================================================
-def renderizar_sidebar(usuario, modo_edicao):
-    _renderizar_sidebar_gab(usuario)
 
-# ============================================================
-# FUNÇÃO PRINCIPAL
-# ============================================================
-def renderizar(usuario: dict, modo_edicao: bool = False):
-    if not usuario or not isinstance(usuario, dict):
-        st.error("Não foi possível carregar os dados do usuário.")
-        return
+SETORES_SISTEMA = ["GAB", "SEAT", "SEXP"]
 
-    nome = usuario.get("nome", "Usuário")
-    cargo = usuario.get("nivel_acesso", usuario.get("cargo", "—"))
-    setor = usuario.get("setor", "GAB")
+CARGOS_PADRAO = [
+    "Assessor",
+    "Gerente",
+    "Secretário",
+    "Subsecretário",
+    "Estagiário",
+    "Desenvolvedor",
+]
 
-    st.markdown(f"**Colaborador:** {nome} | **Cargo:** {cargo} | **Setor:** {setor}")
-    st.markdown("---")
+VINCULOS_PADRAO = [
+    "efetivo",
+    "comissionado",
+    "cedido",
+    "temporário",
+    "estagiário",
+    "terceirizado",
+]
 
-    _renderizar_banner_avisos(usuario)
+NIVEIS_ACESSO_PADRAO = [
+    "OPERACIONAL",
+    "GESTOR_SETORIAL",
+    "ADMIN_GABINETE",
+    "SUPER_ADMIN_CRIADOR",
+]
 
-    tab_dashboard, tab_setores, tab_escala, tab_ferias, tab_agenda, tab_diarios, tab_auditoria = st.tabs([
-        "📊 Dashboard Geral",
-        "📂 Setores",
-        "📅 Escala do Plenário",
-        "🏖️ Cadastro de Férias",
-        "📋 Agenda do Secretário",
-        "🔍 Pesquisa nos Diários",
-        "📝 Auditoria",
-    ])
+STATUS_AUSENCIA_PERMITIDOS = [
+    "PENDENTE",
+    "APROVADA",
+    "REPROVADA",
+    "NOTIFICADO",
+]
 
-    with tab_dashboard:
-        _renderizar_dashboard_geral(usuario)
-    with tab_setores:
-        _renderizar_setores(usuario)
-    with tab_escala:
-        _renderizar_escala_plenario(usuario)
-    with tab_ferias:
-        _renderizar_cadastro_ferias(usuario)
-    with tab_agenda:
-        _renderizar_agenda_secretario(usuario)
-    with tab_diarios:
-        _renderizar_busca_diarios(usuario)
-    with tab_auditoria:
-        _renderizar_auditoria(usuario)
+TIPOS_AUSENCIA = [
+    "FERIAS",
+    "ATESTADO",
+    "ABONO",
+]
 
 # ============================================================
-# DASHBOARD GERAL
+# HELPERS GERAIS
 # ============================================================
-def _renderizar_dashboard_geral(usuario):
-    st.markdown("### 📊 Dashboard Geral do Gabinete")
-    st.caption("Visão consolidada de todos os setores — dados em tempo real.")
 
-    st.markdown("#### 📈 Métricas de Volume")
+def _normalizar_texto(texto: Any) -> str:
+    """
+    Normaliza texto para comparação tolerante.
+    """
+    if texto is None:
+        return ""
+
+    texto = str(texto).strip().lower()
+    texto = unicodedata.normalize("NFKD", texto)
+    texto = "".join(c for c in texto if not unicodedata.combining(c))
+    return " ".join(texto.split())
+
+def _formatar_data_curta(data_valor: Any) -> str:
+    """
+    Converte data ISO para DD/MM/AAAA.
+    """
+    if not data_valor:
+        return "-"
 
     try:
-        seat_processos = db_manager.buscar_todos("pauta_seat") or []
+        texto = str(data_valor).replace("Z", "+00:00")
+        if "T" in texto:
+            dt = datetime.fromisoformat(texto)
+        else:
+            dt = datetime.strptime(texto[:10], "%Y-%m-%d")
+        return dt.strftime("%d/%m/%Y")
     except Exception:
-        seat_processos = []
+        return str(data_valor)[:10]
+
+def _formatar_data_hora(data_valor: Any) -> str:
+    """
+    Converte data/hora ISO para DD/MM/AAAA HH:MM.
+    """
+    if not data_valor:
+        return "-"
 
     try:
-        sexp_distribuicao = db_manager.buscar_todos("distribuicao_sexp") or []
+        texto = str(data_valor).replace("Z", "+00:00")
+        dt = datetime.fromisoformat(texto)
+        return dt.strftime("%d/%m/%Y %H:%M")
     except Exception:
-        sexp_distribuicao = []
+        return str(data_valor)
 
-    total_seat = len([p for p in seat_processos if not p.get("sessao_finalizada", False) and not p.get("removido_pauta", False)])
-    total_sexp = len([p for p in sexp_distribuicao if not p.get("sessao_finalizada", False) and not p.get("removido_pauta", False) and p.get("distribuido", False)])
+def _bool_label(valor: Any) -> str:
+    """
+    Representação amigável de booleano.
+    """
+    return "Sim" if bool(valor) else "Não"
 
-    # Urgentes: só conta se houver processos ativos
+def _tem_permissao_gab(usuario: Dict[str, Any]) -> bool:
+    """
+    Define se o usuário pode operar funções de gabinete.
+    """
+    nivel = str(usuario.get("nivel_acesso", "") or "").strip()
+    cargo = _normalizar_texto(usuario.get("cargo", ""))
+
+    return (
+        nivel in {"SUPER_ADMIN_CRIADOR", "ADMIN_GABINETE", "GESTOR_SETORIAL"}
+        or cargo in {"gerente", "secretario", "subsecretario", "desenvolvedor", "criador", "raiz"}
+    )
+
+def _tem_permissao_total_colaboradores(usuario: Dict[str, Any]) -> bool:
+    """
+    Permissão para gestão de colaboradores.
+    """
+    nivel = str(usuario.get("nivel_acesso", "") or "").strip()
+    return nivel in {"SUPER_ADMIN_CRIADOR", "ADMIN_GABINETE"}
+
+def _resolver_nome_exibicao(colaborador: Dict[str, Any]) -> str:
+    """
+    Retorna o nome preferencial para exibição.
+    """
+    nome_guerra = str(colaborador.get("nome_guerra", "") or "").strip()
+    nome = str(colaborador.get("nome", "") or "").strip()
+
+    if nome_guerra:
+        return nome_guerra
+    return nome
+
+def _ordenar_colaboradores(colaboradores: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Ordena colaboradores por setor e nome.
+    """
+    return sorted(
+        colaboradores,
+        key=lambda c: (
+            _normalizar_texto(c.get("setor", "")),
+            _normalizar_texto(c.get("nome_exibicao", "") or c.get("nome_guerra", "") or c.get("nome", "")),
+            _normalizar_texto(c.get("matricula", "")),
+        ),
+    )
+
+def _obter_colaboradores(
+    incluir_inativos: bool = True,
+    incluir_contas_tecnicas: bool = True,
+) -> List[Dict[str, Any]]:
+    """
+    Retorna colaboradores a partir da camada canônica.
+    """
     try:
-        urgentes = db_manager.buscar_todos("processos_urgentes") or []
+        colaboradores = db_manager.listar_equipe(
+            incluir_inativos=incluir_inativos,
+            incluir_contas_tecnicas=incluir_contas_tecnicas,
+        ) or []
+
+        resultado = []
+        for c in colaboradores:
+            item = dict(c)
+            item["nome_exibicao"] = item.get("nome_exibicao") or _resolver_nome_exibicao(item)
+            resultado.append(item)
+
+        return _ordenar_colaboradores(resultado)
+    except Exception as e:
+        print(f"[GAB ERROR] _obter_colaboradores: {e}")
+        return []
+
+def _coletar_metricas_setor(setor: str) -> Dict[str, int]:
+    """
+    Consolida KPIs básicos por setor.
+    """
+    setor_norm = _normalizar_texto(setor)
+    colaboradores = [
+        c for c in _obter_colaboradores(incluir_inativos=True, incluir_contas_tecnicas=True)
+        if _normalizar_texto(c.get("setor", "")) == setor_norm
+    ]
+
+    ativos = [c for c in colaboradores if bool(c.get("ativo", False))]
+    inativos = [c for c in colaboradores if not bool(c.get("ativo", False))]
+
+    return {
+        "total": len(colaboradores),
+        "ativos": len(ativos),
+        "inativos": len(inativos),
+    }
+
+def _obter_processos_pauta_seat() -> List[Dict[str, Any]]:
+    try:
+        return db_manager.buscar_todos("pauta_seat") or []
     except Exception:
-        urgentes = []
+        return []
 
-    if total_seat == 0 and total_sexp == 0:
-        urgentes_ativos = 0
-        urgentes_despachados = 0
-    else:
-        urgentes_ativos = len([u for u in urgentes if not u.get("despachado", False)])
-        urgentes_despachados = len([u for u in urgentes if u.get("despachado", False)])
-
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Processos SEAT", total_seat)
-    col2.metric("Processos SEXP", total_sexp)
-    col3.metric("Urgentes Ativos", urgentes_ativos)
-    col4.metric("Urgentes Despachados", urgentes_despachados)
-
-    st.markdown("#### 🥧 Processos por Sessão")
-
-    sessoes = {}
-    for p in seat_processos:
-        if p.get("sessao_finalizada") or p.get("removido_pauta"):
-            continue
-        num_s = p.get("numero_sessao") or p.get("sessao_numero") or "S/N"
-        sessoes[num_s] = sessoes.get(num_s, 0) + 1
-
-    for p in sexp_distribuicao:
-        if p.get("sessao_finalizada") or p.get("removido_pauta") or not p.get("distribuido"):
-            continue
-        num_s = p.get("numero_sessao") or p.get("sessao_numero") or "S/N"
-        sessoes[num_s] = sessoes.get(num_s, 0) + 1
-
-    if sessoes:
-        df_sessoes = pd.DataFrame(list(sessoes.items()), columns=["Sessão", "Quantidade"])
-        st.dataframe(df_sessoes, hide_index=True, use_container_width=True)
-    else:
-        st.info("Nenhum processo ativo no momento.")
-
-    st.markdown("#### 👥 Desempenho de Colaboradores")
-    _renderizar_quadro_colaboradores(seat_processos, sexp_distribuicao)
-
-    st.markdown("#### 📅 Linha do Tempo — Despachos da Semana")
-    _renderizar_linha_tempo_despachos(seat_processos, sexp_distribuicao)
-
-# ============================================================
-# TAB SETORES
-# ============================================================
-def _renderizar_setores(usuario):
-    st.markdown("### 📂 Setores Operacionais")
-
-    cargo = usuario.get("nivel_acesso", usuario.get("cargo", "")).lower()
-    setor_usuario = usuario.get("setor", "")
-
-    if cargo in ("criador", "raiz", "secretaria", "super_admin_criador", "admin_gabinete", "espectadora_global"):
-        setores_visiveis = ["SEAT", "SEXP", "SERCON", "SEMAND"]
-    elif cargo in ("gerente", "gestor_setorial"):
-        setores_visiveis = [setor_usuario] if setor_usuario != "GAB" else ["SEAT"]
-    else:
-        setores_visiveis = [setor_usuario] if setor_usuario else ["SEAT"]
-
-    if not setores_visiveis:
-        st.warning("Nenhum setor disponível para seu perfil.")
-        return
-
-    subtabs = st.tabs([f"📂 {s}" for s in setores_visiveis])
-
-    for i, setor in enumerate(setores_visiveis):
-        with subtabs[i]:
-            _renderizar_conteudo_setor(usuario, setor)
-
-def _renderizar_conteudo_setor(usuario, setor):
-    if setor == "SEAT":
-        tab_dash, tab_ferias, tab_avisos, tab_nip = st.tabs([
-            "📊 Dashboard",
-            "🏖️ Férias dos Colaboradores",
-            "📢 Avisos do Setor",
-            "⚙️ Regras NIP",
-        ])
-        with tab_dash:
-            _renderizar_dashboard_setor(usuario, setor)
-        with tab_ferias:
-            _renderizar_ferias_setor(usuario, setor)
-        with tab_avisos:
-            _renderizar_avisos_setor(usuario, setor)
-        with tab_nip:
-            _renderizar_regras_nip(usuario)
-    else:
-        tab_dash, tab_ferias, tab_avisos = st.tabs([
-            "📊 Dashboard",
-            "🏖️ Férias dos Colaboradores",
-            "📢 Avisos do Setor",
-        ])
-        with tab_dash:
-            _renderizar_dashboard_setor(usuario, setor)
-        with tab_ferias:
-            _renderizar_ferias_setor(usuario, setor)
-        with tab_avisos:
-            _renderizar_avisos_setor(usuario, setor)
-
-# ============================================================
-# DASHBOARD POR SETOR
-# ============================================================
-def _renderizar_dashboard_setor(usuario, setor):
-    st.markdown(f"#### 📊 Dashboard — {setor}")
-
-    if setor == "SEAT":
-        try:
-            processos = db_manager.buscar_todos("pauta_seat") or []
-        except Exception:
-            processos = []
-
-        ativos = [p for p in processos if not p.get("sessao_finalizada", False) and not p.get("removido_pauta", False)]
-        editados = [p for p in ativos if p.get("editado", False)]
-        revisados = [p for p in ativos if p.get("revisado", False)]
-
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Total Ativos", len(ativos))
-        col2.metric("Editados", len(editados))
-        col3.metric("Revisados", len(revisados))
-        col4.metric("Pendentes", len(ativos) - len(editados))
-
-        st.markdown("##### Desempenho por Colaborador")
-        _renderizar_desempenho_colaborador(processos, "SEAT")
-
-    elif setor == "SEXP":
-        try:
-            processos = db_manager.buscar_todos("distribuicao_sexp") or []
-        except Exception:
-            processos = []
-
-        ativos = [p for p in processos if not p.get("sessao_finalizada", False) and not p.get("removido_pauta", False) and p.get("distribuido", False)]
-        expedidos = [p for p in ativos if p.get("expedido", False)]
-        revisados = [p for p in ativos if p.get("revisado", False)]
-
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Total Ativos", len(ativos))
-        col2.metric("Expedidos", len(expedidos))
-        col3.metric("Revisados", len(revisados))
-        col4.metric("Pendentes", len(ativos) - len(expedidos))
-
-        st.markdown("##### Desempenho por Colaborador")
-        _renderizar_desempenho_colaborador(processos, "SEXP")
-
-    elif setor == "SERCON":
-        st.info("Módulo SERCON em desenvolvimento — aguardando definição do fluxo operacional.")
-
-    elif setor == "SEMAND":
-        st.info("Módulo SEMAND em desenvolvimento — aguardando definição do fluxo operacional.")
-
-# ============================================================
-# FÉRIAS DOS COLABORADORES (dentro de cada setor)
-# ============================================================
-def _renderizar_ferias_setor(usuario, setor):
-    st.markdown(f"#### 🏖️ Férias e Afastamentos — {setor}")
-    st.caption("Solicitações de férias, atestados e abonos dos colaboradores deste setor.")
-
+def _obter_processos_sexp() -> List[Dict[str, Any]]:
     try:
-        solicitacoes = db_manager.buscar_todos(
+        return db_manager.buscar_todos("distribuicao_sexp") or []
+    except Exception:
+        return []
+
+def _obter_solicitacoes_ausencia() -> List[Dict[str, Any]]:
+    try:
+        return db_manager.buscar_todos(
             "solicitacoes_ausencia",
-            filtros={"setor": setor},
             ordem_coluna="data_inicio",
             ordem_desc=False,
         ) or []
     except Exception:
-        solicitacoes = []
+        return []
+
+def _obter_avisos() -> List[Dict[str, Any]]:
+    try:
+        return db_manager.buscar_todos(
+            "avisos",
+            ordem_coluna="created_at",
+            ordem_desc=True,
+        ) or []
+    except Exception:
+        return []
+
+def _obter_regras_nip_por_tabela(nome_tabela: str) -> List[Dict[str, Any]]:
+    try:
+        return db_manager.buscar_todos(
+            nome_tabela,
+            ordem_coluna="id",
+            ordem_desc=False,
+        ) or []
+    except Exception:
+        return []
+
+# ============================================================
+# DASHBOARD GERAL
+# ============================================================
+
+def _renderizar_dashboard_geral(usuario: Dict[str, Any], modo_edicao: bool):
+    """
+    Dashboard consolidado do gabinete.
+    """
+    st.markdown("### 📊 Dashboard Geral")
+
+    metricas_gab = _coletar_metricas_setor("GAB")
+    metricas_seat = _coletar_metricas_setor("SEAT")
+    metricas_sexp = _coletar_metricas_setor("SEXP")
+
+    pauta_seat = _obter_processos_pauta_seat()
+    pauta_sexp = _obter_processos_sexp()
+    solicitacoes = _obter_solicitacoes_ausencia()
+
+    seat_encaminhados = len([p for p in pauta_seat if p.get("status") == "encaminhado"])
+    seat_pendentes = len([p for p in pauta_seat if p.get("status") != "encaminhado"])
+
+    sexp_distribuidos = len([p for p in pauta_sexp if p.get("distribuido", False)])
+    sexp_pendentes = len([p for p in pauta_sexp if not p.get("distribuido", False)])
+
+    ausencias_pendentes = len([s for s in solicitacoes if s.get("status") == "PENDENTE"])
+    ausencias_aprovadas = len([s for s in solicitacoes if s.get("status") in {"APROVADA", "NOTIFICADO"}])
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Colaboradores Ativos", metricas_gab["ativos"] + metricas_seat["ativos"] + metricas_sexp["ativos"])
+    with col2:
+        st.metric("SEAT Pendentes", seat_pendentes)
+    with col3:
+        st.metric("SEXP Pendentes", sexp_pendentes)
+    with col4:
+        st.metric("Ausências Pendentes", ausencias_pendentes)
+
+    st.markdown("---")
+
+    col_a, col_b, col_c = st.columns(3)
+
+    with col_a:
+        st.markdown("#### GAB")
+        st.write(f"- Ativos: **{metricas_gab['ativos']}**")
+        st.write(f"- Inativos: **{metricas_gab['inativos']}**")
+        st.write(f"- Total: **{metricas_gab['total']}**")
+
+    with col_b:
+        st.markdown("#### SEAT")
+        st.write(f"- Ativos: **{metricas_seat['ativos']}**")
+        st.write(f"- Pendentes: **{seat_pendentes}**")
+        st.write(f"- Encaminhados: **{seat_encaminhados}**")
+
+    with col_c:
+        st.markdown("#### SEXP")
+        st.write(f"- Ativos: **{metricas_sexp['ativos']}**")
+        st.write(f"- Não distribuídos: **{sexp_pendentes}**")
+        st.write(f"- Distribuídos: **{sexp_distribuidos}**")
+
+    st.markdown("---")
+
+    if PANDAS_OK:
+        dados = [
+            {"Setor": "GAB", "Ativos": metricas_gab["ativos"], "Inativos": metricas_gab["inativos"], "Total": metricas_gab["total"]},
+            {"Setor": "SEAT", "Ativos": metricas_seat["ativos"], "Inativos": metricas_seat["inativos"], "Total": metricas_seat["total"]},
+            {"Setor": "SEXP", "Ativos": metricas_sexp["ativos"], "Inativos": metricas_sexp["inativos"], "Total": metricas_sexp["total"]},
+        ]
+        df = pd.DataFrame(dados)
+        st.dataframe(df, hide_index=True, use_container_width=True)
+
+    st.markdown("---")
+    st.markdown("#### Ausências")
+    st.write(f"- Pendentes de análise: **{ausencias_pendentes}**")
+    st.write(f"- Aprovadas / notificadas: **{ausencias_aprovadas}**")
+
+# ============================================================
+# RESUMO DOS SETORES
+# ============================================================
+
+def _renderizar_setores(usuario: Dict[str, Any], modo_edicao: bool):
+    """
+    Visão consolidada de setores.
+    """
+    st.markdown("### 🏢 Setores")
+
+    colaboradores = _obter_colaboradores(incluir_inativos=True, incluir_contas_tecnicas=True)
+    pauta_seat = _obter_processos_pauta_seat()
+    pauta_sexp = _obter_processos_sexp()
+
+    if PANDAS_OK:
+        linhas = []
+        for setor in SETORES_SISTEMA:
+            setor_norm = _normalizar_texto(setor)
+            colabs_setor = [c for c in colaboradores if _normalizar_texto(c.get("setor", "")) == setor_norm]
+            ativos = len([c for c in colabs_setor if c.get("ativo", False)])
+
+            seat_total = 0
+            seat_pend = 0
+            sexp_total = 0
+            sexp_pend = 0
+
+            if setor == "SEAT":
+                seat_total = len(pauta_seat)
+                seat_pend = len([p for p in pauta_seat if p.get("status") != "encaminhado"])
+
+            if setor == "SEXP":
+                sexp_total = len(pauta_sexp)
+                sexp_pend = len([p for p in pauta_sexp if not p.get("distribuido", False)])
+
+            linhas.append(
+                {
+                    "Setor": setor,
+                    "Colaboradores Ativos": ativos,
+                    "Total Colaboradores": len(colabs_setor),
+                    "Carga SEAT": seat_total,
+                    "Pendências SEAT": seat_pend,
+                    "Carga SEXP": sexp_total,
+                    "Pendências SEXP": sexp_pend,
+                }
+            )
+
+        df = pd.DataFrame(linhas)
+        st.dataframe(df, hide_index=True, use_container_width=True)
+
+    st.markdown("---")
+
+    setor_escolhido = st.selectbox("Detalhar setor", options=SETORES_SISTEMA, key="gab_setor_detalhe")
+    setor_norm = _normalizar_texto(setor_escolhido)
+
+    colabs_detalhe = [c for c in colaboradores if _normalizar_texto(c.get("setor", "")) == setor_norm]
+
+    st.markdown(f"#### Equipe do {setor_escolhido}")
+
+    if not colabs_detalhe:
+        st.info("Nenhum colaborador encontrado para este setor.")
+        return
+
+    if PANDAS_OK:
+        dados = []
+        for c in colabs_detalhe:
+            dados.append(
+                {
+                    "Nome": c.get("nome", ""),
+                    "Nome curto": c.get("nome_guerra", "") or "-",
+                    "Matrícula": c.get("matricula", ""),
+                    "Cargo": c.get("cargo", ""),
+                    "Vínculo": c.get("vinculo", ""),
+                    "Nível": c.get("nivel_acesso", ""),
+                    "Ativo": _bool_label(c.get("ativo", False)),
+                }
+            )
+
+        df = pd.DataFrame(dados)
+        st.dataframe(df, hide_index=True, use_container_width=True)
+
+# ============================================================
+# COLABORADORES
+# ============================================================
+
+def _renderizar_colaboradores(usuario: Dict[str, Any], modo_edicao: bool):
+    """
+    Aba principal de gestão de colaboradores.
+    """
+    st.markdown("### 👥 Colaboradores")
+    st.caption(
+        "Cadastro, edição e inativação de colaboradores. "
+        "A fonte única de verdade é a tabela `usuarios_acesso`."
+    )
+
+    pode_gerir = _tem_permissao_total_colaboradores(usuario)
+    if not pode_gerir:
+        st.warning("Você não possui permissão para alterar colaboradores. Visualização liberada.")
+        modo_edicao = False
+
+    colaboradores = _obter_colaboradores(incluir_inativos=True, incluir_contas_tecnicas=True)
+
+    col_f1, col_f2, col_f3 = st.columns(3)
+
+    with col_f1:
+        filtro_setor = st.selectbox(
+            "Filtrar por setor",
+            options=["Todos"] + SETORES_SISTEMA,
+            key="gab_colab_setor",
+        )
+
+    with col_f2:
+        filtro_status = st.selectbox(
+            "Filtrar por status",
+            options=["Todos", "Ativos", "Inativos"],
+            key="gab_colab_status",
+        )
+
+    with col_f3:
+        mostrar_tecnicas = st.checkbox(
+            "Mostrar contas técnicas",
+            value=True,
+            key="gab_colab_tecnicas",
+        )
+
+    filtrados = []
+    for c in colaboradores:
+        if filtro_setor != "Todos" and _normalizar_texto(c.get("setor", "")) != _normalizar_texto(filtro_setor):
+            continue
+
+        if filtro_status == "Ativos" and not bool(c.get("ativo", False)):
+            continue
+
+        if filtro_status == "Inativos" and bool(c.get("ativo", False)):
+            continue
+
+        if not mostrar_tecnicas and bool(c.get("conta_tecnica", False)):
+            continue
+
+        filtrados.append(c)
+
+    st.write(f"**{len(filtrados)} colaborador(es) listado(s).**")
+
+    if PANDAS_OK and filtrados:
+        dados = []
+        for c in filtrados:
+            dados.append(
+                {
+                    "ID": c.get("id"),
+                    "Nome": c.get("nome", ""),
+                    "Nome curto": c.get("nome_guerra", "") or "-",
+                    "Matrícula": c.get("matricula", ""),
+                    "Setor": c.get("setor", ""),
+                    "Cargo": c.get("cargo", ""),
+                    "Vínculo": c.get("vinculo", ""),
+                    "Nível": c.get("nivel_acesso", ""),
+                    "Ativo": _bool_label(c.get("ativo", False)),
+                    "Conta técnica": _bool_label(c.get("conta_tecnica", False)),
+                }
+            )
+
+        df = pd.DataFrame(dados)
+        st.dataframe(df, hide_index=True, use_container_width=True)
+
+    st.markdown("---")
+
+    tab_cadastrar, tab_editar, tab_inativar = st.tabs(
+        ["Cadastrar", "Editar", "Remover / Inativar"]
+    )
+
+    with tab_cadastrar:
+        st.markdown("#### Cadastrar novo colaborador")
+
+        if not modo_edicao:
+            st.info("Modo visualização.")
+        else:
+            with st.form("gab_form_cadastrar_colaborador"):
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    nome = st.text_input("Nome completo *", key="gab_add_nome")
+                    nome_guerra = st.text_input("Nome curto", key="gab_add_nome_guerra")
+                    matricula = st.text_input("Matrícula *", key="gab_add_matricula")
+                    setor = st.selectbox("Setor *", options=SETORES_SISTEMA, key="gab_add_setor")
+
+                with col2:
+                    cargo = st.selectbox("Cargo *", options=CARGOS_PADRAO, key="gab_add_cargo")
+                    vinculo = st.selectbox("Vínculo *", options=VINCULOS_PADRAO, key="gab_add_vinculo")
+                    nivel_acesso = st.selectbox("Nível de acesso *", options=NIVEIS_ACESSO_PADRAO, key="gab_add_nivel")
+                    senha = st.text_input("Senha inicial *", key="gab_add_senha")
+
+                ativo = st.checkbox("Cadastrar como ativo", value=True, key="gab_add_ativo")
+
+                submit_add = st.form_submit_button("Cadastrar colaborador", type="primary", use_container_width=True)
+
+                if submit_add:
+                    resultado = db_manager.adicionar_membro_equipe(
+                        nome=nome,
+                        cargo=cargo,
+                        setor=setor,
+                        vinculo=vinculo,
+                        nome_guerra=nome_guerra,
+                        matricula=matricula,
+                        nivel_acesso=nivel_acesso,
+                        senha=senha,
+                        ativo=ativo,
+                    )
+
+                    if resultado:
+                        st.success(f"Colaborador cadastrado: {nome}.")
+                        st.rerun()
+                    else:
+                        st.error("Não foi possível cadastrar o colaborador.")
+
+    with tab_editar:
+        st.markdown("#### Editar colaborador")
+
+        if not filtrados:
+            st.info("Nenhum colaborador disponível para edição.")
+        elif not modo_edicao:
+            st.info("Modo visualização.")
+        else:
+            opcoes = {
+                f"{c.get('nome', '')} | {c.get('matricula', '')} | {c.get('setor', '')}": c
+                for c in filtrados
+            }
+
+            chave_escolhida = st.selectbox(
+                "Selecionar colaborador",
+                options=list(opcoes.keys()),
+                key="gab_edit_colab_select",
+            )
+
+            colaborador = opcoes[chave_escolhida]
+
+            with st.form("gab_form_editar_colaborador"):
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    edit_nome = st.text_input("Nome completo *", value=str(colaborador.get("nome", "") or ""))
+                    edit_nome_guerra = st.text_input("Nome curto", value=str(colaborador.get("nome_guerra", "") or ""))
+                    edit_matricula = st.text_input("Matrícula *", value=str(colaborador.get("matricula", "") or ""))
+                    edit_setor = st.selectbox(
+                        "Setor *",
+                        options=SETORES_SISTEMA,
+                        index=SETORES_SISTEMA.index(str(colaborador.get("setor", "GAB")))
+                        if str(colaborador.get("setor", "GAB")) in SETORES_SISTEMA else 0,
+                    )
+
+                with col2:
+                    edit_cargo = st.selectbox(
+                        "Cargo *",
+                        options=CARGOS_PADRAO,
+                        index=CARGOS_PADRAO.index(str(colaborador.get("cargo", "Assessor")))
+                        if str(colaborador.get("cargo", "Assessor")) in CARGOS_PADRAO else 0,
+                    )
+                    edit_vinculo = st.selectbox(
+                        "Vínculo *",
+                        options=VINCULOS_PADRAO,
+                        index=VINCULOS_PADRAO.index(str(colaborador.get("vinculo", "efetivo")))
+                        if str(colaborador.get("vinculo", "efetivo")) in VINCULOS_PADRAO else 0,
+                    )
+                    edit_nivel = st.selectbox(
+                        "Nível de acesso *",
+                        options=NIVEIS_ACESSO_PADRAO,
+                        index=NIVEIS_ACESSO_PADRAO.index(str(colaborador.get("nivel_acesso", "OPERACIONAL")))
+                        if str(colaborador.get("nivel_acesso", "OPERACIONAL")) in NIVEIS_ACESSO_PADRAO else 0,
+                    )
+                    edit_senha = st.text_input("Senha *", value=str(colaborador.get("senha", "") or ""))
+
+                edit_ativo = st.checkbox("Ativo", value=bool(colaborador.get("ativo", False)))
+
+                submit_edit = st.form_submit_button("Salvar alterações", type="primary", use_container_width=True)
+
+                if submit_edit:
+                    payload = {
+                        "nome": edit_nome,
+                        "nome_guerra": edit_nome_guerra,
+                        "matricula": edit_matricula,
+                        "setor": edit_setor,
+                        "cargo": edit_cargo,
+                        "vinculo": edit_vinculo,
+                        "nivel_acesso": edit_nivel,
+                        "senha": edit_senha,
+                        "ativo": edit_ativo,
+                    }
+
+                    resultado = db_manager.atualizar_membro_equipe(colaborador.get("id"), payload)
+
+                    if resultado:
+                        st.success(f"Colaborador atualizado: {edit_nome}.")
+                        st.rerun()
+                    else:
+                        st.error("Não foi possível atualizar o colaborador.")
+
+    with tab_inativar:
+        st.markdown("#### Remover / Inativar colaborador")
+
+        ativos = [c for c in filtrados if bool(c.get("ativo", False))]
+
+        if not ativos:
+            st.info("Nenhum colaborador ativo disponível para inativação.")
+        elif not modo_edicao:
+            st.info("Modo visualização.")
+        else:
+            opcoes = {
+                f"{c.get('nome', '')} | {c.get('matricula', '')} | {c.get('setor', '')}": c
+                for c in ativos
+            }
+
+            chave_escolhida = st.selectbox(
+                "Selecionar colaborador ativo",
+                options=list(opcoes.keys()),
+                key="gab_remove_colab_select",
+            )
+
+            colaborador = opcoes[chave_escolhida]
+
+            st.warning(
+                f"Você está prestes a inativar **{colaborador.get('nome', '')}** "
+                f"(matrícula **{colaborador.get('matricula', '')}**)."
+            )
+
+            confirmar = st.checkbox(
+                "Confirmo a inativação deste colaborador",
+                key="gab_remove_colab_confirm",
+            )
+
+            if st.button(
+                "Inativar colaborador",
+                type="primary",
+                use_container_width=True,
+                disabled=not confirmar,
+                key="gab_remove_colab_btn",
+            ):
+                sucesso = db_manager.remover_membro_equipe(colaborador.get("id"))
+                if sucesso:
+                    st.success(f"Colaborador inativado: {colaborador.get('nome', '')}.")
+                    st.rerun()
+                else:
+                    st.error("Não foi possível inativar o colaborador.")
+
+# ============================================================
+# AUSÊNCIAS DO GABINETE
+# ============================================================
+
+def _renderizar_ausencias_gab(usuario: Dict[str, Any], modo_edicao: bool):
+    """
+    Central de análise de férias, atestados e abonos.
+    """
+    st.markdown("### 🌴 Solicitações de Férias e Afastamentos")
+
+    solicitacoes = _obter_solicitacoes_ausencia()
 
     if not solicitacoes:
-        st.info("Nenhuma solicitação de afastamento registrada para este setor.")
+        st.info("Nenhuma solicitação encontrada.")
         return
 
-    pendentes = [s for s in solicitacoes if s.get("status") == "PENDENTE"]
-    aprovadas = [s for s in solicitacoes if s.get("status") == "APROVADA"]
-    rejeitadas = [s for s in solicitacoes if s.get("status") == "REJEITADA"]
-
     col1, col2, col3 = st.columns(3)
-    col1.metric("Pendentes", len(pendentes))
-    col2.metric("Aprovadas", len(aprovadas))
-    col3.metric("Rejeitadas", len(rejeitadas))
 
-    if pendentes:
-        st.markdown("##### ⏳ Aguardando Aprovação")
-        for s in pendentes:
-            sid = s.get("id")
-            nome = s.get("colaborador_nome", "—")
-            tipo = s.get("tipo", "—")
-            data_ini = s.get("data_inicio", "—")[:10]
-            data_fim = s.get("data_fim", "—")[:10]
-            dias = s.get("dias_afastado", "—")
-            obs = s.get("observacoes", "") or "—"
+    with col1:
+        filtro_setor = st.selectbox(
+            "Setor",
+            options=["Todos"] + SETORES_SISTEMA,
+            key="gab_aus_setor",
+        )
 
-            tipo_label = {"FERIAS": "🌴 Férias", "ATESTADO": "🏥 Atestado", "ABONO": "📋 Abono"}.get(tipo, tipo)
+    with col2:
+        filtro_status = st.selectbox(
+            "Status",
+            options=["Todos"] + STATUS_AUSENCIA_PERMITIDOS,
+            key="gab_aus_status",
+        )
 
-            with st.expander(f"{tipo_label} — {nome} — {data_ini} a {data_fim} ({dias} dias)"):
-                st.write(f"**Colaborador:** {nome}")
-                st.write(f"**Tipo:** {tipo_label}")
-                st.write(f"**Período:** {data_ini} a {data_fim}")
-                st.write(f"**Dias:** {dias}")
-                st.write(f"**Observações:** {obs}")
+    with col3:
+        filtro_tipo = st.selectbox(
+            "Tipo",
+            options=["Todos"] + TIPOS_AUSENCIA,
+            key="gab_aus_tipo",
+        )
 
-                is_gestor = _tem_permissao_gestao(usuario)
-                if is_gestor:
-                    col_apr, col_rej = st.columns(2)
-                    with col_apr:
-                        if st.button("✅ Aprovar", key=f"apr_setor_{sid}", type="primary", use_container_width=True):
-                            db_manager.atualizar("solicitacoes_ausencia", sid, {"status": "APROVADA"})
-                            st.success(f"Solicitação de {nome} aprovada!")
-                            st.rerun()
-                    with col_rej:
-                        if st.button("❌ Rejeitar", key=f"rej_setor_{sid}", use_container_width=True):
-                            db_manager.atualizar("solicitacoes_ausencia", sid, {"status": "REJEITADA"})
-                            st.info(f"Solicitação de {nome} rejeitada.")
-                            st.rerun()
+    filtradas = []
+    for s in solicitacoes:
+        if filtro_setor != "Todos" and _normalizar_texto(s.get("setor", "")) != _normalizar_texto(filtro_setor):
+            continue
+        if filtro_status != "Todos" and str(s.get("status", "") or "").strip() != filtro_status:
+            continue
+        if filtro_tipo != "Todos" and str(s.get("tipo", "") or "").strip() != filtro_tipo:
+            continue
+        filtradas.append(s)
+
+    st.write(f"**{len(filtradas)} solicitação(ões)** filtrada(s).")
+
+    if PANDAS_OK and filtradas:
+        dados = []
+        for s in filtradas:
+            dados.append(
+                {
+                    "ID": s.get("id"),
+                    "Colaborador": s.get("colaborador_nome", ""),
+                    "Setor": s.get("setor", ""),
+                    "Tipo": s.get("tipo", ""),
+                    "Início": _formatar_data_curta(s.get("data_inicio")),
+                    "Fim": _formatar_data_curta(s.get("data_fim")),
+                    "Dias": s.get("dias_afastado", "-"),
+                    "Status": s.get("status", ""),
+                    "Observações": s.get("observacoes", "") or "-",
+                }
+            )
+
+        df = pd.DataFrame(dados)
+        st.dataframe(df, hide_index=True, use_container_width=True)
+
+    st.markdown("---")
+    st.markdown("#### Analisar solicitação")
+
+    pendentes = [s for s in filtradas if s.get("status") == "PENDENTE"]
+
+    if not pendentes:
+        st.info("Nenhuma solicitação pendente nos filtros atuais.")
+        return
+
+    if not _tem_permissao_gab(usuario) or not modo_edicao:
+        st.warning("A aprovação ou reprovação exige permissão de gestão em modo de edição.")
+        return
+
+    opcoes = {
+        f"{s.get('colaborador_nome', '')} | {s.get('tipo', '')} | {_formatar_data_curta(s.get('data_inicio'))} a {_formatar_data_curta(s.get('data_fim'))}": s
+        for s in pendentes
+    }
+
+    chave_escolhida = st.selectbox(
+        "Selecionar solicitação pendente",
+        options=list(opcoes.keys()),
+        key="gab_ausencia_select",
+    )
+
+    solicitacao = opcoes[chave_escolhida]
+
+    with st.form("gab_form_analisar_ausencia"):
+        decisao = st.selectbox(
+            "Decisão",
+            options=["APROVADA", "REPROVADA"],
+            key="gab_aus_decisao",
+        )
+
+        observacao_gestor = st.text_area(
+            "Observação da chefia",
+            value=str(solicitacao.get("observacoes", "") or ""),
+            height=80,
+            key="gab_aus_obs_gestor",
+        )
+
+        submit = st.form_submit_button("Salvar decisão", type="primary", use_container_width=True)
+
+        if submit:
+            payload = {
+                "status": decisao,
+                "observacoes": observacao_gestor.strip(),
+            }
+
+            resultado = db_manager.atualizar("solicitacoes_ausencia", int(solicitacao["id"]), payload)
+
+            if resultado:
+                st.success("Solicitação atualizada com sucesso.")
+                st.rerun()
+            else:
+                st.error("Não foi possível atualizar a solicitação.")
+
+# ============================================================
+# AVISOS
+# ============================================================
+
+def _renderizar_avisos(usuario: Dict[str, Any], modo_edicao: bool):
+    """
+    Gestão de avisos internos.
+    """
+    st.markdown("### 📢 Avisos")
+
+    avisos = _obter_avisos()
+
+    if modo_edicao and _tem_permissao_gab(usuario):
+        with st.form("gab_form_aviso"):
+            titulo = st.text_input("Título *", key="gab_aviso_titulo")
+            mensagem = st.text_area("Mensagem *", height=100, key="gab_aviso_mensagem")
+            setor = st.selectbox("Setor", options=["TODOS"] + SETORES_SISTEMA, key="gab_aviso_setor")
+            submit = st.form_submit_button("Publicar aviso", type="primary", use_container_width=True)
+
+            if submit:
+                if not titulo.strip() or not mensagem.strip():
+                    st.error("Título e mensagem são obrigatórios.")
                 else:
-                    st.info("Apenas gestores podem aprovar/rejeitar.")
-
-    if aprovadas:
-        st.markdown("##### ✅ Aprovadas")
-        dados_aprov = []
-        for s in aprovadas:
-            tipo_raw = s.get("tipo", "—")
-            tipo_lbl = {"FERIAS": "🌴 Férias", "ATESTADO": "🏥 Atestado", "ABONO": "📋 Abono"}.get(tipo_raw, tipo_raw)
-            dados_aprov.append({
-                "Colaborador": s.get("colaborador_nome", "—"),
-                "Tipo": tipo_lbl,
-                "Início": s.get("data_inicio", "—")[:10],
-                "Fim": s.get("data_fim", "—")[:10],
-                "Dias": s.get("dias_afastado", "—"),
-            })
-        df_aprov = pd.DataFrame(dados_aprov)
-        st.dataframe(df_aprov, hide_index=True, use_container_width=True)
-
-# ============================================================
-# AVISOS DO SETOR
-# ============================================================
-def _renderizar_avisos_setor(usuario, setor):
-    st.markdown(f"#### 📢 Avisos — {setor}")
-    st.caption(f"Avisos enviados exclusivamente para o setor {setor}.")
-
-    is_gestor = _tem_permissao_gestao(usuario)
-
-    if is_gestor:
-        with st.form(f"form_aviso_setor_{setor}"):
-            st.markdown("**Enviar Aviso para o Setor:**")
-            mensagem = st.text_area("Mensagem", placeholder="Digite o aviso...", height=80, key=f"txt_aviso_{setor}")
-            duracao = st.number_input("Duração (horas)", min_value=1, value=24, key=f"dur_aviso_{setor}")
-
-            if st.form_submit_button("📢 Publicar", type="primary", use_container_width=True):
-                if mensagem.strip():
-                    dados_aviso = {
-                        "remetente": usuario.get("nome", "—"),
-                        "setor_remetente": usuario.get("setor", "GAB"),
-                        "escopo": setor,
+                    payload = {
+                        "titulo": titulo.strip(),
                         "mensagem": mensagem.strip(),
-                        "duracao_horas": duracao,
-                        "data_criacao": datetime.now().isoformat(),
+                        "setor": setor,
                         "ativo": True,
                     }
-                    try:
-                        db_manager.inserir("avisos_gab", dados_aviso)
-                        st.success("✅ Aviso publicado!")
+                    resultado = db_manager.inserir("avisos", payload)
+                    if resultado:
+                        st.success("Aviso publicado.")
                         st.rerun()
-                    except Exception as e:
-                        st.error(f"Erro ao publicar: {e}")
-                else:
-                    st.warning("Digite uma mensagem.")
-    else:
-        st.info("Apenas gestores podem enviar avisos.")
+                    else:
+                        st.error("Não foi possível publicar o aviso.")
 
-    try:
-        avisos = db_manager.buscar_todos("avisos_gab") or []
-    except Exception:
-        avisos = []
+        st.markdown("---")
 
-    agora = datetime.now()
-    avisos_setor = []
-    for a in avisos:
-        if not a.get("ativo", True):
-            continue
-        if a.get("escopo") != setor:
-            continue
-        data_criacao = a.get("data_criacao", "")
-        if data_criacao:
-            try:
-                dt_criacao = datetime.fromisoformat(data_criacao)
-                duracao_horas = a.get("duracao_horas", 24)
-                expira = dt_criacao + timedelta(hours=duracao_horas)
-                if agora > expira:
-                    continue
-            except Exception:
-                pass
-        avisos_setor.append(a)
-
-    if avisos_setor:
-        st.markdown("##### Avisos Ativos")
-        for a in avisos_setor:
-            remetente = a.get("remetente", "—")
-            mensagem = a.get("mensagem", "")
-            data_criacao = a.get("data_criacao", "")[:16].replace("T", " ")
-            st.warning(f"📢 **{remetente}** ({data_criacao}): {mensagem}")
-    else:
-        st.info("Nenhum aviso ativo para este setor.")
-
-# ============================================================
-# REGRAS NIP — Gestão de substituições, verbos, urgência e SERCON
-# ============================================================
-def _renderizar_regras_nip(usuario):
-    """Tab de gestão das regras do Motor NIP."""
-    is_gestor = _tem_permissao_gestao(usuario)
-
-    if not is_gestor:
-        st.warning("⚠️ Acesso restrito a gestores.")
+    if not avisos:
+        st.info("Nenhum aviso cadastrado.")
         return
 
-    st.markdown("#### ⚙️ Regras do Motor NIP")
-    st.caption("Gerencie substituições, verbos, palavras de urgência e SERCON.")
+    for aviso in avisos:
+        if not bool(aviso.get("ativo", True)):
+            continue
 
-    tab_sub, tab_verb, tab_urg, tab_sercon = st.tabs([
-        "📝 Substituições",
-        "🔀 Verbos",
-        "🚨 Urgência",
-        "💰 SERCON",
-    ])
+        with st.expander(f"{aviso.get('titulo', 'Aviso')} | {_formatar_data_hora(aviso.get('created_at'))}"):
+            st.write(aviso.get("mensagem", ""))
+            st.caption(f"Setor: {aviso.get('setor', 'TODOS')}")
 
-    with tab_sub:
-        _renderizar_crud_substituicoes()
-    with tab_verb:
-        _renderizar_crud_verbos()
-    with tab_urg:
-        _renderizar_crud_urgencia()
-    with tab_sercon:
-        _renderizar_crud_sercon()
-
-# ============================================================
-# CRUD — SUBSTITUIÇÕES (frases e termos)
-# ============================================================
-def _renderizar_crud_substituicoes():
-    st.markdown("##### 📝 Substituições de Frases e Termos")
-    st.caption("Regras que substituem trechos de texto no voto.")
-
-    try:
-        regras = db_manager.buscar_todos(
-            "regras_substituicao_nip",
-            filtros={"ativo": True},
-            ordem_coluna="ordem",
-            ordem_desc=False,
-        ) or []
-    except Exception:
-        regras = []
-
-    frases = [r for r in regras if r.get("tipo") in ("frase", "termo")]
-
-    if frases:
-        dados = []
-        for r in frases:
-            dados.append({
-                "ID": r.get("id", "—"),
-                "Tipo": r.get("tipo", "—"),
-                "Procurar": r.get("procurar", "—"),
-                "Substituir por": r.get("substituir_por", "—"),
-            })
-        df = pd.DataFrame(dados)
-        st.dataframe(df, hide_index=True, use_container_width=True)
-    else:
-        st.info("Nenhuma substituição cadastrada.")
-
-    st.markdown("---")
-    st.markdown("**➕ Adicionar Substituição**")
-
-    with st.form("form_nova_sub_nip"):
-        col1, col2 = st.columns(2)
-        with col1:
-            tipo_sub = st.selectbox("Tipo", ["frase", "termo"], key="tipo_sub_nip")
-            procurar = st.text_area("Procurar por", placeholder="Texto original...", height=80, key="proc_sub_nip")
-        with col2:
-            ordem_sub = st.number_input("Ordem", min_value=0, value=0, key="ordem_sub_nip")
-            substituir = st.text_area("Substituir por", placeholder="Novo texto...", height=80, key="subst_sub_nip")
-
-        if st.form_submit_button("➕ Adicionar", type="primary", use_container_width=True):
-            if procurar.strip() and substituir.strip():
-                dados = {
-                    "procurar": procurar.strip(),
-                    "substituir_por": substituir.strip(),
-                    "tipo": tipo_sub,
-                    "ativo": True,
-                    "ordem": ordem_sub,
-                }
-                try:
-                    db_manager.inserir("regras_substituicao_nip", dados)
-                    st.success("✅ Substituição adicionada!")
+            if modo_edicao and _tem_permissao_gab(usuario):
+                if st.button("Desativar aviso", key=f"gab_aviso_off_{aviso.get('id')}"):
+                    db_manager.atualizar("avisos", int(aviso["id"]), {"ativo": False})
                     st.rerun()
-                except Exception as e:
-                    st.error(f"Erro: {e}")
-            else:
-                st.warning("Preencha os dois campos.")
-
-    if frases:
-        st.markdown("---")
-        st.markdown("**🗑️ Remover Substituição**")
-        opcoes_rem = [f"#{r.get('id')} — {r.get('procurar', '')[:40]}" for r in frases]
-        sel = st.selectbox("Selecionar", opcoes_rem, key="sel_rem_sub_nip")
-        if st.button("🗑️ Remover", key="btn_rem_sub_nip"):
-            rid = int(sel.split(" — ")[0].replace("#", ""))
-            try:
-                db_manager.atualizar("regras_substituicao_nip", rid, {"ativo": False})
-                st.success("Removido!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Erro: {e}")
 
 # ============================================================
-# CRUD — VERBOS (imperativo → infinitivo)
+# REGRAS DO MOTOR NIP
 # ============================================================
-def _renderizar_crud_verbos():
-    st.markdown("##### 🔀 Verbos (Imperativo → Infinitivo)")
-    st.caption("Regras que convertem verbos no imperativo para infinitivo após numerais romanos.")
 
-    try:
-        regras = db_manager.buscar_todos(
-            "regras_substituicao_nip",
-            filtros={"ativo": True},
-            ordem_coluna="ordem",
-            ordem_desc=False,
-        ) or []
-    except Exception:
-        regras = []
-
-    verbos = [r for r in regras if r.get("tipo") == "verbo"]
-
-    if verbos:
-        dados = []
-        for r in verbos:
-            dados.append({
-                "ID": r.get("id", "—"),
-                "Imperativo": r.get("procurar", "—"),
-                "Infinitivo": r.get("substituir_por", "—"),
-            })
-        df = pd.DataFrame(dados)
-        st.dataframe(df, hide_index=True, use_container_width=True)
-    else:
-        st.info("Nenhum verbo cadastrado. Adicione abaixo.")
-
-    st.markdown("---")
-    st.markdown("**➕ Adicionar Verbo**")
-
-    with st.form("form_novo_verbo_nip"):
-        col1, col2 = st.columns(2)
-        with col1:
-            imp = st.text_input("Imperativo (ex: conheça)", placeholder="conheça", key="imp_verbo_nip")
-        with col2:
-            inf = st.text_input("Infinitivo (ex: conhecer)", placeholder="conhecer", key="inf_verbo_nip")
-
-        if st.form_submit_button("➕ Adicionar", type="primary", use_container_width=True):
-            if imp.strip() and inf.strip():
-                dados = {
-                    "procurar": imp.strip().lower(),
-                    "substituir_por": inf.strip().lower(),
-                    "tipo": "verbo",
-                    "ativo": True,
-                    "ordem": 0,
-                }
-                try:
-                    db_manager.inserir("regras_substituicao_nip", dados)
-                    st.success(f"✅ Verbo adicionado: {imp.strip()} → {inf.strip()}")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Erro: {e}")
-            else:
-                st.warning("Preencha os dois campos.")
-
-    if verbos:
-        st.markdown("---")
-        st.markdown("**🗑️ Remover Verbo**")
-        opcoes_rem = [f"#{r.get('id')} — {r.get('procurar', '')} → {r.get('substituir_por', '')}" for r in verbos]
-        sel = st.selectbox("Selecionar", opcoes_rem, key="sel_rem_verbo_nip")
-        if st.button("🗑️ Remover", key="btn_rem_verbo_nip"):
-            rid = int(sel.split(" — ")[0].replace("#", ""))
-            try:
-                db_manager.atualizar("regras_substituicao_nip", rid, {"ativo": False})
-                st.success("Verbo removido!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Erro: {e}")
-
-# ============================================================
-# CRUD — PALAVRAS DE URGÊNCIA
-# ============================================================
-def _renderizar_crud_urgencia():
-    st.markdown("##### 🚨 Palavras de Urgência")
-    st.caption("Palavras que marcam o processo como urgente automaticamente.")
-
-    try:
-        palavras = db_manager.buscar_todos("palavras_urgencia_nip", filtros={"ativo": True}) or []
-    except Exception:
-        palavras = []
-
-    if palavras:
-        dados = []
-        for p in palavras:
-            dados.append({
-                "ID": p.get("id", "—"),
-                "Palavra": p.get("palavra", "—"),
-            })
-        df = pd.DataFrame(dados)
-        st.dataframe(df, hide_index=True, use_container_width=True)
-    else:
-        st.info("Nenhuma palavra de urgência cadastrada.")
-
-    st.markdown("---")
-    st.markdown("**➕ Adicionar Palavra de Urgência**")
-
-    with st.form("form_nova_urg_nip"):
-        palavra = st.text_input("Palavra", placeholder="Ex: urgente, suspender, licitação...", key="palavra_urg_nip")
-
-        if st.form_submit_button("➕ Adicionar", type="primary", use_container_width=True):
-            if palavra.strip():
-                dados = {
-                    "palavra": palavra.strip().lower(),
-                    "ativo": True,
-                }
-                try:
-                    db_manager.inserir("palavras_urgencia_nip", dados)
-                    st.success(f"✅ Palavra adicionada: {palavra.strip()}")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Erro: {e}")
-            else:
-                st.warning("Digite uma palavra.")
-
-    if palavras:
-        st.markdown("---")
-        st.markdown("**🗑️ Remover Palavra**")
-        opcoes_rem = [f"#{p.get('id')} — {p.get('palavra', '')}" for p in palavras]
-        sel = st.selectbox("Selecionar", opcoes_rem, key="sel_rem_urg_nip")
-        if st.button("🗑️ Remover", key="btn_rem_urg_nip"):
-            rid = int(sel.split(" — ")[0].replace("#", ""))
-            try:
-                db_manager.atualizar("palavras_urgencia_nip", rid, {"ativo": False})
-                st.success("Palavra removida!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Erro: {e}")
-
-# ============================================================
-# CRUD — PALAVRAS DE SERCON
-# ============================================================
-def _renderizar_crud_sercon():
-    st.markdown("##### 💰 Palavras de SERCON")
-    st.caption("Palavras que direcionam o processo para o SERCON automaticamente.")
-
-    try:
-        palavras = db_manager.buscar_todos("palavras_sercon_nip", filtros={"ativo": True}) or []
-    except Exception:
-        palavras = []
-
-    if palavras:
-        dados = []
-        for p in palavras:
-            dados.append({
-                "ID": p.get("id", "—"),
-                "Palavra": p.get("palavra", "—"),
-                "Situação": p.get("situacao", "—"),
-            })
-        df = pd.DataFrame(dados)
-        st.dataframe(df, hide_index=True, use_container_width=True)
-    else:
-        st.info("Nenhuma palavra de SERCON cadastrada.")
-
-    st.markdown("---")
-    st.markdown("**➕ Adicionar Palavra de SERCON**")
-
-    with st.form("form_nova_sercon_nip"):
-        col1, col2 = st.columns(2)
-        with col1:
-            palavra = st.text_input("Palavra", placeholder="Ex: acórdão, notificação...", key="palavra_sercon_nip")
-        with col2:
-            situacao = st.selectbox(
-                "Situação",
-                ["acórdão", "notificação", "cientificação", "audiência", "cobrança", "multa"],
-                key="sit_sercon_nip"
-            )
-
-        if st.form_submit_button("➕ Adicionar", type="primary", use_container_width=True):
-            if palavra.strip():
-                dados = {
-                    "palavra": palavra.strip().lower(),
-                    "situacao": situacao,
-                    "ativo": True,
-                }
-                try:
-                    db_manager.inserir("palavras_sercon_nip", dados)
-                    st.success(f"✅ Palavra adicionada: {palavra.strip()} ({situacao})")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Erro: {e}")
-            else:
-                st.warning("Digite uma palavra.")
-
-    if palavras:
-        st.markdown("---")
-        st.markdown("**🗑️ Remover Palavra**")
-        opcoes_rem = [f"#{p.get('id')} — {p.get('palavra', '')} ({p.get('situacao', '')})" for p in palavras]
-        sel = st.selectbox("Selecionar", opcoes_rem, key="sel_rem_sercon_nip")
-        if st.button("🗑️ Remover", key="btn_rem_sercon_nip"):
-            rid = int(sel.split(" — ")[0].replace("#", ""))
-            try:
-                db_manager.atualizar("palavras_sercon_nip", rid, {"ativo": False})
-                st.success("Palavra removida!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Erro: {e}")
-
-# ============================================================
-# SIDEBAR DO GAB
-# ============================================================
-def _renderizar_sidebar_gab(usuario):
-    is_gestor = _tem_permissao_gestao(usuario)
-    cargo = usuario.get("nivel_acesso", usuario.get("cargo", "")).lower()
-    is_raiz = cargo in ("criador", "raiz", "admin", "super_admin_criador") or "juan" in usuario.get("nome", "").lower()
-
-    with st.sidebar:
-        st.markdown("---")
-        st.markdown("### 📢 Avisos do Gabinete")
-
-        if is_gestor:
-            with st.expander("➕ Enviar Aviso Geral"):
-                if is_raiz:
-                    escopo = st.selectbox("Enviar para", ["Todos os Setores", "SEAT", "SEXP", "SERCON", "SEMAND"], key="escopo_aviso_gab")
-                else:
-                    escopo = usuario.get("setor", "SEAT")
-                    st.info(f"Avisos limitados ao seu setor: {escopo}")
-
-                texto_aviso = st.text_area("Mensagem", placeholder="Digite o aviso...", height=80, key="txt_aviso_gab")
-
-                col_dur1, col_dur2 = st.columns(2)
-                with col_dur1:
-                    duracao_num = st.number_input("Duração", min_value=1, value=24, key="dur_num_gab")
-                with col_dur2:
-                    duracao_tipo = st.selectbox("Unidade", ["horas", "dias"], key="dur_tipo_gab")
-
-                if st.button("📢 Publicar Aviso", type="primary", use_container_width=True, key="btn_pub_aviso"):
-                    if texto_aviso.strip():
-                        horas = duracao_num * 24 if duracao_tipo == "dias" else duracao_num
-                        dados_aviso = {
-                            "remetente": usuario.get("nome", "—"),
-                            "setor_remetente": usuario.get("setor", "GAB"),
-                            "escopo": escopo if isinstance(escopo, str) else "Todos os Setores",
-                            "mensagem": texto_aviso.strip(),
-                            "duracao_horas": horas,
-                            "data_criacao": datetime.now().isoformat(),
-                            "ativo": True,
-                        }
-                        try:
-                            db_manager.inserir("avisos_gab", dados_aviso)
-                            st.success("✅ Aviso publicado!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Erro ao publicar: {e}")
-                    else:
-                        st.warning("Digite uma mensagem.")
-        else:
-            st.info("Apenas gestores podem enviar avisos.")
-
-        st.markdown("---")
-        st.markdown("### 👁️ Pedido de Vista")
-
-        if is_raiz:
-            with st.expander("Registrar Pedido de Vista"):
-                num_proc = st.text_input("Número do Processo", placeholder="Ex: 1234567-89.2024.8.26.0000", key="num_vista_gab")
-                if st.button("🔍 Localizar e Marcar", type="primary", use_container_width=True, key="btn_vista_gab"):
-                    if num_proc.strip():
-                        _processar_pedido_vista(num_proc.strip(), usuario)
-                    else:
-                        st.warning("Digite o número do processo.")
-        else:
-            st.info("Acesso restrito a Raiz.")
-
-        st.markdown("---")
-        st.markdown("### 🚨 Urgentes")
-
-        try:
-            urgentes = db_manager.buscar_todos("processos_urgentes") or []
-            ativos = [u for u in urgentes if not u.get("despachado", False)]
-            despachados = [u for u in urgentes if u.get("despachado", False)]
-
-            col_u1, col_u2 = st.columns(2)
-            col_u1.metric("Ativos", len(ativos))
-            col_u2.metric("Despachados", len(despachados))
-        except Exception:
-            st.warning("Erro ao carregar urgentes.")
-
-# ============================================================
-# BANNER DE AVISOS ATIVOS
-# ============================================================
-def _renderizar_banner_avisos(usuario):
-    try:
-        avisos = db_manager.buscar_todos("avisos_gab") or []
-    except Exception:
-        return
-
-    setor_usuario = usuario.get("setor", "SEAT")
-    agora = datetime.now()
-
-    avisos_ativos = []
-    for a in avisos:
-        if not a.get("ativo", True):
-            continue
-        escopo = a.get("escopo", "Todos os Setores")
-        if escopo != "Todos os Setores" and escopo != setor_usuario:
-            continue
-        data_criacao = a.get("data_criacao", "")
-        if data_criacao:
-            try:
-                dt_criacao = datetime.fromisoformat(data_criacao)
-                duracao_horas = a.get("duracao_horas", 24)
-                expira = dt_criacao + timedelta(hours=duracao_horas)
-                if agora > expira:
-                    continue
-            except Exception:
-                pass
-        avisos_ativos.append(a)
-
-    if avisos_ativos:
-        for a in avisos_ativos:
-            remetente = a.get("remetente", "—")
-            escopo = a.get("escopo", "—")
-            mensagem = a.get("mensagem", "")
-            st.warning(f"📢 **{remetente}** ({escopo}): {mensagem}")
-
-# ============================================================
-# QUADRO DE COLABORADORES
-# ============================================================
-def _renderizar_quadro_colaboradores(seat_processos, sexp_processos):
-    colaboradores = {}
-
-    for p in seat_processos:
-        editor = p.get("editor", "")
-        if editor and editor != "—":
-            if editor not in colaboradores:
-                colaboradores[editor] = {"setor": "SEAT", "total": 0, "ativos": 0}
-            colaboradores[editor]["total"] += 1
-            if not p.get("sessao_finalizada") and not p.get("removido_pauta"):
-                colaboradores[editor]["ativos"] += 1
-
-        revisor = p.get("revisor", "")
-        if revisor and revisor != "—":
-            if revisor not in colaboradores:
-                colaboradores[revisor] = {"setor": "SEAT", "total": 0, "ativos": 0}
-            colaboradores[revisor]["total"] += 1
-            if not p.get("sessao_finalizada") and not p.get("removido_pauta"):
-                colaboradores[revisor]["ativos"] += 1
-
-    for p in sexp_processos:
-        expedidor = p.get("expedidor", "")
-        if expedidor and expedidor != "—":
-            if expedidor not in colaboradores:
-                colaboradores[expedidor] = {"setor": "SEXP", "total": 0, "ativos": 0}
-            colaboradores[expedidor]["total"] += 1
-            if not p.get("sessao_finalizada") and not p.get("removido_pauta"):
-                colaboradores[expedidor]["ativos"] += 1
-
-        revisor = p.get("revisor", "")
-        if revisor and revisor != "—":
-            if revisor not in colaboradores:
-                colaboradores[revisor] = {"setor": "SEXP", "total": 0, "ativos": 0}
-            colaboradores[revisor]["total"] += 1
-            if not p.get("sessao_finalizada") and not p.get("removido_pauta"):
-                colaboradores[revisor]["ativos"] += 1
-
-    if not colaboradores:
-        st.info("Nenhum colaborador com processos registrados ainda.")
-        return
-
-    dados = []
-    for nome, info in sorted(colaboradores.items()):
-        dados.append({
-            "Colaborador": nome,
-            "Setor": info["setor"],
-            "Total Trabalhado": info["total"],
-            "Ativos Agora": info["ativos"],
-        })
-
-    df = pd.DataFrame(dados)
-    st.dataframe(df, hide_index=True, use_container_width=True)
-
-# ============================================================
-# DESEMPENHO POR COLABORADOR
-# ============================================================
-def _renderizar_desempenho_colaborador(processos, setor):
-    colaboradores = {}
-
-    for p in processos:
-        if p.get("sessao_finalizada") or p.get("removido_pauta"):
-            continue
-
-        if setor == "SEAT":
-            pessoa = p.get("editor", "") or p.get("revisor", "")
-        else:
-            pessoa = p.get("expedidor", "") or p.get("revisor", "")
-
-        if not pessoa or pessoa == "—":
-            continue
-
-        if pessoa not in colaboradores:
-            colaboradores[pessoa] = {"total": 0, "concluidos": 0}
-        colaboradores[pessoa]["total"] += 1
-
-        if p.get("revisado"):
-            colaboradores[pessoa]["concluidos"] += 1
-
-    if not colaboradores:
-        st.info("Nenhum colaborador com processos ativos neste setor.")
-        return
-
-    dados = []
-    for nome, info in sorted(colaboradores.items()):
-        dados.append({
-            "Colaborador": nome,
-            "Processos Ativos": info["total"],
-            "Concluídos": info["concluidos"],
-            "Pendentes": info["total"] - info["concluidos"],
-        })
-
-    df = pd.DataFrame(dados)
-    st.dataframe(df, hide_index=True, use_container_width=True)
-
-# ============================================================
-# LINHA DO TEMPO — DESPACHOS DA SEMANA
-# ============================================================
-def _renderizar_linha_tempo_despachos(seat_processos, sexp_processos):
-    hoje = datetime.now().date()
-    inicio_semana = hoje - timedelta(days=hoje.weekday())
-
-    dias_semana = []
-    for i in range(7):
-        dias_semana.append(inicio_semana + timedelta(days=i))
-
-    dados_dia = {d: {"ds": 0, "sustentacao": 0} for d in dias_semana}
-
-    for p in seat_processos:
-        data_raw = str(p.get("data_entrada", p.get("criado_em", "")))[:10]
-        if not data_raw:
-            continue
-        try:
-            data_proc = datetime.fromisoformat(data_raw).date()
-            if data_proc in dados_dia:
-                if p.get("tipo") == "DS" or p.get("despacho_singular"):
-                    dados_dia[data_proc]["ds"] += 1
-                if p.get("tipo") == "SUSTENTACAO" or p.get("sustentacao_oral"):
-                    dados_dia[data_proc]["sustentacao"] += 1
-        except Exception:
-            pass
-
-    total_ds = sum(d["ds"] for d in dados_dia.values())
-    total_sust = sum(d["sustentacao"] for d in dados_dia.values())
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Despachos Singulares (semana)", total_ds)
-    col2.metric("Sustentações Orais (semana)", total_sust)
-    col3.metric("Total Geral", total_ds + total_sust)
-
-    dados_tabela = []
-    for d in dias_semana:
-        dados_tabela.append({
-            "Dia": d.strftime("%d/%m (%a)"),
-            "Despachos Singulares": dados_dia[d]["ds"],
-            "Sustentações Orais": dados_dia[d]["sustentacao"],
-            "Total do Dia": dados_dia[d]["ds"] + dados_dia[d]["sustentacao"],
-        })
-
-    df = pd.DataFrame(dados_tabela)
-    st.dataframe(df, hide_index=True, use_container_width=True)
-
-# ============================================================
-# PEDIDO DE VISTA
-# ============================================================
-def _processar_pedido_vista(num_processo, usuario):
-    tabelas_busca = ["pauta_seat", "distribuicao_sexp", "processos_urgentes"]
-    encontrados = 0
-
-    for tabela in tabelas_busca:
-        try:
-            processos = db_manager.buscar_todos(tabela) or []
-            for p in processos:
-                p_num = p.get("processo_numero", "")
-                if num_processo in p_num or p_num in num_processo:
-                    pid = p.get("id")
-                    if pid:
-                        comentarios_atuais = p.get("comentarios", "") or ""
-                        novo_comentario = f"\n[Pedido de Vista — {datetime.now().strftime('%d/%m/%Y %H:%M')} por {usuario.get('nome', '—')}]"
-                        db_manager.atualizar(tabela, pid, {
-                            "comentarios": comentarios_atuais + novo_comentario,
-                            "pedido_vista": True,
-                        })
-                        encontrados += 1
-        except Exception:
-            pass
-
-    if encontrados > 0:
-        st.success(f"✅ Processo localizado e marcado como pedido de vista em {encontrados} tabela(s)!")
-    else:
-        st.error("❌ Processo não encontrado em nenhuma tabela. Verifique o número e tente novamente.")
-
-# ============================================================
-# ESCALA DO PLENÁRIO — REESCRITA COMPLETA
-# ============================================================
-def _renderizar_escala_plenario(usuario):
-    st.markdown("### 📅 Escala do Plenário")
-    st.caption("Secretário fixo. Acompanhantes revezam semanalmente. Escala bimestral (8 sessões).")
-
-    is_gestor = _tem_permissao_gestao(usuario)
-
-    # Buscar escala existente
-    try:
-        escala = db_manager.buscar_todos("escala_plenario", ordem_coluna="data_sessao", ordem_desc=False) or []
-    except Exception:
-        escala = []
-
-    # Buscar afastamentos aprovados
-    try:
-        afastamentos = db_manager.buscar_todos("solicitacoes_ausencia") or []
-    except Exception:
-        afastamentos = []
-    afastamentos_aprovados = [a for a in afastamentos if a.get("status") == "APROVADA"]
-
-    # Botão Gerar Escala
-    if is_gestor:
-        if st.button("🔄 Gerar Escala Bimestral", type="primary", use_container_width=True):
-            _gerar_escala_bimestral(usuario, afastamentos_aprovados)
-            st.rerun()
-
-    if not escala:
-        st.info("Nenhuma escala gerada. Clique em 'Gerar Escala Bimestral' para criar.")
-        return
-
-    # Filtrar ativos
-    escalas_ativas = []
-    for e in escala:
-        if not e.get("ativo", True):
-            continue
-        try:
-            d = datetime.fromisoformat(str(e.get("data_sessao", ""))[:10]).date()
-            escalas_ativas.append((d, e))
-        except Exception:
-            pass
-
-    if not escalas_ativas:
-        st.info("Nenhuma escala ativa.")
-        return
-
-    escalas_ativas.sort(key=lambda x: x[0])
-
-    # Tabela resumo
-    st.markdown("#### Escala Atual")
-    dados_tabela = []
-    for d, e in escalas_ativas:
-        if e.get("secretario_presente", True):
-            sec_status = "✅ Presente"
-        else:
-            motivo = e.get("secretario_motivo_ausencia", "Ausente")
-            sec_status = f"❌ {motivo}"
-        dados_tabela.append({
-            "Data": d.strftime("%d/%m/%Y"),
-            "Dia": _traduz_dia_semana(d.strftime("%A")),
-            "Secretário": sec_status,
-            "Acompanhante": e.get("acompanhante_nome", "—"),
-            "Cargo": e.get("acompanhante_cargo", "—"),
-        })
-
-    df = pd.DataFrame(dados_tabela)
-    st.dataframe(df, hide_index=True, use_container_width=True)
-
-    # Edição manual
-    if is_gestor:
-        st.markdown("---")
-        st.markdown("#### ✏️ Editar Sessões")
-        for d, e in escalas_ativas:
-            eid = e.get("id")
-            with st.expander(f"📅 {d.strftime('%d/%m/%Y')} — {_traduz_dia_semana(d.strftime('%A'))} — {e.get('acompanhante_nome', '—')}"):
-                with st.form(f"form_edit_escala_{eid}"):
-                    sec_pres = st.checkbox("Secretário presente", value=e.get("secretario_presente", True), key=f"sec_pres_edit_{eid}")
-
-                    if not sec_pres:
-                        motivo_val = e.get("secretario_motivo_ausencia", "")
-                        motivo = st.text_input("Motivo da ausência", value=motivo_val, key=f"motivo_edit_{eid}")
-                    else:
-                        motivo = ""
-
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        novo_nome = st.text_input("Acompanhante", value=e.get("acompanhante_nome", ""), key=f"acomp_nome_edit_{eid}")
-                    with col2:
-                        cargos_lista = ["Subsecretário", "Gerente SEAT", "Gerente SEXP", "Gerente SERCON", "Gerente SEMAND", "Assessor Especial"]
-                        cargo_atual = e.get("acompanhante_cargo", "Subsecretário")
-                        idx_cargo = cargos_lista.index(cargo_atual) if cargo_atual in cargos_lista else 0
-                        novo_cargo = st.selectbox("Cargo", cargos_lista, index=idx_cargo, key=f"acomp_cargo_edit_{eid}")
-
-                    obs = st.text_area("Observações", value=e.get("observacoes", ""), key=f"obs_edit_{eid}")
-
-                    col_save, col_del = st.columns(2)
-                    with col_save:
-                        if st.form_submit_button("💾 Salvar", type="primary", use_container_width=True):
-                            db_manager.atualizar("escala_plenario", eid, {
-                                "secretario_presente": sec_pres,
-                                "secretario_motivo_ausencia": motivo,
-                                "acompanhante_nome": novo_nome.strip(),
-                                "acompanhante_cargo": novo_cargo,
-                                "observacoes": obs.strip(),
-                            })
-                            st.success("✅ Escala atualizada!")
-                            st.rerun()
-                    with col_del:
-                        if st.form_submit_button("🗑️ Remover", use_container_width=True):
-                            db_manager.atualizar("escala_plenario", eid, {"ativo": False})
-                            st.rerun()
-
-def _gerar_escala_bimestral(usuario, afastamentos_aprovados):
-    """Gera escala automática para 8 quartas-feiras (bimestre)."""
-    hoje = date.today()
-    dias_ate_quarta = (2 - hoje.weekday()) % 7
-    if dias_ate_quarta == 0:
-        proxima_quarta = hoje
-    else:
-        proxima_quarta = hoje + timedelta(days=dias_ate_quarta)
-
-    participantes = [
-        ("Subsecretário", "Subsecretário"),
-        ("Gerente SEAT", "Gerente SEAT"),
-        ("Gerente SEXP", "Gerente SEXP"),
-        ("Gerente SERCON", "Gerente SERCON"),
-        ("Gerente SEMAND", "Gerente SEMAND"),
-        ("Assessor Especial", "Assessor Especial"),
-    ]
-
-    # Buscar escala existente para não duplicar
-    try:
-        escala_existente = db_manager.buscar_todos("escala_plenario") or []
-    except Exception:
-        escala_existente = []
-
-    datas_existentes = set()
-    for e in escala_existente:
-        try:
-            d = datetime.fromisoformat(str(e.get("data_sessao", ""))[:10]).date()
-            datas_existentes.add(d)
-        except Exception:
-            pass
-
-    geradas = 0
-    for i in range(8):
-        quarta = proxima_quarta + timedelta(weeks=i)
-
-        if quarta in datas_existentes:
-            continue
-
-        # Verificar se secretário está afastado nesta data
-        sec_presente = True
-        sec_motivo = ""
-        for a in afastamentos_aprovados:
-            try:
-                a_ini = datetime.fromisoformat(str(a.get("data_inicio", ""))[:10]).date()
-                a_fim = datetime.fromisoformat(str(a.get("data_fim", ""))[:10]).date()
-                if a_ini <= quarta <= a_fim:
-                    sec_presente = False
-                    tipo = a.get("tipo", "")
-                    sec_motivo = {"FERIAS": "Férias", "ATESTADO": "Atestado", "ABONO": "Abono"}.get(tipo, tipo)
-                    break
-            except Exception:
-                pass
-
-        # Participante do rodízio
-        idx = i % len(participantes)
-        acomp_nome, acomp_cargo = participantes[idx]
-
-        dados = {
-            "data_sessao": quarta.isoformat(),
-            "secretario_presente": sec_presente,
-            "secretario_motivo_ausencia": sec_motivo,
-            "acompanhante_nome": acomp_nome,
-            "acompanhante_cargo": acomp_cargo,
-            "observacoes": "",
-            "criado_por": usuario.get("nome", "—"),
-            "ativo": True,
-        }
-
-        try:
-            db_manager.inserir("escala_plenario", dados)
-            geradas += 1
-        except Exception:
-            pass
-
-    if geradas > 0:
-        st.success(f"✅ Escala bimestral gerada com {geradas} sessões!")
-    else:
-        st.info("Todas as sessões já possuem escala definida.")
-
-def _traduz_dia_semana(dia_ingles):
-    """Traduz o dia da semana do inglês para português."""
-    traducao = {
-        "Monday": "Segunda",
-        "Tuesday": "Terça",
-        "Wednesday": "Quarta",
-        "Thursday": "Quinta",
-        "Friday": "Sexta",
-        "Saturday": "Sábado",
-        "Sunday": "Domingo",
-    }
-    return traducao.get(dia_ingles, dia_ingles)
-
-# ============================================================
-# CADASTRO DE FÉRIAS
-# ============================================================
-def _renderizar_cadastro_ferias(usuario):
-    is_gestor = _tem_permissao_gestao(usuario)
-
-    if not is_gestor:
-        st.warning("⚠️ Acesso restrito a Raiz, Gerentes e Secretarias.")
-        return
-
-    st.markdown("### 🏖️ Cadastro de Férias e Abonos")
-    st.caption("Marcação de férias, atestados e abonos para a gestão e secretarias.")
-
-    nome_usuario = usuario.get("nome", "—")
-    cargo = usuario.get("nivel_acesso", usuario.get("cargo", "—")).lower()
-    is_secretaria = cargo in ("secretaria", "espectadora_global")
-    is_raiz = cargo in ("criador", "raiz", "admin", "super_admin_criador") or "juan" in nome_usuario.lower()
-
-    tab_solicitar, tab_quadro, tab_aprovacao = st.tabs([
-        "➕ Nova Marcação",
-        "📅 Quadro de Afastamentos",
-        "✅ Aprovações Pendentes",
-    ])
-
-    with tab_solicitar:
-        st.markdown(f"**Solicitante:** {nome_usuario}")
-
-        with st.form("form_ferias_gab"):
-            col1, col2 = st.columns(2)
-            with col1:
-                data_ini = st.date_input("Data de Início *", value=date.today(), key="dt_ini_ferias_gab")
-            with col2:
-                data_fim = st.date_input("Data de Retorno/Fim *", value=date.today(), key="dt_fim_ferias_gab")
-
-            tipo_registro = st.radio(
-                "Tipo",
-                ["Férias", "Atestado Médico", "Abono"],
-                horizontal=True,
-                key="tipo_ferias_gab"
-            )
-
-            observacoes = st.text_area("Observações", placeholder="Informações adicionais...", height=70, key="obs_ferias_gab")
-
-            if st.form_submit_button("Registrar", type="primary", use_container_width=True):
-                if data_fim < data_ini:
-                    st.error("A data de término não pode ser anterior à data de início.")
-                else:
-                    dias_total = (data_fim - data_ini).days + 1
-
-                    if tipo_registro == "Férias":
-                        tipo_db = "FERIAS"
-                    elif tipo_registro == "Atestado Médico":
-                        tipo_db = "ATESTADO"
-                    else:
-                        tipo_db = "ABONO"
-
-                    if is_secretaria and not is_raiz:
-                        status_inicial = "PENDENTE"
-                        msg_sucesso = f"Solicitação de {tipo_registro.lower()} ({dias_total} dias) enviada para confirmação do Secretário/Subsecretário."
-                    else:
-                        status_inicial = "APROVADA"
-                        msg_sucesso = f"✅ {tipo_registro} ({dias_total} dias) registrado e confirmado!"
-
-                    try:
-                        todas = db_manager.buscar_todos("solicitacoes_ausencia") or []
-                    except Exception:
-                        todas = []
-
-                    choques = []
-                    for s in todas:
-                        if s.get("status") not in ("APROVADA", "NOTIFICADO"):
-                            continue
-                        s_ini_raw = str(s.get("data_inicio", ""))[:10]
-                        s_fim_raw = str(s.get("data_fim", ""))[:10]
-                        if not s_ini_raw or not s_fim_raw:
-                            continue
-                        try:
-                            s_ini = datetime.fromisoformat(s_ini_raw).date()
-                            s_fim = datetime.fromisoformat(s_fim_raw).date()
-                            if data_ini <= s_fim and data_fim >= s_ini:
-                                choques.append({
-                                    "nome": s.get("colaborador_nome", "—"),
-                                    "tipo": s.get("tipo", "—"),
-                                    "inicio": s_ini.strftime("%d/%m/%Y"),
-                                    "fim": s_fim.strftime("%d/%m/%Y"),
-                                })
-                        except Exception:
-                            pass
-
-                    dados_ferias = {
-                        "matricula": str(usuario.get("matricula", "")),
-                        "colaborador_nome": nome_usuario,
-                        "setor": usuario.get("setor", "GAB"),
-                        "tipo": tipo_db,
-                        "data_inicio": data_ini.isoformat(),
-                        "data_fim": data_fim.isoformat(),
-                        "dias_afastado": dias_total,
-                        "observacoes": observacoes.strip(),
-                        "status": status_inicial,
+def _renderizar_regras_nip(usuario: Dict[str, Any], modo_edicao: bool):
+    """
+    Gestão de regras do Motor NIP.
+    """
+    st.markdown("### ⚙️ Regras do Motor NIP")
+
+    tab_subs, tab_urg, tab_sercon = st.tabs(
+        ["Substituições", "Palavras de Urgência", "Palavras de SERCON"]
+    )
+
+    with tab_subs:
+        regras = _obter_regras_nip_por_tabela("regras_substituicao_nip")
+
+        if PANDAS_OK and regras:
+            dados = []
+            for r in regras:
+                dados.append(
+                    {
+                        "ID": r.get("id"),
+                        "Procurar": r.get("procurar", "") or r.get("palavra_original", "") or "",
+                        "Substituir por": r.get("substituir_por", "") or r.get("palavra_substituta", "") or "",
+                        "Ativo": _bool_label(r.get("ativo", True)),
                     }
+                )
+            df = pd.DataFrame(dados)
+            st.dataframe(df, hide_index=True, use_container_width=True)
 
-                    try:
-                        res = db_manager.inserir("solicitacoes_ausencia", dados_ferias)
-                        if res:
-                            st.success(msg_sucesso)
-                            if choques:
-                                st.warning(f"⚠️ **Atenção:** {len(choques)} pessoa(s) já tem afastamento neste período:")
-                                for c in choques:
-                                    st.write(f"- **{c['nome']}** — {c['tipo']} de {c['inicio']} a {c['fim']}")
+        if modo_edicao and _tem_permissao_gab(usuario):
+            with st.form("gab_form_regra_substituicao"):
+                procurar = st.text_input("Procurar *", key="gab_regra_proc")
+                substituir = st.text_input("Substituir por *", key="gab_regra_sub")
+                submit = st.form_submit_button("Adicionar regra", type="primary", use_container_width=True)
+
+                if submit:
+                    if not procurar.strip() or not substituir.strip():
+                        st.error("Preencha ambos os campos.")
+                    else:
+                        resultado = db_manager.inserir(
+                            "regras_substituicao_nip",
+                            {
+                                "procurar": procurar.strip(),
+                                "substituir_por": substituir.strip(),
+                                "ativo": True,
+                            },
+                        )
+                        if resultado:
+                            st.success("Regra adicionada.")
                             st.rerun()
                         else:
-                            st.error("Erro ao registrar no banco de dados.")
-                    except Exception as e:
-                        st.error(f"Erro: {e}")
+                            st.error("Não foi possível adicionar a regra.")
 
-    with tab_quadro:
-        st.markdown("#### 📅 Quadro de Afastamentos da Gestão")
+    with tab_urg:
+        regras = _obter_regras_nip_por_tabela("palavras_urgencia_nip")
 
-        try:
-            todas = db_manager.buscar_todos("solicitacoes_ausencia", ordem_coluna="data_inicio", ordem_desc=False) or []
-        except Exception:
-            todas = []
+        if PANDAS_OK and regras:
+            df = pd.DataFrame(
+                [{"ID": r.get("id"), "Palavra": r.get("palavra", ""), "Ativo": _bool_label(r.get("ativo", True))} for r in regras]
+            )
+            st.dataframe(df, hide_index=True, use_container_width=True)
 
-        publicas = [s for s in todas if s.get("status") in ("APROVADA", "NOTIFICADO")]
+        if modo_edicao and _tem_permissao_gab(usuario):
+            with st.form("gab_form_palavra_urgente"):
+                palavra = st.text_input("Nova palavra de urgência *", key="gab_palavra_urg")
+                submit = st.form_submit_button("Adicionar palavra", type="primary", use_container_width=True)
 
-        if not publicas:
-            st.info("Nenhum afastamento programado no momento.")
-        else:
-            dados_quadro = []
-            for s in publicas:
-                tipo_raw = s.get("tipo", "—")
-                tipo_lbl = {"FERIAS": "🌴 Férias", "ATESTADO": "🏥 Atestado", "ABONO": "📋 Abono"}.get(tipo_raw, tipo_raw)
-                dados_quadro.append({
-                    "Colaborador": s.get("colaborador_nome", "—"),
-                    "Setor": s.get("setor", "—"),
-                    "Tipo": tipo_lbl,
-                    "Início": str(s.get("data_inicio", "—"))[:10],
-                    "Fim": str(s.get("data_fim", "—"))[:10],
-                    "Dias": s.get("dias_afastado", "—"),
-                    "Observação": s.get("observacoes", "") or "—",
-                })
-            df_quadro = pd.DataFrame(dados_quadro)
-            st.dataframe(df_quadro, hide_index=True, use_container_width=True)
-
-    with tab_aprovacao:
-        st.markdown("#### ✅ Aprovações Pendentes")
-
-        try:
-            pendentes = [s for s in todas if s.get("status") == "PENDENTE"]
-        except Exception:
-            pendentes = []
-
-        if not pendentes:
-            st.success("✅ Nenhuma aprovação pendente.")
-        else:
-            st.markdown(f"**{len(pendentes)} solicitação(ões) aguardando aprovação:**")
-
-            for s in pendentes:
-                sid = s.get("id")
-                nome = s.get("colaborador_nome", "—")
-                setor = s.get("setor", "—")
-                tipo = s.get("tipo", "—")
-                data_ini = str(s.get("data_inicio", "—"))[:10]
-                data_fim = str(s.get("data_fim", "—"))[:10]
-                dias = s.get("dias_afastado", "—")
-                obs = s.get("observacoes", "") or "—"
-
-                tipo_label = {"FERIAS": "🌴 Férias", "ATESTADO": "🏥 Atestado", "ABONO": "📋 Abono"}.get(tipo, tipo)
-
-                with st.expander(f"{tipo_label} — {nome} ({setor}) — {data_ini} a {data_fim} ({dias} dias)"):
-                    st.write(f"**Colaborador:** {nome}")
-                    st.write(f"**Setor:** {setor}")
-                    st.write(f"**Tipo:** {tipo_label}")
-                    st.write(f"**Período:** {data_ini} a {data_fim}")
-                    st.write(f"**Dias:** {dias}")
-                    st.write(f"**Observações:** {obs}")
-
-                    if is_raiz:
-                        col_apr, col_rej = st.columns(2)
-                        with col_apr:
-                            if st.button("✅ Aprovar", key=f"apr_ferias_{sid}", type="primary", use_container_width=True):
-                                db_manager.atualizar("solicitacoes_ausencia", sid, {"status": "APROVADA"})
-                                st.success(f"Solicitação de {nome} aprovada!")
-                                st.rerun()
-                        with col_rej:
-                            if st.button("❌ Rejeitar", key=f"rej_ferias_{sid}", use_container_width=True):
-                                db_manager.atualizar("solicitacoes_ausencia", sid, {"status": "REJEITADA"})
-                                st.info(f"Solicitação de {nome} rejeitada.")
-                                st.rerun()
+                if submit:
+                    if not palavra.strip():
+                        st.error("Informe a palavra.")
                     else:
-                        st.info("Apenas Raiz/Secretário/Subsecretário podem aprovar.")
+                        resultado = db_manager.inserir(
+                            "palavras_urgencia_nip",
+                            {"palavra": palavra.strip(), "ativo": True},
+                        )
+                        if resultado:
+                            st.success("Palavra adicionada.")
+                            st.rerun()
+                        else:
+                            st.error("Não foi possível adicionar a palavra.")
+
+    with tab_sercon:
+        regras = _obter_regras_nip_por_tabela("palavras_sercon_nip")
+
+        if PANDAS_OK and regras:
+            df = pd.DataFrame(
+                [
+                    {
+                        "ID": r.get("id"),
+                        "Palavra": r.get("palavra", ""),
+                        "Situação": r.get("situacao", ""),
+                        "Ativo": _bool_label(r.get("ativo", True)),
+                    }
+                    for r in regras
+                ]
+            )
+            st.dataframe(df, hide_index=True, use_container_width=True)
+
+        if modo_edicao and _tem_permissao_gab(usuario):
+            with st.form("gab_form_palavra_sercon"):
+                palavra = st.text_input("Nova palavra de SERCON *", key="gab_palavra_sercon")
+                situacao = st.text_input("Situação associada *", key="gab_palavra_sercon_sit")
+                submit = st.form_submit_button("Adicionar regra", type="primary", use_container_width=True)
+
+                if submit:
+                    if not palavra.strip() or not situacao.strip():
+                        st.error("Informe a palavra e a situação.")
+                    else:
+                        resultado = db_manager.inserir(
+                            "palavras_sercon_nip",
+                            {
+                                "palavra": palavra.strip(),
+                                "situacao": situacao.strip(),
+                                "ativo": True,
+                            },
+                        )
+                        if resultado:
+                            st.success("Regra adicionada.")
+                            st.rerun()
+                        else:
+                            st.error("Não foi possível adicionar a regra.")
+
+# ============================================================
+# ESCALA DO PLENÁRIO
+# ============================================================
+
+def _obter_escala_plenario() -> List[Dict[str, Any]]:
+    """
+    Retorna os registros da escala do plenário.
+    """
+    try:
+        return db_manager.buscar_todos(
+            "escala_plenario",
+            ordem_coluna="data_sessao",
+            ordem_desc=False,
+        ) or []
+    except Exception as e:
+        print(f"[GAB ERROR] _obter_escala_plenario: {e}")
+        return []
+
+def _renderizar_escala_plenario(usuario: Dict[str, Any], modo_edicao: bool):
+    """
+    Gestão da escala do plenário.
+    """
+    st.markdown("### 🏛️ Escala do Plenário")
+    st.caption("Controle de escalas e designações para sessões plenárias.")
+
+    escalas = _obter_escala_plenario()
+
+    if PANDAS_OK and escalas:
+        dados = []
+        for item in escalas:
+            dados.append(
+                {
+                    "ID": item.get("id"),
+                    "Data da Sessão": _formatar_data_curta(item.get("data_sessao")),
+                    "Turno": item.get("turno", "") or "-",
+                    "Responsável": item.get("responsavel", "") or "-",
+                    "Apoio": item.get("apoio", "") or "-",
+                    "Observações": item.get("observacoes", "") or "-",
+                }
+            )
+
+        df = pd.DataFrame(dados)
+        st.dataframe(df, hide_index=True, use_container_width=True)
+    elif not escalas:
+        st.info("Nenhuma escala de plenário cadastrada.")
+
+    if not modo_edicao or not _tem_permissao_gab(usuario):
+        return
+
+    st.markdown("---")
+    st.markdown("#### Cadastrar escala")
+
+    colaboradores = _obter_colaboradores(incluir_inativos=False, incluir_contas_tecnicas=False)
+    nomes = sorted(
+        list(
+            set(
+                [
+                    c.get("nome_exibicao") or c.get("nome_guerra") or c.get("nome")
+                    for c in colaboradores
+                    if c.get("nome_exibicao") or c.get("nome_guerra") or c.get("nome")
+                ]
+            )
+        ),
+        key=_normalizar_texto,
+    )
+
+    with st.form("gab_form_escala_plenario"):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            data_sessao = st.date_input("Data da sessão *", value=date.today(), key="gab_escala_data")
+            turno = st.selectbox("Turno *", options=["Manhã", "Tarde", "Integral"], key="gab_escala_turno")
+
+        with col2:
+            responsavel = st.selectbox("Responsável *", options=nomes if nomes else ["Sem colaboradores"], key="gab_escala_responsavel")
+            apoio = st.selectbox("Apoio", options=[""] + nomes if nomes else [""], key="gab_escala_apoio")
+
+        observacoes = st.text_area("Observações", height=70, key="gab_escala_obs")
+
+        submit = st.form_submit_button("Salvar escala", type="primary", use_container_width=True)
+
+        if submit:
+            if not nomes:
+                st.error("Não há colaboradores ativos disponíveis.")
+            else:
+                resultado = db_manager.inserir(
+                    "escala_plenario",
+                    {
+                        "data_sessao": data_sessao.isoformat(),
+                        "turno": turno,
+                        "responsavel": responsavel,
+                        "apoio": apoio.strip() if apoio else "",
+                        "observacoes": observacoes.strip(),
+                    },
+                )
+                if resultado:
+                    st.success("Escala cadastrada com sucesso.")
+                    st.rerun()
+                else:
+                    st.error("Não foi possível salvar a escala.")
 
 # ============================================================
 # AGENDA DO SECRETÁRIO
 # ============================================================
-def _renderizar_agenda_secretario(usuario):
-    is_gestor = _tem_permissao_gestao(usuario)
 
-    if not is_gestor:
-        st.warning("⚠️ Acesso restrito a gestores e secretarias.")
+def _obter_agenda_secretario() -> List[Dict[str, Any]]:
+    """
+    Retorna os compromissos da agenda do secretário.
+    """
+    try:
+        return db_manager.buscar_todos(
+            "agenda_secretario",
+            ordem_coluna="data_compromisso",
+            ordem_desc=False,
+        ) or []
+    except Exception as e:
+        print(f"[GAB ERROR] _obter_agenda_secretario: {e}")
+        return []
+
+def _renderizar_agenda_secretario(usuario: Dict[str, Any], modo_edicao: bool):
+    """
+    Gestão da agenda do secretário.
+    """
+    st.markdown("### 🗓️ Agenda do Secretário")
+    st.caption("Compromissos, reuniões e lembretes institucionais.")
+
+    agenda = _obter_agenda_secretario()
+
+    futuras = []
+    passadas = []
+
+    hoje = date.today()
+
+    for item in agenda:
+        data_item = str(item.get("data_compromisso", "") or "")[:10]
+        try:
+            data_obj = date.fromisoformat(data_item)
+        except Exception:
+            data_obj = None
+
+        if data_obj and data_obj >= hoje:
+            futuras.append(item)
+        else:
+            passadas.append(item)
+
+    st.markdown("#### Próximos compromissos")
+
+    if futuras:
+        for item in futuras:
+            with st.expander(
+                f"{_formatar_data_curta(item.get('data_compromisso'))} | {item.get('titulo', 'Compromisso')}"
+            ):
+                st.write(f"**Horário:** {item.get('horario', '-') or '-'}")
+                st.write(f"**Local:** {item.get('local', '-') or '-'}")
+                st.write(f"**Descrição:** {item.get('descricao', '-') or '-'}")
+    else:
+        st.info("Nenhum compromisso futuro cadastrado.")
+
+    if not modo_edicao or not _tem_permissao_gab(usuario):
         return
 
-    st.markdown("### 📋 Agenda do Secretário")
-    st.caption("Registro de compromissos, reuniões e audiências do Secretário.")
+    st.markdown("---")
+    st.markdown("#### Novo compromisso")
 
-    tab_novo, tab_lista = st.tabs(["➕ Novo Compromisso", "📅 Compromissos Agendados"])
+    with st.form("gab_form_agenda_secretario"):
+        col1, col2 = st.columns(2)
 
-    with tab_novo:
-        with st.form("form_agenda"):
-            col1, col2 = st.columns(2)
-            with col1:
-                data_comp = st.date_input("Data *", value=date.today(), key="dt_agenda")
-                hora_ini = st.time_input("Hora de Início *", key="hora_ini_agenda")
-            with col2:
-                hora_fim = st.time_input("Hora de Término *", key="hora_fim_agenda")
-                tipo_comp = st.selectbox("Tipo", ["Reunião", "Audiência", "Compromisso Externo", "Outro"], key="tipo_agenda")
+        with col1:
+            titulo = st.text_input("Título *", key="gab_agenda_titulo")
+            data_compromisso = st.date_input("Data *", value=date.today(), key="gab_agenda_data")
 
-            titulo = st.text_input("Título *", placeholder="Ex: Reunião com Diretoria", key="titulo_agenda")
-            local = st.text_input("Local", placeholder="Ex: Sala de Reuniões / Gabinete", key="local_agenda")
-            descricao = st.text_area("Descrição", placeholder="Detalhes do compromisso...", height=70, key="desc_agenda")
+        with col2:
+            horario = st.text_input("Horário", placeholder="Ex: 14:30", key="gab_agenda_horario")
+            local = st.text_input("Local", key="gab_agenda_local")
 
-            if st.form_submit_button("💾 Agendar", type="primary", use_container_width=True):
-                if not titulo.strip():
-                    st.warning("Digite um título.")
-                elif hora_fim <= hora_ini:
-                    st.warning("A hora de término deve ser posterior à de início.")
-                else:
-                    dados_agenda = {
-                        "data_compromisso": data_comp.isoformat(),
-                        "hora_inicio": hora_ini.strftime("%H:%M"),
-                        "hora_fim": hora_fim.strftime("%H:%M"),
+        descricao = st.text_area("Descrição", height=80, key="gab_agenda_descricao")
+
+        submit = st.form_submit_button("Salvar compromisso", type="primary", use_container_width=True)
+
+        if submit:
+            if not titulo.strip():
+                st.error("O título é obrigatório.")
+            else:
+                resultado = db_manager.inserir(
+                    "agenda_secretario",
+                    {
                         "titulo": titulo.strip(),
-                        "descricao": descricao.strip(),
+                        "data_compromisso": data_compromisso.isoformat(),
+                        "horario": horario.strip(),
                         "local": local.strip(),
-                        "tipo": tipo_comp,
-                        "status": "CONFIRMADO",
-                        "registrado_por": usuario.get("nome", "—"),
-                    }
-                    try:
-                        res = db_manager.inserir("agenda_secretario", dados_agenda)
-                        if res:
-                            st.success("✅ Compromisso agendado!")
-                            st.rerun()
-                        else:
-                            st.error("Erro ao agendar.")
-                    except Exception as e:
-                        st.error(f"Erro: {e}")
-
-    with tab_lista:
-        try:
-            compromissos = db_manager.buscar_todos("agenda_secretario", ordem_coluna="data_compromisso", ordem_desc=False) or []
-        except Exception:
-            compromissos = []
-
-        if not compromissos:
-            st.info("Nenhum compromisso agendado.")
-            return
-
-        hoje = date.today()
-        futuros = []
-        for c in compromissos:
-            try:
-                d = datetime.fromisoformat(str(c.get("data_compromisso", ""))[:10]).date()
-                if d >= hoje:
-                    futuros.append((d, c))
-            except Exception:
-                pass
-
-        if not futuros:
-            st.info("Nenhum compromisso futuro agendado.")
-            return
-
-        futuros.sort(key=lambda x: x[0])
-
-        dados_lista = []
-        for d, c in futuros:
-            dados_lista.append({
-                "Data": d.strftime("%d/%m/%Y"),
-                "Início": c.get("hora_inicio", "—"),
-                "Fim": c.get("hora_fim", "—"),
-                "Título": c.get("titulo", "—"),
-                "Tipo": c.get("tipo", "—"),
-                "Local": c.get("local", "—"),
-                "Registrado por": c.get("registrado_por", "—"),
-            })
-
-        df_lista = pd.DataFrame(dados_lista)
-        st.dataframe(df_lista, hide_index=True, use_container_width=True)
-
-        st.markdown("##### Detalhes")
-        for d, c in futuros:
-            cid = c.get("id")
-            titulo = c.get("titulo", "—")
-            with st.expander(f"📅 {d.strftime('%d/%m/%Y')} {c.get('hora_inicio', '')} — {titulo}"):
-                st.write(f"**Título:** {titulo}")
-                st.write(f"**Tipo:** {c.get('tipo', '—')}")
-                st.write(f"**Data:** {d.strftime('%d/%m/%Y')}")
-                st.write(f"**Horário:** {c.get('hora_inicio', '—')} às {c.get('hora_fim', '—')}")
-                st.write(f"**Local:** {c.get('local', '—')}")
-                st.write(f"**Descrição:** {c.get('descricao', '—')}")
-                st.write(f"**Registrado por:** {c.get('registrado_por', '—')}")
-
-                if st.button("🗑️ Cancelar Compromisso", key=f"rm_agenda_{cid}"):
-                    db_manager.atualizar("agenda_secretario", cid, {"status": "CANCELADO"})
-                    st.info("Compromisso cancelado.")
+                        "descricao": descricao.strip(),
+                    },
+                )
+                if resultado:
+                    st.success("Compromisso salvo.")
                     st.rerun()
+                else:
+                    st.error("Não foi possível salvar o compromisso.")
 
 # ============================================================
 # AUDITORIA
 # ============================================================
-def _renderizar_auditoria(usuario):
-    st.markdown("### 📝 Auditoria de Processos")
-    st.caption("Tabela corrida de todos os processos que entraram no sistema. Processos podem aparecer duplicados.")
 
-    todos_processos = []
-
+def _obter_auditoria() -> List[Dict[str, Any]]:
+    """
+    Retorna registros de auditoria da chefia.
+    """
     try:
-        seat = db_manager.buscar_todos("pauta_seat") or []
-        for p in seat:
-            todos_processos.append({
-                "Setor": "SEAT",
-                "Nº Sessão": p.get("numero_sessao", p.get("sessao_numero", "—")),
-                "Nº Processo": p.get("processo_numero", "—"),
-                "Relator": p.get("relator", "—"),
-                "Editor": p.get("editor", "—"),
-                "Revisor": p.get("revisor", "—"),
-                "Expedidor": "—",
-                "Revisor (SEXP)": "—",
-                "Entrada": str(p.get("data_entrada", p.get("criado_em", "—")))[:10],
-                "Saída": str(p.get("data_saida", "—"))[:10] if p.get("sessao_finalizada") else "—",
-                "Status": "Arquivado" if p.get("sessao_finalizada") else ("Retirado" if p.get("removido_pauta") else "Ativo"),
-            })
-    except Exception:
-        pass
+        return db_manager.buscar_todos(
+            "auditoria_chefia",
+            ordem_coluna="created_at",
+            ordem_desc=True,
+        ) or []
+    except Exception as e:
+        print(f"[GAB ERROR] _obter_auditoria: {e}")
+        return []
 
-    try:
-        sexp = db_manager.buscar_todos("distribuicao_sexp") or []
-        for p in sexp:
-            todos_processos.append({
-                "Setor": "SEXP",
-                "Nº Sessão": p.get("numero_sessao", p.get("sessao_numero", "—")),
-                "Nº Processo": p.get("processo_numero", "—"),
-                "Relator": p.get("relator", "—"),
-                "Editor": "—",
-                "Revisor": "—",
-                "Expedidor": p.get("expedidor", "—"),
-                "Revisor (SEXP)": p.get("revisor", "—"),
-                "Entrada": str(p.get("data_entrada", p.get("criado_em", "—")))[:10],
-                "Saída": str(p.get("data_saida", "—"))[:10] if p.get("sessao_finalizada") else "—",
-                "Status": "Arquivado" if p.get("sessao_finalizada") else ("Retirado" if p.get("removido_pauta") else "Ativo"),
-            })
-    except Exception:
-        pass
+def _renderizar_auditoria(usuario: Dict[str, Any], modo_edicao: bool):
+    """
+    Visualização dos registros de auditoria.
+    """
+    st.markdown("### 🔎 Auditoria")
+    st.caption("Rastreabilidade de ações administrativas e operacionais registradas no sistema.")
 
-    if not todos_processos:
-        st.info("Nenhum processo registrado na auditoria ainda.")
+    registros = _obter_auditoria()
+
+    if not registros:
+        st.info("Nenhum registro de auditoria encontrado.")
         return
 
-    df = pd.DataFrame(todos_processos)
+    col1, col2 = st.columns(2)
 
-    col_f1, col_f2, col_f3 = st.columns(3)
-    with col_f1:
-        setores = ["Todos"] + list(df["Setor"].unique())
-        filtro_setor = st.selectbox("Filtrar por Setor", setores, key="filtro_setor_aud")
-    with col_f2:
-        status_opcoes = ["Todos"] + list(df["Status"].unique())
-        filtro_status = st.selectbox("Filtrar por Status", status_opcoes, key="filtro_status_aud")
-    with col_f3:
-        busca_proc = st.text_input("Buscar Nº Processo", key="busca_proc_aud")
+    with col1:
+        filtro_usuario = st.text_input(
+            "Filtrar por usuário",
+            placeholder="Digite o nome...",
+            key="gab_audit_usuario",
+        )
 
-    df_filtrado = df.copy()
-    if filtro_setor != "Todos":
-        df_filtrado = df_filtrado[df_filtrado["Setor"] == filtro_setor]
-    if filtro_status != "Todos":
-        df_filtrado = df_filtrado[df_filtrado["Status"] == filtro_status]
-    if busca_proc.strip():
-        df_filtrado = df_filtrado[df_filtrado["Nº Processo"].str.contains(busca_proc.strip(), case=False, na=False)]
+    with col2:
+        filtro_acao = st.text_input(
+            "Filtrar por ação",
+            placeholder="Digite a ação...",
+            key="gab_audit_acao",
+        )
 
-    st.markdown(f"**{len(df_filtrado)} processo(s) encontrado(s)**")
-    st.dataframe(df_filtrado, hide_index=True, use_container_width=True, height=500)
+    filtrados = []
+    for r in registros:
+        usuario_ok = True
+        acao_ok = True
+
+        if filtro_usuario.strip():
+            usuario_ok = filtro_usuario.strip().lower() in str(r.get("usuario", "") or "").lower()
+
+        if filtro_acao.strip():
+            acao_ok = filtro_acao.strip().lower() in str(r.get("acao", "") or "").lower()
+
+        if usuario_ok and acao_ok:
+            filtrados.append(r)
+
+    if PANDAS_OK and filtrados:
+        dados = []
+        for r in filtrados:
+            dados.append(
+                {
+                    "Data/Hora": _formatar_data_hora(r.get("created_at")),
+                    "Usuário": r.get("usuario", "") or "-",
+                    "Ação": r.get("acao", "") or "-",
+                    "Detalhes": r.get("detalhes", "") or "-",
+                }
+            )
+
+        df = pd.DataFrame(dados)
+        st.dataframe(df, hide_index=True, use_container_width=True)
+    elif filtrados:
+        for r in filtrados:
+            with st.expander(f"{_formatar_data_hora(r.get('created_at'))} | {r.get('usuario', '-') or '-'}"):
+                st.write(f"**Ação:** {r.get('acao', '-') or '-'}")
+                st.write(f"**Detalhes:** {r.get('detalhes', '-') or '-'}")
+    else:
+        st.info("Nenhum registro encontrado com os filtros atuais.")
+
+# ============================================================
+# SIDEBAR DO GABINETE
+# ============================================================
+
+def _renderizar_sidebar_gab(usuario: Dict[str, Any]):
+    """
+    Indicadores rápidos na barra lateral.
+    """
+    colaboradores = _obter_colaboradores(incluir_inativos=False, incluir_contas_tecnicas=True)
+    solicitacoes = _obter_solicitacoes_ausencia()
+    pauta_seat = _obter_processos_pauta_seat()
+    pauta_sexp = _obter_processos_sexp()
+
+    total_ativos = len([c for c in colaboradores if c.get("ativo", False)])
+    ausencias_pendentes = len([s for s in solicitacoes if s.get("status") == "PENDENTE"])
+    seat_pendentes = len([p for p in pauta_seat if p.get("status") != "encaminhado"])
+    sexp_pendentes = len([p for p in pauta_sexp if not p.get("distribuido", False)])
+
+    with st.sidebar:
+        st.markdown("---")
+        st.markdown("#### Painel do Gabinete")
+        st.write(f"**Ativos:** {total_ativos}")
+        st.write(f"**SEAT pendentes:** {seat_pendentes}")
+        st.write(f"**SEXP pendentes:** {sexp_pendentes}")
+        st.write(f"**Ausências pendentes:** {ausencias_pendentes}")
+
+# ============================================================
+# FUNÇÃO PRINCIPAL
+# ============================================================
+
+def renderizar(usuario: Dict[str, Any], modo_edicao: bool = False):
+    """
+    Função principal do módulo GAB.
+    """
+    nome = usuario.get("nome", "Usuário")
+    cargo = usuario.get("cargo", "operacional")
+    setor = usuario.get("setor", "GAB")
+
+    st.markdown(f"**Colaborador:** {nome} | **Cargo:** {cargo} | **Setor:** {setor}")
+
+    if not _tem_permissao_gab(usuario):
+        st.warning("Seu perfil não possui permissão de gestão do Gabinete.")
+        return
+
+    if not modo_edicao:
+        st.info("Você está em modo de visualização. Operações de edição estão bloqueadas.")
+
+    st.markdown("---")
+
+    _renderizar_sidebar_gab(usuario)
+
+    tab_dashboard, tab_setores, tab_colaboradores, tab_ausencias, tab_avisos, tab_regras, tab_plenario, tab_agenda, tab_auditoria, tab_gerenciar = st.tabs(
+        [
+            "Dashboard Geral",
+            "Setores",
+            "👥 Colaboradores",
+            "Férias e Afastamentos",
+            "Avisos",
+            "Regras Motor NIP",
+            "Escala do Plenário",
+            "Agenda do Secretário",
+            "Auditoria",
+            "🗑️ Gerenciar Dados",
+        ]
+    )
+
+    with tab_dashboard:
+        _renderizar_dashboard_geral(usuario, modo_edicao)
+
+    with tab_setores:
+        _renderizar_setores(usuario, modo_edicao)
+
+    with tab_colaboradores:
+        _renderizar_colaboradores(usuario, modo_edicao)
+
+    with tab_ausencias:
+        _renderizar_ausencias_gab(usuario, modo_edicao)
+
+    with tab_avisos:
+        _renderizar_avisos(usuario, modo_edicao)
+
+    with tab_regras:
+        _renderizar_regras_nip(usuario, modo_edicao)
+
+    with tab_plenario:
+        _renderizar_escala_plenario(usuario, modo_edicao)
+
+    with tab_agenda:
+        _renderizar_agenda_secretario(usuario, modo_edicao)
+
+    with tab_auditoria:
+        _renderizar_auditoria(usuario, modo_edicao)
+
+    with tab_gerenciar:
+        _renderizar_gerenciar_dados(usuario, "GAB")
