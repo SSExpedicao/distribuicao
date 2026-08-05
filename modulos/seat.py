@@ -1043,8 +1043,8 @@ def _renderizar_card_processo(processo: dict, modo_edicao: bool):
 
 def _enviar_processo_para_sexp(processo: dict) -> bool:
     """
-    Sincroniza um processo finalizado da SEAT para a fila da SEXP.
-    Evita duplicidade por processo + sessao + data.
+    Envia um processo finalizado da SEAT para a fila da SEXP.
+    Usa exatamente os campos esperados pela tabela distribuicao_sexp.
     """
     if not processo:
         return False
@@ -1052,51 +1052,59 @@ def _enviar_processo_para_sexp(processo: dict) -> bool:
     processo_numero = str(processo.get("processo_numero", "") or "").strip()
     numero_sessao = str(processo.get("numero_sessao", "") or "").strip()
     dia_sessao = str(processo.get("dia_sessao", "") or "").strip()
-    tipo_sessao = str(processo.get("tipo_sessao", "") or "").strip()
     relator = str(processo.get("relator", "") or "").strip()
 
     if not processo_numero:
         return False
 
-    existentes = db_manager.buscar_todos(
-        "distribuicao_sexp",
-        filtros={
+    try:
+        urgentes_seat = db_manager.buscar_todos("processos_urgentes") or []
+        nums_urgentes = {
+            _normalizar_numero_processo(u.get("processo_numero", ""))
+            for u in urgentes_seat
+        }
+
+        tipo_sexp = _determinar_tabela_destino_sexp(processo, nums_urgentes)
+
+        existentes = db_manager.buscar_todos(
+            "distribuicao_sexp",
+            filtros={
+                "processo_numero": processo_numero,
+                "numero_sessao": numero_sessao,
+                "dia_sessao": dia_sessao,
+            },
+        ) or []
+
+        payload = {
             "processo_numero": processo_numero,
+            "relator": relator,
+            "tipo_sessao": tipo_sexp,
             "numero_sessao": numero_sessao,
             "dia_sessao": dia_sessao,
-        },
-    ) or []
+            "distribuido": False,
+            "expedido": False,
+            "revisado": False,
+            "comentarios": processo.get("comentario", "") or "",
+        }
 
-    payload = {
-        "processo_numero": processo_numero,
-        "numero_sessao": numero_sessao,
-        "dia_sessao": dia_sessao,
-        "tipo_sessao": tipo_sessao,
-        "relator": relator,
-        "distribuido": False,
-        "expedido": False,
-        "revisado": False,
-        "sessao_finalizada": False,
-        "editor": None,
-        "revisor": None,
-        "comentario": processo.get("comentario", "") or "",
-    }
+        if existentes:
+            registro_id = existentes[0].get("id")
+            if not registro_id:
+                return False
 
-    if existentes:
-        registro = existentes[0]
-        registro_id = registro.get("id")
-        if not registro_id:
-            return False
+            resultado = db_manager.atualizar(
+                "distribuicao_sexp",
+                registro_id,
+                payload,
+            )
+            return bool(resultado)
 
-        resultado = db_manager.atualizar(
-            "distribuicao_sexp",
-            registro_id,
-            payload,
-        )
+        resultado = db_manager.inserir("distribuicao_sexp", payload)
         return bool(resultado)
 
-    resultado = db_manager.inserir("distribuicao_sexp", payload)
-    return bool(resultado)
+    except Exception as e:
+        print(f"[ERRO ENVIO SEAT -> SEXP] {e}")
+        return False
     
 def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
     """
