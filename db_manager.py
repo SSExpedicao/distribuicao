@@ -416,10 +416,145 @@ def semear_usuarios_iniciais() -> bool:
         print(f"[DB ERROR] semear_usuarios_iniciais: {e}")
         return False
 
-# ============================================================
-# OPERACOES ESPECIFICAS: EQUIPE
-# ============================================================
+def listar_usuarios_acesso_canonicos(
+    setor: Optional[str] = None,
+    apenas_ativos: bool = True,
+    incluir_contas_tecnicas: bool = False,
+    niveis_acesso: Optional[List[str]] = None,
+    cargos: Optional[List[str]] = None,
+    vinculos: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Retorna usuários da tabela usuarios_acesso já normalizados e prontos
+    para consumo operacional pelos módulos do sistema.
 
+    Esta função é a nova camada canônica de leitura de colaboradores.
+    Ela NÃO decide, sozinha, elegibilidade final de distribuição por setor
+    e tipo de sessão. Ela entrega a base saneada para que SEAT, SEXP e GAB
+    apliquem suas regras específicas sem ler usuarios_acesso de forma crua.
+
+    Args:
+        setor: Filtra usuários por setor, com normalização textual.
+        apenas_ativos: Quando True, retorna apenas registros com ativo=True.
+        incluir_contas_tecnicas: Quando False, exclui contas técnicas, como
+            SUPER_ADMIN_CRIADOR e cargo Desenvolvedor.
+        niveis_acesso: Lista opcional de níveis de acesso permitidos.
+        cargos: Lista opcional de cargos permitidos.
+        vinculos: Lista opcional de vínculos permitidos.
+
+    Returns:
+        Lista de dicionários contendo os dados originais do usuário e campos
+        derivados de normalização para uso seguro nos módulos.
+
+    Raises:
+        Não levanta exceções para a camada superior. Em caso de falha,
+        retorna lista vazia e registra o erro no log.
+    """
+    import unicodedata
+
+    def _normalizar_texto(valor: Any) -> str:
+        """
+        Normaliza texto para comparação segura.
+        Remove acentos, converte para minúsculas e elimina espaços extras.
+        """
+        if valor is None:
+            return ""
+
+        texto = str(valor).strip().lower()
+        texto = unicodedata.normalize("NFKD", texto)
+        texto = "".join(
+            caractere
+            for caractere in texto
+            if not unicodedata.combining(caractere)
+        )
+        return " ".join(texto.split())
+
+    try:
+        usuarios = buscar_todos("usuarios_acesso") or []
+    except Exception as e:
+        print(f"[DB ERROR] listar_usuarios_acesso_canonicos: {e}")
+        return []
+
+    setor_normalizado = _normalizar_texto(setor) if setor else ""
+    niveis_permitidos = {
+        _normalizar_texto(valor) for valor in (niveis_acesso or []) if valor
+    }
+    cargos_permitidos = {
+        _normalizar_texto(valor) for valor in (cargos or []) if valor
+    }
+    vinculos_permitidos = {
+        _normalizar_texto(valor) for valor in (vinculos or []) if valor
+    }
+
+    resultado: List[Dict[str, Any]] = []
+
+    for usuario in usuarios:
+        ativo = bool(usuario.get("ativo", False))
+        nome = str(usuario.get("nome", "") or "").strip()
+        nome_guerra = str(usuario.get("nome_guerra", "") or "").strip()
+        matricula = str(usuario.get("matricula", "") or "").strip()
+
+        setor_usuario = str(usuario.get("setor", "") or "").strip()
+        cargo_usuario = str(usuario.get("cargo", "") or "").strip()
+        vinculo_usuario = str(usuario.get("vinculo", "") or "").strip()
+        nivel_acesso_usuario = str(usuario.get("nivel_acesso", "") or "").strip()
+
+        nome_normalizado = _normalizar_texto(nome)
+        nome_guerra_normalizado = _normalizar_texto(nome_guerra)
+        setor_usuario_normalizado = _normalizar_texto(setor_usuario)
+        cargo_usuario_normalizado = _normalizar_texto(cargo_usuario)
+        vinculo_usuario_normalizado = _normalizar_texto(vinculo_usuario)
+        nivel_acesso_normalizado = _normalizar_texto(nivel_acesso_usuario)
+
+        nome_exibicao = nome_guerra if nome_guerra else nome
+
+        conta_tecnica = (
+            nivel_acesso_normalizado == "super_admin_criador"
+            or cargo_usuario_normalizado == "desenvolvedor"
+        )
+
+        if apenas_ativos and not ativo:
+            continue
+
+        if not incluir_contas_tecnicas and conta_tecnica:
+            continue
+
+        if setor_normalizado and setor_usuario_normalizado != setor_normalizado:
+            continue
+
+        if niveis_permitidos and nivel_acesso_normalizado not in niveis_permitidos:
+            continue
+
+        if cargos_permitidos and cargo_usuario_normalizado not in cargos_permitidos:
+            continue
+
+        if vinculos_permitidos and vinculo_usuario_normalizado not in vinculos_permitidos:
+            continue
+
+        registro = dict(usuario)
+        registro["matricula"] = matricula
+        registro["nome"] = nome
+        registro["nome_guerra"] = nome_guerra
+        registro["nome_exibicao"] = nome_exibicao
+        registro["nome_normalizado"] = nome_normalizado
+        registro["nome_guerra_normalizado"] = nome_guerra_normalizado
+        registro["setor_normalizado"] = setor_usuario_normalizado
+        registro["cargo_normalizado"] = cargo_usuario_normalizado
+        registro["vinculo_normalizado"] = vinculo_usuario_normalizado
+        registro["nivel_acesso_normalizado"] = nivel_acesso_normalizado
+        registro["conta_tecnica"] = conta_tecnica
+
+        resultado.append(registro)
+
+    resultado.sort(
+        key=lambda item: (
+            _normalizar_texto(item.get("nome_exibicao", "")),
+            _normalizar_texto(item.get("matricula", "")),
+        )
+    )
+
+    return resultado
+        
 # ============================================================
 # OPERACOES ESPECIFICAS: EQUIPE (FONTE ÚNICA: usuarios_acesso)
 # ============================================================
