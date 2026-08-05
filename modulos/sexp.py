@@ -179,9 +179,11 @@ def _sincronizar_com_seat():
     """
     try:
         processos_seat = db_manager.buscar_todos("pauta_seat") or []
+
         prontos_seat = [
             p for p in processos_seat
-            if p.get("status") == "encaminhado" or p.get("sessao_finalizada") is True
+            if p.get("status") == "encaminhado"
+            or p.get("sessao_finalizada") is True
         ]
 
         todos_sexp = db_manager.buscar_todos("distribuicao_sexp") or []
@@ -191,23 +193,30 @@ def _sincronizar_com_seat():
 
         urgentes_seat = db_manager.buscar_todos("processos_urgentes") or []
         nums_urgentes = {
-            _normalizar_numero_processo(u.get("processo_numero", "")) for u in urgentes_seat
+            _normalizar_numero_processo(u.get("processo_numero", ""))
+            for u in urgentes_seat
         }
 
         nums_existentes = {
             _normalizar_numero_processo(d.get("processo_numero", ""))
-            for d in todos_sexp if d.get("processo_numero")
+            for d in todos_sexp
+            if d.get("processo_numero")
         }
 
         novos_inseridos = 0
 
         for p in prontos_seat:
-            num_norm = _normalizar_numero_processo(p.get("processo_numero", ""))
+            num_norm = _normalizar_numero_processo(
+                p.get("processo_numero", "")
+            )
 
             if not num_norm or num_norm in nums_existentes:
                 continue
 
-            tipo_sexp = _determinar_tabela_destino_sexp(p, nums_urgentes)
+            tipo_sexp = _determinar_tabela_destino_sexp(
+                p,
+                nums_urgentes,
+            )
 
             novo_registro = {
                 "processo_numero": p.get("processo_numero", ""),
@@ -218,10 +227,14 @@ def _sincronizar_com_seat():
                 "distribuido": False,
                 "expedido": False,
                 "revisado": False,
-                "comentarios": p.get("comentarios", "") or "",
+                "comentario": p.get("comentario", "") or "",
             }
 
-            res = db_manager.inserir("distribuicao_sexp", novo_registro)
+            res = db_manager.inserir(
+                "distribuicao_sexp",
+                novo_registro,
+            )
+
             if res:
                 novos_inseridos += 1
                 nums_existentes.add(num_norm)
@@ -238,13 +251,20 @@ def _verificar_todos_revisados_seat():
     """
     try:
         processos_seat = db_manager.buscar_todos("pauta_seat") or []
+
         if not processos_seat:
             return False, 0, 0
 
         total = len(processos_seat)
-        encaminhados = len([p for p in processos_seat if p.get("status") == "encaminhado"])
+        encaminhados = len(
+            [
+                p for p in processos_seat
+                if p.get("status") == "encaminhado"
+            ]
+        )
 
         return encaminhados == total, encaminhados, total
+
     except Exception:
         return False, 0, 0
 
@@ -252,7 +272,10 @@ def _determinar_tabela_destino_sexp(processo, nums_urgentes):
     """
     Determina em qual tabela do SEXP o processo deve aparecer.
     """
-    p_num = _normalizar_numero_processo(processo.get("processo_numero", ""))
+    p_num = _normalizar_numero_processo(
+        processo.get("processo_numero", "")
+    )
+
     is_urgente = p_num in nums_urgentes
     tipo_sessao = processo.get("tipo_sessao", "Sessão Ordinária")
     tipo_norm = _normalizar_texto(tipo_sessao)
@@ -267,7 +290,6 @@ def _determinar_tabela_destino_sexp(processo, nums_urgentes):
         return "Sessão Administrativa"
     else:
         return "Sessão Ordinária"
-
 # ==================== DISTRIBUIÇÃO ====================
 
 def _gerar_cadeia_duplas(colaboradores):
