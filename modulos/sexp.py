@@ -197,8 +197,12 @@ def _sincronizar_com_seat():
             for u in urgentes_seat
         }
 
-        nums_existentes = {
-            _normalizar_numero_processo(d.get("processo_numero", ""))
+        chaves_existentes = {
+            (
+                _normalizar_numero_processo(d.get("processo_numero", "")),
+                str(d.get("numero_sessao", "") or "").strip(),
+                str(d.get("dia_sessao", "") or "").strip(),
+            )
             for d in todos_sexp
             if d.get("processo_numero")
         }
@@ -206,38 +210,38 @@ def _sincronizar_com_seat():
         novos_inseridos = 0
 
         for p in prontos_seat:
-            num_norm = _normalizar_numero_processo(
-                p.get("processo_numero", "")
+            processo_numero = str(p.get("processo_numero", "") or "").strip()
+            numero_sessao = str(p.get("numero_sessao", "") or "").strip()
+            dia_sessao = str(p.get("dia_sessao", "") or "").strip()
+
+            chave = (
+                _normalizar_numero_processo(processo_numero),
+                numero_sessao,
+                dia_sessao,
             )
 
-            if not num_norm or num_norm in nums_existentes:
+            if not chave[0] or chave in chaves_existentes:
                 continue
 
-            tipo_sexp = _determinar_tabela_destino_sexp(
-                p,
-                nums_urgentes,
-            )
+            tipo_sexp = _determinar_tabela_destino_sexp(p, nums_urgentes)
 
             novo_registro = {
-                "processo_numero": p.get("processo_numero", ""),
+                "processo_numero": processo_numero,
                 "relator": p.get("relator", ""),
                 "tipo_sessao": tipo_sexp,
-                "numero_sessao": p.get("numero_sessao", ""),
-                "dia_sessao": p.get("dia_sessao", ""),
+                "numero_sessao": numero_sessao,
+                "dia_sessao": dia_sessao,
                 "distribuido": False,
                 "expedido": False,
                 "revisado": False,
                 "comentarios": p.get("comentario", "") or "",
             }
 
-            res = db_manager.inserir(
-                "distribuicao_sexp",
-                novo_registro,
-            )
+            res = db_manager.inserir("distribuicao_sexp", novo_registro)
 
             if res:
                 novos_inseridos += 1
-                nums_existentes.add(num_norm)
+                chaves_existentes.add(chave)
 
         return novos_inseridos, len(todos_sexp) + novos_inseridos
 
