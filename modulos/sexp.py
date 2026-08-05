@@ -227,7 +227,7 @@ def _sincronizar_com_seat():
                 "distribuido": False,
                 "expedido": False,
                 "revisado": False,
-                "comentario": p.get("comentario", "") or "",
+                "comentarios": p.get("comentario", "") or "",
             }
 
             res = db_manager.inserir(
