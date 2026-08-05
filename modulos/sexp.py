@@ -86,16 +86,58 @@ def _get_nome_curto(colab):
     nome_comp = str(colab.get("nome", "")).strip()
     return nome_comp.split()[0] if nome_comp else ""
 
-def _obter_colaboradores():
+ddef _obter_colaboradores():
     """
-    Busca colaboradores diretamente em 'usuarios_acesso' (SSOT).
-    Elimina o uso de tabelas paralelas.
+    Busca colaboradores operacionais da SEXP a partir da camada canônica do db_manager.
+
+    Regras desta etapa:
+    - Fonte única: usuarios_acesso
+    - Apenas usuários ativos
+    - Apenas lotados na SEXP
+    - Exclui contas técnicas da distribuição automática
+    - Não decide ainda elegibilidade por tipo de sessão
+    - Retorna registros completos já normalizados pelo backend
     """
     try:
-        todos = db_manager.buscar_todos("usuarios_acesso", filtros={"ativo": True}) or []
-        # Filtra rigorosamente quem está lotado no setor SEXP (independente de maiúsculas/minúsculas)
-        return [u for u in todos if _normalizar_texto(u.get("setor", "")) == "sexp"]
-    except Exception:
+        colaboradores = db_manager.listar_usuarios_acesso_canonicos(
+            setor="SEXP",
+            apenas_ativos=True,
+            incluir_contas_tecnicas=False,
+        ) or []
+
+        resultado = []
+
+        for colaborador in colaboradores:
+            if not isinstance(colaborador, dict):
+                continue
+
+            nome = str(colaborador.get("nome", "") or "").strip()
+            nome_guerra = str(colaborador.get("nome_guerra", "") or "").strip()
+            matricula = str(colaborador.get("matricula", "") or "").strip()
+            setor = str(colaborador.get("setor", "") or "").strip()
+
+            if not nome:
+                continue
+
+            if not matricula:
+                continue
+
+            if not setor:
+                continue
+
+            resultado.append(colaborador)
+
+        resultado.sort(
+            key=lambda item: (
+                str(item.get("nome_exibicao", "") or "").strip().lower(),
+                str(item.get("matricula", "") or "").strip(),
+            )
+        )
+
+        return resultado
+
+    except Exception as e:
+        print(f"[ERRO SEXP _obter_colaboradores] {e}")
         return []
 
 def _obter_colaboradores_por_cargo(tipo_sessao):
