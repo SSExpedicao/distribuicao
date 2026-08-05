@@ -1102,19 +1102,6 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
     """
     Renderiza a aba de Pauta Ativa sem listar processos.
     Nesta tela ficam apenas:
-    - inclusão manual
-    - inclusão em lote
-    - finalização da sessão
-    A operação de editar/revisar fica exclusivamente na aba Distribuição.
-    """
-    cargo_usuario = usuario.get("cargo", "operacional") if usuario else "operacional"
-    nome_usuario = usuario.get("nome", "") if usuario else ""
-    filtrar_por_usuario = cargo_usuario == "operacional" and bool(nome_usuario)
-
-    col_f1, cdef _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
-    """
-    Renderiza a aba de Pauta Ativa sem listar processos.
-    Nesta tela ficam apenas:
     - inclusao manual
     - inclusao em lote
     - finalizacao da sessao
