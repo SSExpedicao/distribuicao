@@ -315,27 +315,35 @@ def _gerar_cadeia_duplas(colaboradores):
 
     return duplas
 
-def _executar_distribuicao(tipo_sessao, colaboradores_selecionados):
+def _obter_processos_pendentes_sexp(tipo_sessao):
     """
-    Executa a distribuição em cadeia com trava otimista.
+    Sincroniza com a SEAT e retorna os processos pendentes
+    da fila da SEXP para um tipo específico de sessão.
     """
     try:
-        todos = db_manager.buscar_todos("distribuicao_sexp") or []
+        _sincronizar_com_seat()
 
-        try:
-            urgentes_seat = db_manager.buscar_todos("processos_urgentes") or []
-            nums_urgentes = {
-                _normalizar_numero_processo(u.get("processo_numero", "")) for u in urgentes_seat
-            }
-        except Exception:
-            nums_urgentes = set()
+        todos = db_manager.buscar_todos("distribuicao_sexp") or []
 
         processos = [
             d for d in todos
-            if _determinar_tabela_destino_sexp(d, nums_urgentes) == tipo_sessao
+            if str(d.get("tipo_sessao", "") or "").strip() == tipo_sessao
             and not d.get("distribuido", False)
             and not d.get("removido_pauta", False)
         ]
+
+        return processos
+
+    except Exception as e:
+        print(f"[ERRO _obter_processos_pendentes_sexp] {e}")
+        return []
+
+def _executar_distribuicao(tipo_sessao, colaboradores_selecionados):
+    """
+    Executa a distribuicao em cadeia com trava otimista.
+    """
+    try:
+        processos = _obter_processos_pendentes_sexp(tipo_sessao)
 
         if not processos:
             st.warning("Nenhum processo pendente encontrado para este tipo de sessão.")
@@ -346,13 +354,13 @@ def _executar_distribuicao(tipo_sessao, colaboradores_selecionados):
             return 0
 
         duplas = _gerar_cadeia_duplas([{"nome": n} for n in colaboradores_selecionados])
+
         if not duplas:
             return 0
 
         sucessos = 0
         ignorados = 0
         erros_detalhados = []
-
         cliente = db_manager.get_supabase()
 
         for i, p in enumerate(processos):
@@ -390,12 +398,14 @@ def _executar_distribuicao(tipo_sessao, colaboradores_selecionados):
                         .eq("processo_numero", num_proc)
                         .execute()
                     )
+
                     if resp.data and len(resp.data) > 0:
                         res = resp.data[0]
                     else:
                         erros_detalhados.append(
                             f"Proc {num_proc}: Supabase não encontrou a linha ou RLS bloqueou."
                         )
+
                 except Exception as err_api:
                     erros_detalhados.append(
                         f"API Supabase Proc {p.get('processo_numero')}: {str(err_api)}"
@@ -543,7 +553,14 @@ def _renderizar_sidebar_sexp(usuario):
             st.metric("Total", urgentes_total)
         with col_u2:
             st.metric("Faltam", urgentes_faltam)
+            
 # ==================== PAUTA ATIVA ====================
+
+def renderizar(usuario: dict, modo_edicao: bool = False):
+    try:
+        _sincronizar_com_seat()
+    except Exception as e:
+        print(f"[ERRO AO SINCRONIZAR SEXP COM SEAT] {e}")
 
 def _auto_atribuir_administrativa_jessyca():
     """
