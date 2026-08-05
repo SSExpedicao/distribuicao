@@ -1112,8 +1112,20 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
             or _normalizar_texto(p.get("revisor", "")) == nome_norm
         ]
 
-    encaminhados = [p for p in processos if p.get("status") == "encaminhado"]
-    ativos = [p for p in processos if p.get("status") != "encaminhado"]
+    processos_visiveis = [
+     p for p in processos
+     if not _eh_despacho_ou_sustentacao(p)
+    ]
+
+    encaminhados = [
+     p for p in processos_visiveis
+     if p.get("status") == "encaminhado"
+    ]
+
+    ativos = [
+     p for p in processos_visiveis
+     if p.get("status") != "encaminhado"
+    ]
 
     col_c1, col_c2, col_c3, col_c4, col_c5 = st.columns(5)
     with col_c1:
@@ -1219,7 +1231,7 @@ def _renderizar_pauta_ativa(modo_edicao: bool, usuario: dict = None):
 
 def renderizar_sidebar(usuario: dict, modo_edicao: bool = False):
     """
-    Renderiza tabelas de carga na barra lateral.
+    Renderiza a carga de Editor/Revisor na barra lateral em uma única tabela.
     """
     cargo_usuario = usuario.get("cargo", "operacional")
     nome_usuario = usuario.get("nome", "")
@@ -1279,22 +1291,29 @@ def renderizar_sidebar(usuario: dict, modo_edicao: bool = False):
         return
 
     equipe = _obter_equipe_seat()
-    equipe_participante = [nome for nome in equipe if _normalizar_texto(nome) in nomes_participantes]
+    equipe_participante = [
+        nome
+        for nome in equipe
+        if _normalizar_texto(nome) in nomes_participantes
+    ]
 
     if not equipe_participante:
         return
 
     if filtrar_por_usuario:
         nome_norm = _normalizar_texto(nome_usuario)
-        equipe_filtrada = [n for n in equipe_participante if _normalizar_texto(n) == nome_norm]
+        equipe_filtrada = [
+            n for n in equipe_participante
+            if _normalizar_texto(n) == nome_norm
+        ]
     else:
         equipe_filtrada = equipe_participante
 
-    dados_edicao = []
-    dados_revisao = []
+    dados_carga = []
 
     for nome in equipe_filtrada:
         nome_norm = _normalizar_texto(nome)
+
         qtd_editar = 0
         faltam_editar = 0
         qtd_revisar = 0
@@ -1316,107 +1335,48 @@ def renderizar_sidebar(usuario: dict, modo_edicao: bool = False):
                 if not revisado_p:
                     faltam_revisar += 1
 
-        dados_edicao.append({"Resp.": nome, "Qtd": qtd_editar, "Faltam": faltam_editar})
-        dados_revisao.append({"Resp.": nome, "Qtd": qtd_revisar, "Faltam": faltam_revisar})
+        dados_carga.append(
+            {
+                "Resp.": nome,
+                "Editar": qtd_editar,
+                "Faltam Editar": faltam_editar,
+                "Revisar": qtd_revisar,
+                "Faltam Revisar": faltam_revisar,
+            }
+        )
 
-    if not dados_edicao:
+    if not dados_carga:
         return
 
-    df_ed = pd.DataFrame(dados_edicao)
-    df_rev = pd.DataFrame(dados_revisao)
+    df_carga = pd.DataFrame(dados_carga)
 
     if not filtrar_por_usuario:
-        df_ed = pd.concat(
+        df_carga = pd.concat(
             [
-                df_ed,
+                df_carga,
                 pd.DataFrame(
-                    [{"Resp.": "Total", "Qtd": df_ed["Qtd"].sum(), "Faltam": df_ed["Faltam"].sum()}]
-                ),
-            ],
-            ignore_index=True,
-        )
-        df_rev = pd.concat(
-            [
-                df_rev,
-                pd.DataFrame(
-                    [{"Resp.": "Total", "Qtd": df_rev["Qtd"].sum(), "Faltam": df_rev["Faltam"].sum()}]
+                    [
+                        {
+                            "Resp.": "Total",
+                            "Editar": df_carga["Editar"].sum(),
+                            "Faltam Editar": df_carga["Faltam Editar"].sum(),
+                            "Revisar": df_carga["Revisar"].sum(),
+                            "Faltam Revisar": df_carga["Faltam Revisar"].sum(),
+                        }
+                    ]
                 ),
             ],
             ignore_index=True,
         )
 
     with st.sidebar:
-        st.markdown("**Edicao**")
-        st.dataframe(df_ed, hide_index=True, use_container_width=True, height=len(df_ed) * 35 + 40)
-        st.markdown("**Revisao**")
-        st.dataframe(df_rev, hide_index=True, use_container_width=True, height=len(df_rev) * 35 + 40)
-
-def _renderizar_sidebar_ds(usuario: dict):
-    """
-    Mostra os ultimos 5 DS e 5 Sustentacoes Orais na sidebar.
-    """
-    cargo = usuario.get("cargo", "operacional")
-    if cargo not in ("criador", "raiz", "gerente"):
-        return
-
-    todos_ds = db_manager.buscar_todos(
-        "despachos_ds",
-        ordem_coluna="created_at",
-        ordem_desc=True,
-    ) or []
-
-    if not todos_ds:
-        return
-
-    ds_lista = [d for d in todos_ds if d.get("tipo") == "Despacho Singular"][:5]
-    so_lista = [d for d in todos_ds if d.get("tipo") == "Sustentacao Oral"][:5]
-
-    with st.sidebar:
-        st.markdown("---")
-
-        if ds_lista:
-            st.markdown("##### Despachos Singulares (Recentes)")
-            dados_ds = []
-            for ds in ds_lista:
-                oficios = db_manager.buscar_todos(
-                    "oficios_ds",
-                    filtros={"despacho_id": ds["id"]},
-                ) or []
-                dados_ds.append(
-                    {
-                        "Processo": ds.get("processo_numero", ""),
-                        "Relator": ds.get("relator", "-") or "-",
-                        "Docs": len(oficios),
-                    }
-                )
-
-            df_ds = pd.DataFrame(dados_ds)
-            st.dataframe(
-                df_ds,
-                hide_index=True,
-                use_container_width=True,
-                height=len(df_ds) * 35 + 40,
-            )
-
-        if so_lista:
-            st.markdown("##### Sustentacao Oral (Recentes)")
-            dados_so = []
-            for so in so_lista:
-                dados_so.append(
-                    {
-                        "Processo": so.get("processo_numero", ""),
-                        "Relator": so.get("relator", "-") or "-",
-                        "Confirmada": "Sim" if so.get("recebido_confirmado") else "Nao",
-                    }
-                )
-
-            df_so = pd.DataFrame(dados_so)
-            st.dataframe(
-                df_so,
-                hide_index=True,
-                use_container_width=True,
-                height=len(df_so) * 35 + 40,
-            )
+        st.markdown("**Editor / Revisor**")
+        st.dataframe(
+            df_carga,
+            hide_index=True,
+            use_container_width=True,
+            height=len(df_carga) * 35 + 40,
+        )
 
 # ============================================================
 # TAB 2: DISTRIBUICAO
@@ -1806,6 +1766,28 @@ def _renderizar_distribuicao(modo_edicao: bool, usuario: dict = None):
 # ============================================================
 # DESPACHOS SINGULARES - FUNCOES
 # ============================================================
+
+def _eh_despacho_ou_sustentacao(processo: dict) -> bool:
+    """
+    Identifica processos de Despacho Singular ou Sustentação Oral
+    para tirá-los da Pauta Ativa e mantê-los na aba de Distribuição.
+    """
+    if not processo:
+        return False
+
+    tipo_sessao = _normalizar_texto(processo.get("tipo_sessao", ""))
+    comentario = _normalizar_texto(processo.get("comentario", ""))
+    observacoes = _normalizar_texto(processo.get("observacoes", ""))
+
+    return (
+        "despacho singular" in tipo_sessao
+        or "sustentacao oral" in tipo_sessao
+        or "despacho singular" in comentario
+        or "sustentacao oral" in comentario
+        or "despacho singular" in observacoes
+        or "sustentacao oral" in observacoes
+        or bool(processo.get("despacho_singular", False))
+    )
 
 def _verificar_despacho_singular_tab(numero_processo):
     """
